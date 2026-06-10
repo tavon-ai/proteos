@@ -1,0 +1,37 @@
+# Minimal Gemini CLI Docker Image
+FROM node:22-alpine
+
+# Add edge community repo for ttyd
+RUN echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \
+    apk add --no-cache \
+    ttyd \
+    bash \
+    git \
+    && rm -rf /var/cache/apk/*
+
+# Install Gemini CLI globally
+RUN npm install -g @google/gemini-cli --production --no-audit --no-fund && \
+    npm cache clean --force && \
+    rm -rf /tmp/* /root/.npm
+
+# Create startup script that launches Gemini CLI automatically
+RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'if [ -z "$GEMINI_API_KEY" ]; then' >> /start.sh && \
+    echo '  echo "Error: Set GEMINI_API_KEY environment variable"' >> /start.sh && \
+    echo '  echo "Get your API key from: https://aistudio.google.com/apikey"' >> /start.sh && \
+    echo '  exit 1' >> /start.sh && \
+    echo 'fi' >> /start.sh && \
+    echo '' >> /start.sh && \
+    echo 'echo "Starting Gemini CLI..."' >> /start.sh && \
+    echo 'exec gemini' >> /start.sh && \
+    chmod +x /start.sh
+
+# Set proper environment for interactive terminal
+ENV TERM=xterm-256color
+ENV SHELL=/bin/bash
+
+EXPOSE 7681
+WORKDIR /workspace
+
+# Start ttyd with Gemini CLI automatically
+CMD ["ttyd", "-W", "-p", "7681", "-t", "titleFixed=Gemini CLI", "/bin/bash", "/start.sh"]

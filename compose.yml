@@ -1,0 +1,24 @@
+services:
+  proteos:
+    build: .
+    container_name: proteos
+    ports:
+      - "3001:3001"
+    volumes:
+      # Mount Docker socket to manage containers (Docker-in-Docker approach)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent workspace for container files
+      - ./workspace:/workspace
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PORT=3001
+      - HOST_WORKSPACE_PATH=${PWD}/workspace
+    restart: unless-stopped
+    networks:
+      - proteos-network
+
+networks:
+  proteos-network:
+    driver: bridge

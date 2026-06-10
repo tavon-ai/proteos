@@ -1,0 +1,35 @@
+# Claude Code CLI Container
+FROM node:22-alpine
+
+# Install required dependencies (Alpine uses apk, not apt-get)
+RUN apk add --no-cache \
+    curl \
+    wget \
+    git \
+    build-base \
+    python3 \
+    py3-pip \
+    sudo \
+    ca-certificates
+
+# Install ttyd for web terminal access
+RUN wget -qO /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 \
+    && chmod +x /usr/local/bin/ttyd
+
+# Install bash for Alpine
+RUN apk add --no-cache bash
+
+# Install Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create working directory
+WORKDIR /workspace
+
+# Expose ttyd port
+EXPOSE 7681
+
+# Set environment variable for API key (will be passed at runtime)
+ENV ANTHROPIC_API_KEY=""
+
+# Start ttyd with Claude CLI
+CMD ["ttyd", "-p", "7681", "-W", "claude"]
