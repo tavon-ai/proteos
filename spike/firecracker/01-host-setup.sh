@@ -66,9 +66,18 @@ fi
 ok "rootfs: $ROOTFS"
 
 # --- 4. /dev/kvm access for the current user -----------------------------------
+# Two grants on purpose, so a fresh machine is reproducible without manual steps:
+#  - usermod into the device's group => access survives reboots / udev resets.
+#  - setfacl => access in *this* shell right now, since a new group membership
+#    only takes effect on the next login (we can't `newgrp` from inside a script).
+kvm_group=$(stat -c %G /dev/kvm)
+if ! id -nG "$USER" | tr ' ' '\n' | grep -qx "$kvm_group"; then
+  sudo usermod -aG "$kvm_group" "$USER"
+  log "added $USER to group '$kvm_group' (durable; effective on next login)"
+fi
 sudo setfacl -m "u:${USER}:rw" /dev/kvm
 [[ -r /dev/kvm && -w /dev/kvm ]] || die "/dev/kvm not read/writable after setfacl"
-ok "/dev/kvm accessible as $USER"
+ok "/dev/kvm accessible as $USER (group '$kvm_group' for reboots + ACL for now)"
 
 # --- 5. record exactly what this run used (commit this file) --------------------
 cat >versions.lock <<EOF
