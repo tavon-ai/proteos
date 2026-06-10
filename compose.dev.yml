@@ -1,0 +1,22 @@
+# Local development dependencies for the Phase 1 control plane.
+# Usage: docker compose -f compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16
+    container_name: proteos-pg
+    environment:
+      POSTGRES_USER: proteos
+      POSTGRES_PASSWORD: proteos
+      POSTGRES_DB: proteos
+    ports:
+      - "5432:5432"
+    volumes:
+      - proteos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proteos -d proteos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  proteos_pgdata:

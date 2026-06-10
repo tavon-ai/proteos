@@ -9,3 +9,12 @@ npm-debug.log*
 *.swo
 .claude/
 workspace/containers/
+
+# Control plane (Phase 1+)
+.data/
+controlplane/.data/
+controlplane/controlplane
+
+# Web build output / deps
+web/node_modules/
+web/dist/

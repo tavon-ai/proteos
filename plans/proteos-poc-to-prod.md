@@ -251,18 +251,27 @@ phase builds on.
 
 ### Acceptance criteria
 
-- [ ] `users` and `sessions` tables exist via migrations; Postgres is reachable from Go.
-- [ ] GitHub OAuth login + callback works; a session cookie is issued; `GET /api/me`
-      returns the authenticated user.
-- [ ] Logout clears the session.
-- [ ] React app shows a login screen when unauthenticated and a dashboard (with
-      "no machine yet" empty state) when authenticated.
-- [ ] GitHub tokens are written to OpenBao (or a clearly-stubbed secrets interface if
-      OpenBao lands in Phase 5) — **not** to Postgres.
-- [ ] Unauthenticated access to `/api/machine*` is rejected.
-- [ ] OAuth `state` is validated on the callback; session cookie is httpOnly, Secure,
-      SameSite.
-- [ ] CI runs build + tests + migrations on every PR, from this phase onward.
+- [x] `users` and `sessions` tables exist via migrations; Postgres is reachable from Go.
+      (`controlplane/migrations/000001_init.*.sql`; `store.NewPool` + sqlc queries; store tests.)
+- [x] GitHub OAuth login + callback works; a session cookie is issued; `GET /api/me`
+      returns the authenticated user. (`internal/auth`; end-to-end test against a fake GitHub
+      in `auth_test.go` — `TestHappyPathLogin`.)
+- [x] Logout clears the session. (`Handler.Logout` revokes server-side + clears cookie;
+      `TestLogoutRevokesSession`.)
+- [x] React app shows a login screen when unauthenticated and a dashboard (with
+      "no machine yet" empty state) when authenticated. (`web/src/routes/Login.tsx`,
+      `Dashboard.tsx`; `RequireAuth` gate in `App.tsx`.)
+- [x] GitHub tokens are written to a clearly-stubbed secrets interface (`secrets.Store` +
+      dev `FileStore`; OpenBao lands in Phase 5) — **not** to Postgres. (`github_links` holds
+      only `secret_ref`; invariant asserted in `TestHappyPathLogin`.)
+- [x] Unauthenticated access to `/api/machine*` is rejected. (`requireAuth` on the prefix;
+      table-driven `TestProtectedRoutesRejectUnauthenticated`.)
+- [x] OAuth `state` is validated on the callback (HMAC-signed, 10-min expiry, constant-time);
+      session cookie is httpOnly, Secure, SameSite=Lax. (`internal/auth/state.go`;
+      `state_internal_test.go`.)
+- [x] CI runs build + tests + migrations on every PR, from this phase onward.
+      (`.github/workflows/ci.yml`: go vet/build/test -race with a Postgres service container,
+      `sqlc diff`, migrations applied; web typecheck + build + artifact.)
 
 ---
 
