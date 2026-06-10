@@ -35,7 +35,7 @@ setup_network
 log "first boot: write proof file to the data disk"
 boot_with_data_disk
 stamp="persistence-proof $(date -u +%FT%TZ) $$"
-guest_ssh "mount /dev/vdb /mnt && echo '$stamp' > /mnt/proof.txt && sync && umount /mnt"
+guest_ssh "mkdir -p /mnt && mount /dev/vdb /mnt && echo '$stamp' > /mnt/proof.txt && sync && umount /mnt"
 ok "wrote: $stamp"
 
 log "stopping the VM completely (guest 'reboot' exits the VMM under reboot=k)"
@@ -44,7 +44,7 @@ wait_for "VMM process exit" 15 vm_exited
 
 log "cold boot: fresh VMM, same data disk"
 boot_with_data_disk
-found="$(guest_ssh "mount /dev/vdb /mnt && cat /mnt/proof.txt")"
+found="$(guest_ssh "mkdir -p /mnt && mount /dev/vdb /mnt && cat /mnt/proof.txt")"
 [[ $found == "$stamp" ]] || die "proof file mismatch: wrote '$stamp', read '$found'"
 ok "file survived a full stop + cold boot — disk persistence proven"
 log "next: ./05-snapshot-restore.sh"
