@@ -46,8 +46,10 @@ func Postgres(t *testing.T) (*pgxpool.Pool, *store.Queries) {
 	}
 	t.Cleanup(pool.Close)
 
-	// Isolate: wipe rows (cascade clears sessions + github_links via FKs).
-	if _, err := pool.Exec(ctx, "TRUNCATE users CASCADE"); err != nil {
+	// Isolate: wipe rows. TRUNCATE users CASCADE clears sessions, github_links,
+	// and machines (+ machine_events) via FKs — but hosts has no FK to users, so
+	// it must be truncated explicitly or seeded host rows leak across tests.
+	if _, err := pool.Exec(ctx, "TRUNCATE users, hosts CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool, store.New(pool)

@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,6 +44,30 @@ type Config struct {
 	// CookieSecure controls the Secure attribute on the session cookie. True in
 	// all real environments; the only reason to disable is exotic local setups.
 	CookieSecure bool
+
+	// --- Phase 2: node-agent + machine spec ---------------------------------
+
+	// HostName is the unique name of the single host this control plane manages
+	// (multi-host scheduling is Phase 11). Upserted into `hosts` at startup.
+	HostName string
+
+	// NodeAgentURL is the private base URL the control plane dials the
+	// node-agent at (e.g. http://127.0.0.1:9090).
+	NodeAgentURL string
+
+	// AgentToken is the shared bearer token presented to the node-agent. Must
+	// match the agent's PROTEOS_AGENT_TOKEN.
+	AgentToken string
+
+	// MachineVcpus / MachineMemMiB are the resource spec stamped on every new
+	// machine row at create time.
+	MachineVcpus  int
+	MachineMemMiB int
+
+	// KernelRef / RootfsRef are the pinned image refs stamped per machine; the
+	// node-agent resolves them against its images dir.
+	KernelRef string
+	RootfsRef string
 }
 
 // Load reads configuration from the environment and validates it. The
@@ -59,6 +84,14 @@ func Load() (*Config, error) {
 		AllowedGitHubLogins: splitList(os.Getenv("ALLOWED_GITHUB_LOGINS")),
 		SessionTTL:          30 * 24 * time.Hour,
 		CookieSecure:        getenv("PROTEOS_COOKIE_SECURE", "true") == "true",
+
+		HostName:      getenv("PROTEOS_HOST_NAME", "local"),
+		NodeAgentURL:  getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
+		AgentToken:    os.Getenv("PROTEOS_AGENT_TOKEN"),
+		MachineVcpus:  getenvInt("PROTEOS_MACHINE_VCPUS", 2),
+		MachineMemMiB: getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
+		KernelRef:     getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
+		RootfsRef:     getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
 	}
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {
@@ -90,6 +123,15 @@ func (c *Config) ValidateOAuth() error {
 func getenv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func getenvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/config"
 	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
+	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon/proteos/controlplane/internal/nodeclient"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -64,6 +66,30 @@ func run(migrate, migrateOnly bool) error {
 
 	sessions := session.NewManager(q, cfg.SessionTTL)
 
+	// Phase 2: seed the single host this control plane manages, wire the
+	// node-agent client, and build the machine lifecycle (service + poller +
+	// SSE broker). The poller runs for the life of the process.
+	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
+		Name:     cfg.HostName,
+		AgentUrl: cfg.NodeAgentURL,
+	})
+	if err != nil {
+		return err
+	}
+	if cfg.AgentToken == "" {
+		slog.Warn("PROTEOS_AGENT_TOKEN is empty; node-agent calls will be unauthenticated and will fail")
+	}
+	nodes := nodeclient.New(cfg.NodeAgentURL, cfg.AgentToken)
+	broker := machine.NewBroker()
+	machineSvc := machine.NewService(pool, nodes, broker, host.ID, machine.Spec{
+		Vcpus:     cfg.MachineVcpus,
+		MemMiB:    cfg.MachineMemMiB,
+		KernelRef: cfg.KernelRef,
+		RootfsRef: cfg.RootfsRef,
+	})
+	poller := machine.NewPoller(pool, nodes, broker)
+	go poller.Run(ctx)
+
 	var authHandler *auth.Handler
 	if err := cfg.ValidateOAuth(); err != nil {
 		// Without OAuth config the server still serves /healthz and the
@@ -87,6 +113,9 @@ func run(migrate, migrateOnly bool) error {
 	srv := &httpapi.Server{
 		Sessions: sessions,
 		Auth:     authHandler,
+		Machines: machineSvc,
+		Broker:   broker,
+		Queries:  q,
 	}
 
 	httpServer := &http.Server{

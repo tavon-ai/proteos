@@ -64,6 +64,67 @@ jobs:
       - name: go test -race
         run: go test -race -p 1 ./...
 
+  nodeagent:
+    name: node-agent (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nodeagent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: nodeagent/go.mod
+          # The node-agent has no external deps (no go.sum); key the module
+          # cache off the workspace sum so setup-go doesn't error on a missing
+          # nodeagent/go.sum.
+          cache-dependency-path: go.work.sum
+
+      # The node-agent module builds and tests with no Postgres and no KVM: the
+      # dev driver is the default, and the firecracker driver is behind a build
+      # tag (exercised only by the gated KVM job below).
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+  # Firecracker integration tests run the real jailed VMM and need KVM, so they
+  # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
+  # The job is gated on the repo/org variable HAS_KVM_RUNNER so CI stays green
+  # until that runner exists; flip the variable to 'true' once it is online
+  # (Task 2.8 acceptance). The runner must have firecracker+jailer installed and
+  # the pinned kernel/rootfs exported via the PROTEOS_TEST_* env below.
+  firecracker:
+    name: firecracker driver (KVM)
+    if: vars.HAS_KVM_RUNNER == 'true'
+    runs-on: [self-hosted, linux, kvm]
+    defaults:
+      run:
+        working-directory: nodeagent
+    env:
+      PROTEOS_TEST_KERNEL: ${{ vars.PROTEOS_TEST_KERNEL }}
+      PROTEOS_TEST_ROOTFS: ${{ vars.PROTEOS_TEST_ROOTFS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: nodeagent/go.mod
+          cache-dependency-path: go.work.sum
+
+      - name: go build (firecracker tag)
+        run: go build -tags=firecracker ./...
+
+      # Root is required for the jailer + tap/nftables setup; the self-hosted
+      # runner is configured to allow sudo -E for the test step.
+      - name: go test (firecracker integration)
+        run: sudo -E env "PATH=$PATH" go test -tags=firecracker ./internal/driver/firecracker/...
+
   web:
     name: web (React)
     runs-on: ubuntu-latest

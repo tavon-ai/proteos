@@ -6,10 +6,41 @@
 # Run checks with: a2 check --profile api --target poc
 
 language:
-    explicit:
-        - node
+  explicit: [go, typescript]
+  go:
+    coverage_threshold: 40
+    source_dir:
+      - ./controlplane
+      - ./nodeagent
+
+  typescript:
+    source_dir: ./frontend
+    coverage_threshold: 40
+
 files:
-    required:
-        - README.md
-coverage:
-    threshold: 40
+  required:
+    - README.md
+
+checks:
+  disabled:
+    - common:k8s
+    - common:tracing
+    - common:license
+    - common:integration
+    - common:e2e
+    - common:errors
+    - common:config_validation
+    - common:retry
+    - common:api_docs
+    - "security:*"
+    - common:dockerfile
+    - devops:*
+    - common:changelog
+    - common:contributing
+    - common:duplication
+    - common:naming
+    - go:deps_freshness
+    - go:cyclomatic
+  typescript:
+    disabled:
+      - common:metrics

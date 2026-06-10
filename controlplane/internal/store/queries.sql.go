@@ -7,9 +7,53 @@ package store
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createMachine = `-- name: CreateMachine :one
+INSERT INTO machines (user_id, host_id, state, kernel_ref, rootfs_ref, resource_spec)
+VALUES ($1, $2, 'requested', $3, $4, $5)
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at
+`
+
+type CreateMachineParams struct {
+	UserID       pgtype.UUID `json:"user_id"`
+	HostID       pgtype.UUID `json:"host_id"`
+	KernelRef    string      `json:"kernel_ref"`
+	RootfsRef    string      `json:"rootfs_ref"`
+	ResourceSpec []byte      `json:"resource_spec"`
+}
+
+// Create a user's (1:1) machine in the initial 'requested' state, pinning the
+// image refs and resource spec for the lifetime of the row.
+func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (Machine, error) {
+	row := q.db.QueryRow(ctx, createMachine,
+		arg.UserID,
+		arg.HostID,
+		arg.KernelRef,
+		arg.RootfsRef,
+		arg.ResourceSpec,
+	)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
 
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (user_id, token_hash, expires_at)
@@ -48,6 +92,56 @@ func (q *Queries) GetGitHubLink(ctx context.Context, userID pgtype.UUID) (Github
 		&i.UserID,
 		&i.Metadata,
 		&i.SecretRef,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getMachineByID = `-- name: GetMachineByID :one
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at FROM machines WHERE id = $1
+`
+
+func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, error) {
+	row := q.db.QueryRow(ctx, getMachineByID, id)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getMachineByUserID = `-- name: GetMachineByUserID :one
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at FROM machines WHERE user_id = $1
+`
+
+func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (Machine, error) {
+	row := q.db.QueryRow(ctx, getMachineByUserID, userID)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -112,6 +206,173 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	return i, err
 }
 
+const insertMachineEvent = `-- name: InsertMachineEvent :one
+INSERT INTO machine_events (machine_id, type, from_state, to_state, actor, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, machine_id, type, from_state, to_state, actor, payload, created_at
+`
+
+type InsertMachineEventParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	Type      string      `json:"type"`
+	FromState *string     `json:"from_state"`
+	ToState   *string     `json:"to_state"`
+	Actor     string      `json:"actor"`
+	Payload   []byte      `json:"payload"`
+}
+
+// Append one audit row. Always called in the same tx as the state change it
+// records (see internal/machine.Transition).
+func (q *Queries) InsertMachineEvent(ctx context.Context, arg InsertMachineEventParams) (MachineEvent, error) {
+	row := q.db.QueryRow(ctx, insertMachineEvent,
+		arg.MachineID,
+		arg.Type,
+		arg.FromState,
+		arg.ToState,
+		arg.Actor,
+		arg.Payload,
+	)
+	var i MachineEvent
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.Type,
+		&i.FromState,
+		&i.ToState,
+		&i.Actor,
+		&i.Payload,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listMachineEventsAfter = `-- name: ListMachineEventsAfter :many
+SELECT id, machine_id, type, from_state, to_state, actor, payload, created_at FROM machine_events
+WHERE machine_id = $1 AND id > $2
+ORDER BY id ASC
+`
+
+type ListMachineEventsAfterParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	ID        int64       `json:"id"`
+}
+
+// Events for a machine after a given event id, for SSE Last-Event-ID replay.
+func (q *Queries) ListMachineEventsAfter(ctx context.Context, arg ListMachineEventsAfterParams) ([]MachineEvent, error) {
+	rows, err := q.db.Query(ctx, listMachineEventsAfter, arg.MachineID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MachineEvent{}
+	for rows.Next() {
+		var i MachineEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.MachineID,
+			&i.Type,
+			&i.FromState,
+			&i.ToState,
+			&i.Actor,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMachineEventsRecent = `-- name: ListMachineEventsRecent :many
+SELECT id, machine_id, type, from_state, to_state, actor, payload, created_at FROM (
+    SELECT id, machine_id, type, from_state, to_state, actor, payload, created_at FROM machine_events
+    WHERE machine_id = $1
+    ORDER BY id DESC
+    LIMIT $2
+) sub
+ORDER BY id ASC
+`
+
+type ListMachineEventsRecentParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	Limit     int32       `json:"limit"`
+}
+
+// Most-recent N events for a machine, returned oldest-first for the SSE
+// snapshot.
+func (q *Queries) ListMachineEventsRecent(ctx context.Context, arg ListMachineEventsRecentParams) ([]MachineEvent, error) {
+	rows, err := q.db.Query(ctx, listMachineEventsRecent, arg.MachineID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MachineEvent{}
+	for rows.Next() {
+		var i MachineEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.MachineID,
+			&i.Type,
+			&i.FromState,
+			&i.ToState,
+			&i.Actor,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMachinesInStates = `-- name: ListMachinesInStates :many
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
+`
+
+// Used by the poller to find transitional machines to advance and running
+// machines to sweep.
+func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) ([]Machine, error) {
+	rows, err := q.db.Query(ctx, listMachinesInStates, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Machine{}
+	for rows.Next() {
+		var i Machine
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.State,
+			&i.HostID,
+			&i.VmHandle,
+			&i.GuestIp,
+			&i.KernelRef,
+			&i.RootfsRef,
+			&i.ResourceSpec,
+			&i.LastError,
+			&i.LastActiveAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeSession = `-- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now()
 WHERE token_hash = $1 AND revoked_at IS NULL
@@ -120,6 +381,45 @@ WHERE token_hash = $1 AND revoked_at IS NULL
 func (q *Queries) RevokeSession(ctx context.Context, tokenHash []byte) error {
 	_, err := q.db.Exec(ctx, revokeSession, tokenHash)
 	return err
+}
+
+const setMachineRuntime = `-- name: SetMachineRuntime :one
+UPDATE machines
+SET vm_handle = $2,
+    guest_ip = $3,
+    last_active_at = now(),
+    updated_at = now()
+WHERE id = $1
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at
+`
+
+type SetMachineRuntimeParams struct {
+	ID       pgtype.UUID `json:"id"`
+	VmHandle *string     `json:"vm_handle"`
+	GuestIp  *netip.Addr `json:"guest_ip"`
+}
+
+// Record runtime facts reported by the node-agent (handle + allocated guest IP)
+// once a machine is provisioned.
+func (q *Queries) SetMachineRuntime(ctx context.Context, arg SetMachineRuntimeParams) (Machine, error) {
+	row := q.db.QueryRow(ctx, setMachineRuntime, arg.ID, arg.VmHandle, arg.GuestIp)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const touchSession = `-- name: TouchSession :exec
@@ -135,6 +435,52 @@ type TouchSessionParams struct {
 func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
 	_, err := q.db.Exec(ctx, touchSession, arg.ID, arg.ExpiresAt)
 	return err
+}
+
+const updateMachineState = `-- name: UpdateMachineState :one
+UPDATE machines
+SET state = $1,
+    last_error = $2,
+    updated_at = now()
+WHERE id = $3 AND state = $4
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at
+`
+
+type UpdateMachineStateParams struct {
+	ToState   string      `json:"to_state"`
+	LastError *string     `json:"last_error"`
+	ID        pgtype.UUID `json:"id"`
+	FromState string      `json:"from_state"`
+}
+
+// Guarded compare-and-set transition: only updates if the row is still in the
+// expected from-state, so illegal/raced transitions affect zero rows (the Go
+// layer turns that into ErrInvalidTransition). last_error is set on the same
+// write (pass NULL to clear it on a successful forward transition).
+func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineStateParams) (Machine, error) {
+	row := q.db.QueryRow(ctx, updateMachineState,
+		arg.ToState,
+		arg.LastError,
+		arg.ID,
+		arg.FromState,
+	)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const upsertGitHubLink = `-- name: UpsertGitHubLink :one
@@ -162,6 +508,33 @@ func (q *Queries) UpsertGitHubLink(ctx context.Context, arg UpsertGitHubLinkPara
 		&i.SecretRef,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertHostByName = `-- name: UpsertHostByName :one
+INSERT INTO hosts (name, agent_url)
+VALUES ($1, $2)
+ON CONFLICT (name) DO UPDATE
+    SET agent_url = EXCLUDED.agent_url
+RETURNING id, name, agent_url, status, created_at
+`
+
+type UpsertHostByNameParams struct {
+	Name     string `json:"name"`
+	AgentUrl string `json:"agent_url"`
+}
+
+// Seed/refresh a host by its unique name at control-plane startup.
+func (q *Queries) UpsertHostByName(ctx context.Context, arg UpsertHostByNameParams) (Host, error) {
+	row := q.db.QueryRow(ctx, upsertHostByName, arg.Name, arg.AgentUrl)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.AgentUrl,
+		&i.Status,
+		&i.CreatedAt,
 	)
 	return i, err
 }

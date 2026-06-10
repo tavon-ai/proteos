@@ -70,6 +70,15 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Flush delegates to the underlying ResponseWriter's flusher so that wrapping
+// in the request logger does not break Server-Sent Events (the SSE handler
+// type-asserts http.Flusher).
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // requestLogger logs method, path, status, and duration. It deliberately never
 // logs cookies, the Authorization header, or query strings that may carry the
 // OAuth code/state.
