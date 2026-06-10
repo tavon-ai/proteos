@@ -48,3 +48,76 @@ RETURNING *;
 
 -- name: GetGitHubLink :one
 SELECT * FROM github_links WHERE user_id = $1;
+
+-- name: UpsertHostByName :one
+-- Seed/refresh a host by its unique name at control-plane startup.
+INSERT INTO hosts (name, agent_url)
+VALUES ($1, $2)
+ON CONFLICT (name) DO UPDATE
+    SET agent_url = EXCLUDED.agent_url
+RETURNING *;
+
+-- name: CreateMachine :one
+-- Create a user's (1:1) machine in the initial 'requested' state, pinning the
+-- image refs and resource spec for the lifetime of the row.
+INSERT INTO machines (user_id, host_id, state, kernel_ref, rootfs_ref, resource_spec)
+VALUES ($1, $2, 'requested', $3, $4, $5)
+RETURNING *;
+
+-- name: GetMachineByUserID :one
+SELECT * FROM machines WHERE user_id = $1;
+
+-- name: GetMachineByID :one
+SELECT * FROM machines WHERE id = $1;
+
+-- name: UpdateMachineState :one
+-- Guarded compare-and-set transition: only updates if the row is still in the
+-- expected from-state, so illegal/raced transitions affect zero rows (the Go
+-- layer turns that into ErrInvalidTransition). last_error is set on the same
+-- write (pass NULL to clear it on a successful forward transition).
+UPDATE machines
+SET state = @to_state,
+    last_error = @last_error,
+    updated_at = now()
+WHERE id = @id AND state = @from_state
+RETURNING *;
+
+-- name: SetMachineRuntime :one
+-- Record runtime facts reported by the node-agent (handle + allocated guest IP)
+-- once a machine is provisioned.
+UPDATE machines
+SET vm_handle = $2,
+    guest_ip = $3,
+    last_active_at = now(),
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: ListMachinesInStates :many
+-- Used by the poller to find transitional machines to advance and running
+-- machines to sweep.
+SELECT * FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC;
+
+-- name: InsertMachineEvent :one
+-- Append one audit row. Always called in the same tx as the state change it
+-- records (see internal/machine.Transition).
+INSERT INTO machine_events (machine_id, type, from_state, to_state, actor, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: ListMachineEventsRecent :many
+-- Most-recent N events for a machine, returned oldest-first for the SSE
+-- snapshot.
+SELECT * FROM (
+    SELECT * FROM machine_events
+    WHERE machine_id = $1
+    ORDER BY id DESC
+    LIMIT $2
+) sub
+ORDER BY id ASC;
+
+-- name: ListMachineEventsAfter :many
+-- Events for a machine after a given event id, for SSE Last-Event-ID replay.
+SELECT * FROM machine_events
+WHERE machine_id = $1 AND id > $2
+ORDER BY id ASC;

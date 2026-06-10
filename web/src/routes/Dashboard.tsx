@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import type { Me } from "../api/client";
 import { useLogout } from "../api/hooks";
+import { MachineCard } from "../components/MachineCard";
 
 export function Dashboard({ me }: { me: Me }) {
   const navigate = useNavigate();
@@ -30,17 +31,7 @@ export function Dashboard({ me }: { me: Me }) {
       </header>
 
       <main className="content">
-        <section className="empty-state">
-          <h2>No machine yet</h2>
-          <p className="muted">
-            You don't have a workspace machine yet. Creating one will spin up an
-            isolated environment for your AI coding agents.
-          </p>
-          <button className="btn" disabled title="Available in a future phase">
-            Create machine
-          </button>
-          <p className="hint">Machine creation isn't enabled yet — coming in Phase 2.</p>
-        </section>
+        <MachineCard initialMachine={me.machine} />
       </main>
     </div>
   );

@@ -5,6 +5,8 @@
 package store
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -14,6 +16,41 @@ type GithubLink struct {
 	SecretRef string             `json:"secret_ref"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Host struct {
+	ID        pgtype.UUID        `json:"id"`
+	Name      string             `json:"name"`
+	AgentUrl  string             `json:"agent_url"`
+	Status    string             `json:"status"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Machine struct {
+	ID           pgtype.UUID        `json:"id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	State        string             `json:"state"`
+	HostID       pgtype.UUID        `json:"host_id"`
+	VmHandle     *string            `json:"vm_handle"`
+	GuestIp      *netip.Addr        `json:"guest_ip"`
+	KernelRef    string             `json:"kernel_ref"`
+	RootfsRef    string             `json:"rootfs_ref"`
+	ResourceSpec []byte             `json:"resource_spec"`
+	LastError    *string            `json:"last_error"`
+	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MachineEvent struct {
+	ID        int64              `json:"id"`
+	MachineID pgtype.UUID        `json:"machine_id"`
+	Type      string             `json:"type"`
+	FromState *string            `json:"from_state"`
+	ToState   *string            `json:"to_state"`
+	Actor     string             `json:"actor"`
+	Payload   []byte             `json:"payload"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

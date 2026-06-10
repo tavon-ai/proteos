@@ -31,8 +31,47 @@ export interface Me {
   machine: MachineSummary | null;
 }
 
-// Placeholder for the Phase 2 machine summary; null for the whole of Phase 1.
-export type MachineSummary = Record<string, never>;
+// MachineState mirrors the control-plane machines.state CHECK constraint.
+export type MachineState =
+  | "requested"
+  | "provisioning"
+  | "running"
+  | "starting"
+  | "stopping"
+  | "hibernating"
+  | "stopped"
+  | "error";
+
+export interface MachineSummary {
+  id: string;
+  state: MachineState;
+  guest_ip: string | null;
+  kernel_ref: string;
+  rootfs_ref: string;
+  resource_spec: { vcpus: number; mem_mib: number };
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface MachineEvent {
+  id: number;
+  type: "transition" | "error" | "info";
+  from_state: string | null;
+  to_state: string | null;
+  actor: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+// SSE payloads from GET /api/machine/events.
+export interface SnapshotData {
+  machine: MachineSummary | null;
+  events: MachineEvent[];
+}
+export interface MachineEventData {
+  machine: MachineSummary;
+  event: MachineEvent;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -65,7 +104,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   me: () => request<Me>("/api/me"),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+
+  // GET /api/machine returns the user's machine, or null when they have none
+  // (the API answers 404 no_machine, which we translate to null here).
+  getMachine: async (): Promise<MachineSummary | null> => {
+    try {
+      return await request<MachineSummary>("/api/machine");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  },
+  createMachine: () => request<MachineSummary>("/api/machine", { method: "POST" }),
+  startMachine: () => request<MachineSummary>("/api/machine/start", { method: "POST" }),
+  stopMachine: () => request<MachineSummary>("/api/machine/stop", { method: "POST" }),
 };
+
+// SSE endpoint for live machine state; consumed by useMachineEvents via the
+// browser EventSource API (cookie auth, no custom headers).
+export const machineEventsUrl = "/api/machine/events";
 
 // The login redirect is a full navigation (not fetch) so the browser follows
 // GitHub's 302 chain and cookies are set on the top-level document.

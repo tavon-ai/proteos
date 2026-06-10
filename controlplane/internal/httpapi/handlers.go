@@ -1,13 +1,17 @@
 package httpapi
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
 
-// meResponse is the shape returned by GET /api/me. The machine summary is
-// hardcoded null this phase; the field exists so Phase 2 fills it in without a
-// contract change on the client.
+	"github.com/tavon/proteos/controlplane/internal/machine"
+)
+
+// meResponse is the shape returned by GET /api/me. The machine summary is the
+// user's machine, or null if they have none.
 type meResponse struct {
-	User    meUser `json:"user"`
-	Machine *any   `json:"machine"`
+	User    meUser          `json:"user"`
+	Machine *MachineSummary `json:"machine"`
 }
 
 type meUser struct {
@@ -16,30 +20,31 @@ type meUser struct {
 	AvatarURL string `json:"avatar_url"`
 }
 
-// handleMe returns the authenticated user and (for now) a null machine.
+// handleMe returns the authenticated user and their machine summary (or null).
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	writeJSON(w, http.StatusOK, meResponse{
+
+	resp := meResponse{
 		User: meUser{
 			Login:     user.Login,
 			Email:     user.Email,
 			AvatarURL: user.AvatarUrl,
 		},
-		Machine: nil,
-	})
-}
-
-// handleGetMachine reports that the user has no machine yet. Phase 2 replaces
-// this with a real lookup.
-func (s *Server) handleGetMachine(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotFound, "no_machine")
-}
-
-// handleNotImplemented is the placeholder for machine mutations until Phase 2.
-func (s *Server) handleNotImplemented(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented")
+	}
+	m, err := s.Machines.Get(r.Context(), user.ID)
+	switch {
+	case err == nil:
+		summary := toSummary(m)
+		resp.Machine = &summary
+	case errors.Is(err, machine.ErrNoMachine):
+		// leave Machine nil
+	default:
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
