@@ -34,12 +34,24 @@ wait_for() {
 # --- Firecracker process + API ----------------------------------------------
 
 # fc_api <METHOD> <path> [json-body] — talk to the VMM over its unix socket.
+# On an HTTP error we print Firecracker's JSON fault_message (which a bare
+# `curl -f` would swallow, leaving only "curl: (22) ... error 400") and return
+# non-zero so callers under `set -e` abort with a useful reason.
 fc_api() {
-  local method=$1 path=$2 body=${3:-}
-  local args=(--unix-socket "$API_SOCK" -sS -f -X "$method"
-    "http://localhost$path" -H 'Content-Type: application/json')
-  [[ -n $body ]] && args+=(-d "$body")
-  curl "${args[@]}"
+  local method=$1 path=$2 reqbody=${3:-}
+  local args=(--unix-socket "$API_SOCK" -sS -X "$method"
+    "http://localhost$path" -H 'Content-Type: application/json' -w '\n%{http_code}')
+  [[ -n $reqbody ]] && args+=(-d "$reqbody")
+  local out status respbody
+  out=$(curl "${args[@]}") || return 1
+  status=${out##*$'\n'}   # trailing line is the http_code from -w
+  respbody=${out%$'\n'*}  # everything before it is the response body
+  if ((status < 200 || status >= 300)); then
+    printf '\e[1;31m[fail]\e[0m %s %s → HTTP %s: %s\n' "$method" "$path" "$status" "$respbody" >&2
+    return 1
+  fi
+  [[ -n $respbody ]] && printf '%s' "$respbody"
+  return 0
 }
 
 fc_running() { [[ -S $API_SOCK ]] && fc_api GET / >/dev/null 2>&1; }
