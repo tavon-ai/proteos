@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS machine_events;
+DROP TABLE IF EXISTS machines;
+DROP TABLE IF EXISTS hosts;

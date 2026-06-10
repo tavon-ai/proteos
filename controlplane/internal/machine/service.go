@@ -1,0 +1,212 @@
+package machine
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tavon/proteos/controlplane/internal/store"
+	agentapi "github.com/tavon/proteos/nodeagent/api"
+)
+
+// Service errors mapped by the HTTP layer to status codes.
+var (
+	ErrMachineExists = errors.New("machine: already exists for user") // 409
+	ErrNoMachine     = errors.New("machine: none for user")           // 404
+	ErrInvalidState  = errors.New("machine: invalid state for op")    // 409
+)
+
+// NodeClient is the subset of the node-agent client the lifecycle needs. Kept
+// as an interface so the service and poller are testable against a fake agent.
+type NodeClient interface {
+	Ensure(ctx context.Context, id string, req agentapi.EnsureRequest) (agentapi.EnsureResponse, error)
+	Stop(ctx context.Context, id string) error
+	Status(ctx context.Context, id string) (agentapi.MachineStatus, error)
+}
+
+// Spec is the resource shape and pinned image refs stamped on new machines.
+type Spec struct {
+	Vcpus     int
+	MemMiB    int
+	KernelRef string
+	RootfsRef string
+}
+
+// Service owns machine lifecycle operations driven by the user-facing API. All
+// state changes go through machine.Transition, so the audit log and SSE stream
+// stay consistent with the machines table.
+type Service struct {
+	pool   *pgxpool.Pool
+	q      *store.Queries
+	nodes  NodeClient
+	broker *Broker
+	hostID pgtype.UUID
+	spec   Spec
+}
+
+// NewService wires a lifecycle service. broker may be nil (publishing is then a
+// no-op), which keeps unit tests that don't care about SSE simple.
+func NewService(pool *pgxpool.Pool, nodes NodeClient, broker *Broker, hostID pgtype.UUID, spec Spec) *Service {
+	return &Service{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, hostID: hostID, spec: spec}
+}
+
+// Get returns the user's machine, or ErrNoMachine.
+func (s *Service) Get(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
+	m, err := s.q.GetMachineByUserID(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.Machine{}, ErrNoMachine
+	}
+	return m, err
+}
+
+// Create provisions a new machine for the user: insert (requested) → transition
+// to provisioning → ask the agent to ensure-running. If the agent call fails
+// the machine is moved to error (with the reason), and the errored machine is
+// still returned (the create "succeeded" in that a machine row now exists; the
+// user can retry via Start). Returns ErrMachineExists if the user already has
+// one (1:1).
+func (s *Service) Create(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
+	if _, err := s.q.GetMachineByUserID(ctx, userID); err == nil {
+		return store.Machine{}, ErrMachineExists
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return store.Machine{}, fmt.Errorf("lookup existing machine: %w", err)
+	}
+
+	specJSON, _ := json.Marshal(map[string]int{"vcpus": s.spec.Vcpus, "mem_mib": s.spec.MemMiB})
+	m, err := s.q.CreateMachine(ctx, store.CreateMachineParams{
+		UserID:       userID,
+		HostID:       s.hostID,
+		KernelRef:    s.spec.KernelRef,
+		RootfsRef:    s.spec.RootfsRef,
+		ResourceSpec: specJSON,
+	})
+	if err != nil {
+		return store.Machine{}, fmt.Errorf("create machine: %w", err)
+	}
+
+	m, _, err = s.transition(ctx, m.ID, StateRequested, StateProvisioning, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
+	if err != nil {
+		return store.Machine{}, err
+	}
+
+	return s.ensureOnAgent(ctx, m, s.spec.KernelRef, s.spec.RootfsRef)
+}
+
+// Start cold-boots a stopped or errored machine: transition to starting → ask
+// the agent to ensure-running. Invalid current state ⇒ ErrInvalidState.
+func (s *Service) Start(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
+	m, err := s.Get(ctx, userID)
+	if err != nil {
+		return store.Machine{}, err
+	}
+	from := State(m.State)
+	if from != StateStopped && from != StateError {
+		return store.Machine{}, ErrInvalidState
+	}
+	m, _, err = s.transition(ctx, m.ID, from, StateStarting, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
+	if err != nil {
+		return store.Machine{}, mapTransitionErr(err)
+	}
+	return s.ensureOnAgent(ctx, m, m.KernelRef, m.RootfsRef)
+}
+
+// Stop gracefully shuts down a running machine: transition to stopping → ask the
+// agent to stop. Invalid current state ⇒ ErrInvalidState.
+func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
+	m, err := s.Get(ctx, userID)
+	if err != nil {
+		return store.Machine{}, err
+	}
+	if State(m.State) != StateRunning {
+		return store.Machine{}, ErrInvalidState
+	}
+	m, _, err = s.transition(ctx, m.ID, StateRunning, StateStopping, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
+	if err != nil {
+		return store.Machine{}, mapTransitionErr(err)
+	}
+
+	id := UUIDString(m.ID)
+	if err := s.nodes.Stop(ctx, id); err != nil {
+		return s.fail(ctx, m, StateStopping, "node-agent stop failed: "+err.Error())
+	}
+	return m, nil
+}
+
+// ensureOnAgent issues the agent ensure-running for a machine already moved to a
+// transitional state (provisioning or starting). On agent failure it moves the
+// machine to error; on success it records the returned handle and leaves the
+// machine transitional for the poller to advance to running.
+func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (store.Machine, error) {
+	id := UUIDString(m.ID)
+	resp, err := s.nodes.Ensure(ctx, id, agentapi.EnsureRequest{
+		Vcpus:     s.spec.Vcpus,
+		MemMiB:    s.spec.MemMiB,
+		KernelRef: kernelRef,
+		RootfsRef: rootfsRef,
+	})
+	if err != nil {
+		return s.fail(ctx, m, State(m.State), "node-agent ensure failed: "+err.Error())
+	}
+
+	handle := resp.Handle
+	updated, err := s.q.SetMachineRuntime(ctx, store.SetMachineRuntimeParams{ID: m.ID, VmHandle: &handle})
+	if err != nil {
+		return store.Machine{}, fmt.Errorf("record handle: %w", err)
+	}
+	return updated, nil
+}
+
+// fail moves a machine from its current transitional state to error with the
+// given reason (recorded both in last_error and the event payload) and returns
+// the errored machine. The create/start/stop flows return this with a nil error
+// so the API surfaces the errored machine summary rather than a 5xx.
+func (s *Service) fail(ctx context.Context, m store.Machine, from State, reason string) (store.Machine, error) {
+	payload, _ := json.Marshal(map[string]string{"reason": reason})
+	errored, _, terr := s.transition(ctx, m.ID, from, StateError, ActorAPI, EventError, payload, &reason)
+	if terr != nil {
+		// The transition itself failed (e.g. a race). Surface the original
+		// reason to the caller rather than the secondary error.
+		return store.Machine{}, fmt.Errorf("%s (and could not record error: %v)", reason, terr)
+	}
+	return errored, nil
+}
+
+// transition wraps machine.Transition and publishes the resulting Update to the
+// broker after the commit.
+func (s *Service) transition(ctx context.Context, id pgtype.UUID, from, to State, actor, eventType string, payload []byte, lastErr *string) (store.Machine, store.MachineEvent, error) {
+	m, ev, err := Transition(ctx, s.pool, TransitionParams{
+		MachineID: id, From: from, To: to, Actor: actor, EventType: eventType, Payload: payload, LastError: lastErr,
+	})
+	if err != nil {
+		return store.Machine{}, store.MachineEvent{}, err
+	}
+	s.broker.Publish(Update{Machine: m, Event: ev})
+	return m, ev, nil
+}
+
+// mapTransitionErr collapses transition rule/conflict errors to ErrInvalidState
+// for the HTTP layer (409), passing other errors through.
+func mapTransitionErr(err error) error {
+	var inv ErrInvalidTransition
+	if errors.As(err, &inv) || errors.Is(err, ErrStateConflict) {
+		return ErrInvalidState
+	}
+	return err
+}
+
+// UUIDString renders a pgtype.UUID in canonical 8-4-4-4-12 form. An invalid
+// UUID renders empty (callers only pass valid ids).
+func UUIDString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	b := u.Bytes
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
