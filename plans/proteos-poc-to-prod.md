@@ -322,11 +322,11 @@ spike/firecracker/     (scaffolded 2026-06-10 — scripts exist, ready to run)
 
 **Spike acceptance criteria:**
 
-- [ ] A second engineer reproduces the entire run on a fresh Proxmox VM using only the
+- [x] A second engineer reproduces the entire run on a fresh Proxmox VM using only the
       README and scripts — no tribal knowledge.
-- [ ] Every driver-interface capability is demonstrated: boot, network, disk
+- [x] Every driver-interface capability is demonstrated: boot, network, disk
       attach/persist, snapshot/restore, jailer.
-- [ ] Clock-skew and entropy behavior after restore are observed and written down (these
+- [x] Clock-skew and entropy behavior after restore are observed and written down (these
       feed the Phase 4 resume criteria).
 - [ ] Findings (pinned versions, timings, surprises) are recorded in the README and feed
       the driver design and the firecracker-containerd vs raw-API decision.

@@ -14,7 +14,7 @@ language:
       - ./nodeagent
 
   typescript:
-    source_dir: ./frontend
+    source_dir: ./web
     coverage_threshold: 40
 
 files:

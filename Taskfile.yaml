@@ -1,0 +1,282 @@
+# Taskfile for ProteOS — https://taskfile.dev
+#
+# Build, test, and dev-run stages for the three deliverables: the Go control
+# plane, the Go node-agent (a separate module under the committed go.work), and
+# the React web app. The `ci` task mirrors .github/workflows/ci.yml so you can
+# reproduce CI locally; per-module namespaces (cp:, na:, web:) hold the granular
+# stages.
+#
+# Quick start:
+#   task            # list everything
+#   task ci         # everything CI runs (needs Docker for Postgres/testcontainers)
+#   task dev:db     # start dev Postgres, then run agent + control plane + web
+
+version: "3"
+
+vars:
+  SQLC_VERSION: "1.31.1"
+  # Dev defaults — overridable from the environment. The shared bearer token
+  # must match between the control plane and the node-agent.
+  AGENT_TOKEN: '{{.AGENT_TOKEN | default "dev-shared-token"}}'
+  AGENT_ADDR: "127.0.0.1:9090"
+  NODE_AGENT_URL: "http://127.0.0.1:9090"
+  CP_ADDR: "127.0.0.1:8080"
+  DATABASE_URL: '{{.DATABASE_URL | default "postgres://proteos:proteos@localhost:5432/proteos?sslmode=disable"}}'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # ---------------------------------------------------------------------------
+  # Aggregate stages
+  # ---------------------------------------------------------------------------
+
+  ci:
+    desc: Run the full CI pipeline locally (control plane + node-agent + web)
+    cmds:
+      - task: cp:ci
+      - task: na:ci
+      - task: web:ci
+
+  build:
+    desc: Build all three deliverables
+    deps: [cp:build, na:build, web:build]
+
+  test:
+    desc: Run all Go + web tests (race detector on)
+    cmds:
+      - task: cp:test
+      - task: na:test
+      - task: web:typecheck
+
+  vet:
+    desc: Vet both Go modules (incl. the linux firecracker build)
+    cmds:
+      - task: cp:vet
+      - task: na:vet
+      - task: na:vet:fc
+
+  fmt:
+    desc: Format all Go code
+    cmds:
+      - gofmt -w controlplane nodeagent
+
+  fmt:check:
+    desc: Fail if any Go file is not gofmt-clean
+    cmds:
+      - |
+        unformatted=$(gofmt -l controlplane nodeagent)
+        if [ -n "$unformatted" ]; then echo "needs gofmt:"; echo "$unformatted"; exit 1; fi
+    silent: true
+
+  clean:
+    desc: Remove build artifacts and local data
+    cmds:
+      - rm -rf web/dist
+      - rm -rf controlplane/.data nodeagent/.data
+      - go -C controlplane clean
+      - go -C nodeagent clean
+
+  setup:
+    desc: Install local tooling (sqlc) and web deps
+    cmds:
+      - go install github.com/sqlc-dev/sqlc/cmd/sqlc@v{{.SQLC_VERSION}}
+      - task: web:install
+
+  # ---------------------------------------------------------------------------
+  # Control plane (Go) — ./controlplane
+  # ---------------------------------------------------------------------------
+
+  cp:ci:
+    desc: "Control plane: vet, build, sqlc diff, test -race (mirrors CI)"
+    cmds:
+      - task: cp:vet
+      - task: cp:build
+      - task: cp:sqlc:diff
+      - task: cp:test
+
+  cp:build:
+    desc: "Control plane: build"
+    dir: controlplane
+    cmds:
+      - go build ./...
+
+  cp:vet:
+    desc: "Control plane: go vet"
+    dir: controlplane
+    cmds:
+      - go vet ./...
+
+  cp:test:
+    desc: "Control plane: tests (race, serialized — uses Testcontainers Postgres unless TEST_DATABASE_URL is set)"
+    dir: controlplane
+    cmds:
+      - go test -race -p 1 ./...
+
+  cp:sqlc:generate:
+    desc: "Control plane: regenerate sqlc code from queries.sql"
+    dir: controlplane
+    cmds:
+      - sqlc generate
+
+  cp:sqlc:diff:
+    desc: "Control plane: fail if generated sqlc code is stale"
+    dir: controlplane
+    cmds:
+      - sqlc diff
+
+  cp:migrate:
+    desc: "Control plane: apply DB migrations and exit (DATABASE_URL)"
+    dir: controlplane
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - go run ./cmd/controlplane -migrate-only
+
+  cp:run:
+    desc: "Control plane: run the HTTP server (depends on Postgres + node-agent)"
+    dir: controlplane
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+      PROTEOS_ADDR: "{{.CP_ADDR}}"
+      PROTEOS_AGENT_TOKEN: "{{.AGENT_TOKEN}}"
+      PROTEOS_NODE_AGENT_URL: "{{.NODE_AGENT_URL}}"
+      PROTEOS_HOST_NAME: "local"
+    cmds:
+      - go run ./cmd/controlplane -migrate
+
+  # ---------------------------------------------------------------------------
+  # Node-agent (Go) — ./nodeagent
+  # ---------------------------------------------------------------------------
+
+  na:ci:
+    desc: "Node-agent: vet, build, test -race (mirrors CI)"
+    cmds:
+      - task: na:vet
+      - task: na:build
+      - task: na:test
+
+  na:build:
+    desc: "Node-agent: build (default = dev driver)"
+    dir: nodeagent
+    cmds:
+      - go build ./...
+
+  na:vet:
+    desc: "Node-agent: go vet"
+    dir: nodeagent
+    cmds:
+      - go vet ./...
+
+  na:test:
+    desc: "Node-agent: tests (race)"
+    dir: nodeagent
+    cmds:
+      - go test -race ./...
+
+  na:build:fc:
+    desc: "Node-agent: cross-compile the linux firecracker driver (compile check on any host)"
+    dir: nodeagent
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build -tags=firecracker ./...
+
+  na:vet:fc:
+    desc: "Node-agent: vet the linux firecracker build"
+    dir: nodeagent
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go vet -tags=firecracker ./...
+
+  na:test:fc:
+    desc: "Node-agent: firecracker integration tests (LINUX + KVM + root only; skips otherwise)"
+    dir: nodeagent
+    cmds:
+      - go test -tags=firecracker ./internal/driver/firecracker/...
+
+  na:run:
+    desc: "Node-agent: run with the dev driver"
+    dir: nodeagent
+    env:
+      PROTEOS_AGENT_TOKEN: "{{.AGENT_TOKEN}}"
+      PROTEOS_AGENT_ADDR: "{{.AGENT_ADDR}}"
+      PROTEOS_AGENT_DRIVER: "dev"
+      PROTEOS_AGENT_DATA_DIR: ".data/agent"
+    cmds:
+      - go run ./cmd/nodeagent
+
+  # ---------------------------------------------------------------------------
+  # Web (React) — ./web
+  # ---------------------------------------------------------------------------
+
+  web:ci:
+    desc: "Web: install, typecheck, build (mirrors CI)"
+    cmds:
+      - task: web:install:ci
+      - task: web:typecheck
+      - task: web:build
+
+  web:install:
+    desc: "Web: install deps (npm install)"
+    dir: web
+    cmds:
+      - npm install
+
+  web:install:ci:
+    desc: "Web: clean install from lockfile (npm ci)"
+    dir: web
+    cmds:
+      - npm ci
+
+  web:typecheck:
+    desc: "Web: TypeScript typecheck"
+    dir: web
+    cmds:
+      - npm run typecheck
+
+  web:build:
+    desc: "Web: production build"
+    dir: web
+    cmds:
+      - npm run build
+
+  web:dev:
+    desc: "Web: Vite dev server"
+    dir: web
+    cmds:
+      - npm run dev
+
+  # ---------------------------------------------------------------------------
+  # Dev orchestration (local Postgres + run tasks)
+  # ---------------------------------------------------------------------------
+
+  dev:db:
+    desc: "Start the dev Postgres (compose.dev.yml) and wait until ready"
+    cmds:
+      - docker compose -f compose.dev.yml up -d
+      - |
+        echo "waiting for postgres..."
+        for i in $(seq 1 30); do
+          docker exec proteos-pg pg_isready -U proteos -d proteos >/dev/null 2>&1 && echo "ready" && exit 0
+          sleep 1
+        done
+        echo "postgres did not become ready" && exit 1
+    silent: true
+
+  dev:db:down:
+    desc: "Stop the dev Postgres"
+    cmds:
+      - docker compose -f compose.dev.yml down
+
+  dev:db:reset:
+    desc: "Destroy and recreate the dev Postgres (drops all data)"
+    cmds:
+      - docker compose -f compose.dev.yml down -v
+      - task: dev:db
