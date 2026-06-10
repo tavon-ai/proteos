@@ -58,9 +58,21 @@ fc_running() { [[ -S $API_SOCK ]] && fc_api GET / >/dev/null 2>&1; }
 vm_exited() { ! fc_running; }
 sock_exists() { [[ -S $API_SOCK ]]; }
 
+# /dev/kvm access is granted by 01 via setfacl, but that ACL is per-boot and is
+# wiped by reboots / udev re-applying its rules — so re-check it before every
+# boot and fail with the fix instead of a cryptic 400 from InstanceStart.
+require_kvm() {
+  [[ -r /dev/kvm && -w /dev/kvm ]] && return 0
+  die "/dev/kvm not read/writable as $USER (the setfacl grant is per-boot). Re-grant with:
+    sudo setfacl -m u:$USER:rw /dev/kvm          # transient — just this boot
+  or make it survive reboots:
+    sudo usermod -aG kvm $USER && newgrp kvm     # then re-run from this shell"
+}
+
 # Start the VMM inside a detached screen session so the serial console stays
 # attachable (`screen -r fc-spike`) and is also captured to $VM_LOG.
 start_firecracker() {
+  require_kvm
   mkdir -p "$RUN_DIR"
   rm -f "$API_SOCK" "$VM_LOG"
   screen -dmS "$SCREEN_SESSION" -L -Logfile "$VM_LOG" \
