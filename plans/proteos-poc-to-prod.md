@@ -55,6 +55,12 @@ microVM (per user, persistent)
 - **guest agent (in-VM)**: small daemon inside each microVM. Exposes terminal (PTY over
   WS), launches agent CLIs, serves code-server, runs git, owns the machine SQLite.
   Reachable **only** through the gateway over the private per-tenant network.
+  **Trust model: the guest agent is untrusted.** The user has (or can gain) root inside
+  their own VM, so anything the guest agent can request from the control plane carries
+  only that user's authority. It authenticates with the per-machine identity from
+  `secret/machines/<machine_id>/identity`, and the control plane must scope every request
+  it honors to the owning user — never give the guest channel broader power than the user
+  themselves has.
 
 ### Networking / reaching the VM
 
@@ -64,6 +70,44 @@ microVM (per user, persistent)
 - All browser↔VM traffic (terminal WS, code-server HTTP/WS, agent I/O) is brokered by
   the **control-plane gateway**, which authorizes the session, looks up the user's VM,
   and proxies to the guest agent's private address.
+- The gateway↔guest-agent channel is **authenticated, not just private**: either vsock
+  (a host-side unix socket per VM — no IP layer to spoof at all) or tap + mTLS using the
+  per-machine identity. "Private IP on a bridge" alone is not an auth boundary on a
+  shared host.
+- **Egress policy** — the VMs run untrusted, AI-generated code: default-deny from VMs to
+  the control plane, OpenBao, host services, other hosts, and link-local/metadata
+  addresses; NAT to the internet with per-tenant rate limits. Egress control is also the
+  primary abuse control (cryptomining, scanning, spam originating from your IPs).
+
+### VM / host security baseline (applies from Phase 2, not Phase 10)
+
+- Every Firecracker VMM runs under **jailer**: chroot, dedicated uid/gid per VM, seccomp,
+  and a cgroup enforcing CPU/memory/io on the VMM process. Retrofitting this later means
+  re-testing every lifecycle path — it ships with the first VM.
+- **Snapshots contain guest RAM**, including any secrets injected at start. Snapshot
+  files and persistent disks are encrypted at rest and handled as secret material.
+- **After resume**: reseed guest entropy (virtio-rng or a guest-agent reseed) and resync
+  the guest clock — a restored VM otherwise resumes with duplicated RNG state and a stale
+  clock, breaking TLS, git, and token-expiry checks. In-flight TCP/TLS connections die on
+  resume; the guest agent must tolerate that.
+- Base kernel/rootfs are **version-pinned from the first boot** (Phase 2). What Phase 12
+  defers is the build *automation*, not reproducibility.
+
+### Web origin isolation
+
+Anything that can serve user-controlled HTML — code-server, app preview ports, agent web
+UIs — must **not** share an origin with the SPA/API, or malicious workspace content can
+script against the control-plane session (XSS → account takeover). Decide this in
+Phase 3, because it shapes the gateway and DNS/TLS:
+
+- Serve per-machine content from `m-<machine-id>.<domain>` via wildcard DNS + wildcard
+  TLS. (This supersedes the path-shaped `/gw/code-server/*` route below where
+  user-controlled HTML is involved — the gateway still proxies, on a separate hostname.)
+- Auth on those subdomains uses a short-lived signed token minted by the main origin
+  (cookie scoped to that subdomain) — never the main session cookie.
+- All `/gw/*` WebSocket upgrades validate the `Origin` header (cross-site WebSocket
+  hijacking is the WS equivalent of CSRF), and revoking a session terminates its live
+  WS connections.
 
 ### Machine lifecycle (state machine)
 
@@ -100,8 +144,12 @@ machine-local; never authoritative for billing/identity.
 
 ### Auth
 
-- **GitHub OAuth** (web flow) is primary identity. Request `repo` (or finer-grained)
-  scope so the same grant powers git operations.
+- **GitHub** (web flow) is primary identity. Prefer a **GitHub App** over a classic
+  OAuth app: the classic `repo` scope is all-or-nothing across every repo the user can
+  reach, while a GitHub App gives per-repo installation grants and short-lived (~1h),
+  refreshable user tokens — exactly what the Phase 7 credential broker wants. The login
+  flow looks the same to the user. Decide in Phase 1: re-onboarding users to a different
+  grant type later is painful.
 - Server-side session in Postgres + httpOnly, Secure, SameSite cookie. CSRF protection
   on state-changing routes.
 - GitHub access/refresh tokens stored in **OpenBao**, referenced from `github_links`.
@@ -138,10 +186,52 @@ POST /api/git/clone                  → clone repo into machine
   proxy for the gateway; Firecracker via `firecracker-containerd` or the Firecracker SDK.
 - **Infra**: Postgres, OpenBao, compute hosts with KVM for Firecracker.
 
+### Development environment (Firecracker requires Linux + KVM)
+
+Firecracker only runs on Linux with `/dev/kvm` — there is no macOS support, so the real
+VMM path can never run on a dev Mac. The strategy:
+
+- **Hide the VMM behind a driver interface in the node-agent** (create/boot, stop,
+  snapshot, resume, attach-disk, network setup). Ship two implementations: the real
+  Firecracker driver, and a **dev driver** that fakes a "machine" with a local process or
+  container. The control plane, gateway, React app, and even the guest agent (it's just a
+  Linux binary) are then all developable on a Mac against the dev driver.
+- **Real-Firecracker work happens on Linux dev VMs in the Proxmox cluster.** Enable
+  nested virtualization on those VMs (CPU type `host`) so `/dev/kvm` exists inside them —
+  Firecracker runs fine under nested KVM and performance is plenty for dev. Per-dev or
+  shared VMs, driven over SSH / remote editing.
+- **Integration tests that touch Firecracker need a KVM-capable CI runner** — a
+  self-hosted runner on the Proxmox cluster, added to the Phase 1 CI when Phase 2 starts.
+  Everything else tests against the driver interface and runs on any runner.
+- **Match production architecture early**: if the Proxmox cluster (and eventual prod
+  hosts) are x86_64, build kernels/rootfs for x86_64 from day one rather than fighting
+  cross-arch on Apple Silicon.
+
+### Open decisions (resolve by the phase noted)
+
+- **Disk locality — DECIDED (2026-06-10): host-local disks.** Simple and fast; machines
+  are pinned to their host, and host loss means restore-from-backup (Phase 12).
+  Consequences to honor: Phase 11 scheduling places *new* machines only (no migration of
+  existing ones), and backups are the only DR story. Keep disk attach/provision behind an
+  interface in the node-agent so network block storage can be added later without
+  touching the control plane; revisit if live migration or fast rescheduling becomes a
+  requirement.
+- **Firecracker integration** (Phase 2): `firecracker-containerd` vs driving the
+  Firecracker API/SDK directly from the node-agent. The Task 2.0 spike runs against the
+  raw API; decide after it, informed by its findings — snapshot/restore and disk-attach
+  are where the two options differ most.
+- **Gateway→guest transport** (Phase 3): vsock vs tap+mTLS (see Networking).
+- **Cross-host gateway routing** (by Phase 11): any gateway instance must reach any VM on
+  any host — routable per-host private subnets or an overlay (e.g. WireGuard mesh).
+
 ### Cross-cutting non-goals for early phases (added in the hardening tail)
 
 Multi-host scheduling, auto-hibernate on idle, quotas, full audit/observability, backups,
-and CI/CD are deliberately deferred to Phases 10–12 so the spine ships first.
+and CD/deploy automation are deliberately deferred to Phases 10–12 so the spine ships
+first. Two things are **not** deferred: **CI** (build + tests on every PR) starts in
+Phase 1 — it's cheap and prevents the hardening tail from becoming a rewrite — and any
+publicly reachable deployment stays behind a **signup allowlist** until Phase 10's abuse
+controls exist, because free compute attracts cryptominers immediately.
 
 ---
 
@@ -169,6 +259,9 @@ phase builds on.
 - [ ] GitHub tokens are written to OpenBao (or a clearly-stubbed secrets interface if
       OpenBao lands in Phase 5) — **not** to Postgres.
 - [ ] Unauthenticated access to `/api/machine*` is rejected.
+- [ ] OAuth `state` is validated on the callback; session cookie is httpOnly, Secure,
+      SameSite.
+- [ ] CI runs build + tests + migrations on every PR, from this phase onward.
 
 ---
 
@@ -185,6 +278,49 @@ a base kernel + rootfs, sets up a tap device + private IP, and reports status. T
 machine state machine and `machine_events` are implemented. No terminal yet — success is
 verified through machine state and host-side checks.
 
+### Task 2.0 — scripted Firecracker spike on a Proxmox VM (do this first)
+
+A throwaway-in-code but **reproducible-in-process** run-through of every Firecracker
+capability the node-agent driver will need. Lives in `spike/firecracker/` as numbered
+scripts plus a README; manual steps are fine as long as they are script-driven and
+documented. The scripts are not production code — their output is *findings* that feed
+the driver design and the firecracker-containerd-vs-raw-API decision.
+
+```
+spike/firecracker/     (scaffolded 2026-06-10 — scripts exist, ready to run)
+  README.md            run order, acceptance, findings template, gotchas log
+  env.sh               pinned versions (firecracker v1.16.0) + all shared config
+  lib.sh               helpers: API calls, boot/teardown, tap+NAT, guest SSH
+  versions.lock        exact resolved artifacts, written by 01 — commit it
+  00-proxmox-vm.md     manual doc: create the Proxmox VM (CPU type `host`, Ubuntu LTS,
+                       cores/RAM/disk), verify nested KVM (/dev/kvm present, kvm-ok)
+  01-host-setup.sh     install pinned firecracker + jailer binaries; fetch pinned
+                       kernel + rootfs; verify /dev/kvm access as non-root
+  02-boot-vm.sh        boot a microVM via the Firecracker API socket; reach a shell
+                       on the serial console
+  03-network.sh        tap + bridge + NAT: guest can curl the internet; host can reach
+                       the guest's private IP (and nothing else can)
+  04-attach-disk.sh    create an ext4 image, attach as a second drive, mount in guest,
+                       write a file, verify it survives a full stop + cold boot
+  05-snapshot-restore.sh  pause → snapshot (memory + state) → kill the VMM → restore in
+                       a fresh VMM process; verify the file and a running process
+                       survive; observe and record clock skew and entropy state
+  06-jailer.sh         repeat the boot under jailer (chroot, per-VM uid, cgroups) —
+                       proves the security baseline works before the driver is written
+  07-teardown.sh       remove taps, processes, images; leave the VM clean for a rerun
+```
+
+**Spike acceptance criteria:**
+
+- [ ] A second engineer reproduces the entire run on a fresh Proxmox VM using only the
+      README and scripts — no tribal knowledge.
+- [ ] Every driver-interface capability is demonstrated: boot, network, disk
+      attach/persist, snapshot/restore, jailer.
+- [ ] Clock-skew and entropy behavior after restore are observed and written down (these
+      feed the Phase 4 resume criteria).
+- [ ] Findings (pinned versions, timings, surprises) are recorded in the README and feed
+      the driver design and the firecracker-containerd vs raw-API decision.
+
 ### Acceptance criteria
 
 - [ ] `machines`, `machine_events`, `hosts` (minimal) tables exist.
@@ -195,6 +331,14 @@ verified through machine state and host-side checks.
 - [ ] Every transition writes a `machine_events` row.
 - [ ] Dashboard reflects live machine state; `GET /api/machine/events` streams updates.
 - [ ] Node-agent ↔ control-plane channel is authenticated (not open on the network).
+- [ ] Every VMM runs under jailer (chroot, per-VM uid, seccomp, cgroup limits) from the
+      first boot.
+- [ ] Base kernel/rootfs version is pinned and recorded on the machine record.
+- [ ] VMs cannot reach the control plane, node-agent, or host services (basic
+      default-deny egress; the full per-tenant policy lands in Phase 10).
+- [ ] The node-agent's VMM access sits behind a driver interface with a non-KVM dev
+      driver, so the full stack runs on a dev Mac; the Firecracker driver runs on the
+      Proxmox Linux VMs (nested KVM) and in a KVM-capable CI job.
 
 ---
 
@@ -217,7 +361,10 @@ browser→gateway→guest path that code-server and agents will reuse.
       and proxies to the guest — **no VM port is publicly reachable**.
 - [ ] React terminal is interactive (input/output, resize) against a real shell in the VM.
 - [ ] Terminal access is denied for users who don't own the machine / aren't logged in.
-- [ ] Disconnect/reconnect behaves sanely (session cleanup on the gateway).
+- [ ] PTY sessions live in the guest agent, decoupled from the WS connection: a dropped
+      WS reconnects to the same shell with scrollback intact (tmux-like semantics).
+- [ ] Gateway↔guest channel is authenticated (vsock or mTLS); WS upgrades validate
+      `Origin`; logging out / revoking a session closes its live connections.
 
 ---
 
@@ -242,6 +389,10 @@ deliverable.
 - [ ] Machine SQLite is initialized on the disk and used by the guest agent.
 - [ ] A file written in the terminal persists across a stop/start cycle (demoable).
 - [ ] `disk_id` and snapshot metadata are recorded in Postgres.
+- [ ] Disk and snapshot files are encrypted at rest; snapshots are handled as secret
+      material (they contain guest RAM).
+- [ ] Resume reseeds guest entropy and resyncs the guest clock (TLS, git, and token
+      expiry break otherwise).
 
 ---
 
@@ -266,6 +417,8 @@ launch the Claude CLI in a terminal session using the injected key.
 - [ ] `providers` table exists; Claude Code is registered and shown as available.
 - [ ] User can launch Claude Code in a terminal in the machine and it authenticates with
       the injected key.
+- [ ] Secrets are injected on every start **and resume** (not only first boot), and
+      secret reads/writes are audited (an early slice of Phase 10's audit log).
 
 ---
 
@@ -313,6 +466,9 @@ work with the user's identity.
 - [ ] git commit uses the user's GitHub identity (name/email).
 - [ ] git push to an authorized repo succeeds from the machine.
 - [ ] Token refresh/expiry is handled; a revoked GitHub grant cleanly fails git ops.
+- [ ] Tokens handed to the VM are short-lived (GitHub App installation/user tokens, per
+      the Auth decision) and fetched on demand by the credential helper — never written
+      to disk inside the VM.
 
 ---
 
@@ -333,6 +489,9 @@ The PoC's simple file-read endpoints are retired.
 - [ ] User can open, edit, and save files in their workspace through code-server.
 - [ ] Edits persist on the Phase 4 disk and are visible to terminal/agents and vice versa.
 - [ ] code-server is scoped to the user's workspace; no host/other-tenant access.
+- [ ] code-server (and any preview port) is served from a per-machine subdomain,
+      origin-isolated from the SPA/API per the "Web origin isolation" decision —
+      workspace content can never script against the control-plane session.
 - [ ] Old PoC file-browser endpoints are removed.
 
 ---
@@ -367,9 +526,11 @@ and bounded in resource use.
 ### What to build
 
 The security and tenancy controls that make multi-user safe: network isolation between
-tenants, per-VM CPU/memory/disk quotas and limits, OpenBao per-user policy enforcement
-end-to-end, audit logging in Postgres, gateway rate limiting, and input/authorization
-hardening across all `/gw/*` and `/api/*` routes.
+tenants, the full **per-tenant egress policy** (internal default-deny, internet rate
+limits — see the security baseline), per-VM CPU/memory/disk quotas and limits, OpenBao
+per-user policy enforcement end-to-end, audit logging in Postgres, gateway rate limiting,
+abuse controls (signup gating, egress/compute quotas), and input/authorization hardening
+across all `/gw/*` and `/api/*` routes.
 
 ### Acceptance criteria
 
@@ -380,6 +541,8 @@ hardening across all `/gw/*` and `/api/*` routes.
 - [ ] All security-relevant actions (auth, machine lifecycle, secret writes, git ops) are
       audited in Postgres.
 - [ ] Gateway and auth routes are rate-limited; ownership checks cover every `/gw/*` path.
+- [ ] VM egress to internal targets is default-denied and internet egress is rate-limited
+      per tenant (verified by tests run from inside a VM).
 
 ---
 
@@ -399,6 +562,8 @@ fixing the PoC's in-memory drift where the server forgot about running container
 
 - [ ] The scheduler places machines across ≥2 hosts based on capacity.
 - [ ] Idle machines auto-hibernate after a configurable threshold; resume on access.
+      "Idle" must account for agent activity reported by the guest agent — a machine
+      running a long AI-agent task is not idle, even with no terminal input.
 - [ ] Metrics/logs/traces are emitted for control plane, node-agent, and gateway.
 - [ ] A reconciliation loop detects and corrects DB↔VM drift (orphaned VMs, stale
       `running` records) without manual intervention.
@@ -426,6 +591,8 @@ backups with tested restore, and a CI/CD rollout with health-gated deploys.
       to / upgraded between image versions.
 - [ ] Persistent disks are backed up on a schedule; a machine disk can be restored from
       backup (tested end-to-end).
+- [ ] Postgres and OpenBao are backed up and restorable; OpenBao runs HA with an
+      auto-unseal strategy (a vault that only unseals by hand is an outage multiplier).
 - [ ] CI/CD deploys with health checks and a rollback path.
 
 ---
@@ -442,4 +609,12 @@ backups with tested restore, and a CI/CD rollout with health-gated deploys.
   should be applied opportunistically in earlier phases rather than left entirely to the end.
 - **Risk hotspots**: Firecracker disk persistence + snapshot/resume (Phase 4) and the
   authenticated gateway proxy model (Phase 3) carry the most technical uncertainty —
-  prototype these first within their phases.
+  prototype these first within their phases. The scripted Firecracker spike (Task 2.0)
+  burns down most of the Firecracker unknowns before any production code exists.
+- **Decide early even if built late**: web origin isolation (Phase 3 — it shapes gateway
+  auth and DNS/TLS), disk locality (Phase 2 design — it constrains Phase 11 scheduling
+  and Phase 12 DR), and GitHub App vs OAuth app (Phase 1 — re-onboarding users to a
+  different grant type later is painful). See "Open decisions".
+- **Until Phase 12 backups exist, a dead host loses its machines' disks** (disks are
+  host-local — see Open decisions). Acceptable for a gated beta, but state it to early
+  users; or pull basic disk snapshots forward into Phase 4 if that risk is unacceptable.
