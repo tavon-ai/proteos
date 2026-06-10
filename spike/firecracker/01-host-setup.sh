@@ -30,10 +30,14 @@ ok "$("$BIN_DIR/firecracker" --version | head -n1)"
 # --- 2. guest kernel (newest vmlinux under the *pinned* CI line) ---------------
 if [[ ! -f $KERNEL ]]; then
   log "resolving newest vmlinux under firecracker-ci/$CI_VERSION"
-  kernel_key=$(curl -fsS "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/$CI_VERSION/$ARCH/vmlinux-&list-type=2" |
-    grep -oP "(?<=<Key>)(firecracker-ci/$CI_VERSION/$ARCH/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})(?=</Key>)" |
-    sort -V | tail -1)
-  [[ -n $kernel_key ]] || die "could not resolve a kernel key from the CI bucket"
+  # Keep curl (network) and grep (no-match) failures separate: under
+  # `set -euo pipefail` a no-match grep inside a command substitution would
+  # abort the script before the die below could explain why.
+  listing=$(curl -fsS "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/$CI_VERSION/$ARCH/vmlinux-&list-type=2") ||
+    die "could not list the CI bucket for firecracker-ci/$CI_VERSION/$ARCH"
+  kernel_key=$(grep -oP "(?<=<Key>)(firecracker-ci/$CI_VERSION/$ARCH/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})(?=</Key>)" <<<"$listing" |
+    sort -V | tail -1) || true
+  [[ -n $kernel_key ]] || die "no vmlinux under firecracker-ci/$CI_VERSION/$ARCH — does that CI line exist? The CI bucket lags the $FC_VERSION binary; lower CI_VERSION in env.sh."
   log "downloading $kernel_key"
   wget -q -O "$KERNEL" "$CI_BUCKET/$kernel_key"
   echo "$kernel_key" >"$IMG_DIR/kernel.key"

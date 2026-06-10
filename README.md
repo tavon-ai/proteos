@@ -83,15 +83,3 @@ OPENAI_API_KEY=your-openai-key
 # Server configuration
 PORT=3000
 ```
-
-## 🙏 Credits
-
-**ProteOS** is built with:
-
-- [Claude Code](https://claude.com/claude-code) by Anthropic
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) by Google
-- [OpenAI Codex](https://github.com/openai/codex) by OpenAI
-- [ttyd](https://github.com/tsl0922/ttyd) for web terminals
-- [Docker](https://docker.com) for containerization
-- [Express](https://expressjs.com) for the server
-- [Lucide](https://lucide.dev) for beautiful SVG icons

@@ -4,7 +4,10 @@
 
 # --- pinned versions -------------------------------------------------------
 FC_VERSION="v1.16.0"   # firecracker + jailer release tag (pinned 2026-06-10)
-CI_VERSION="v1.16"     # CI artifact bucket prefix = major.minor of FC_VERSION
+# CI artifact bucket prefix. NOTE: the CI kernel/rootfs bucket lags the binary
+# release — there is no firecracker-ci/v1.16 line yet, so we pin to the newest
+# published line (v1.15). Bump this only once the bucket publishes a match.
+CI_VERSION="v1.15"
 UBUNTU_VERSION="24.04" # rootfs flavor published by the Firecracker CI bucket
 
 FC_RELEASE_URL="https://github.com/firecracker-microvm/firecracker/releases"
