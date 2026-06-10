@@ -70,9 +70,17 @@ run_as="$(ps -o user= -p "$pid" | tr -d '[:space:]')"
 [[ $run_as == "$FC_USER" ]] || die "VMM runs as '$run_as', expected $FC_USER"
 ok "VMM runs as unprivileged user $FC_USER (pid $pid)"
 
-root_of="$(sudo readlink "/proc/$pid/root")"
-[[ $root_of == "$CHROOT" ]] || die "VMM root is '$root_of', expected chroot $CHROOT"
-ok "VMM is chrooted into $CHROOT"
+# /proc/<pid>/root is a magic symlink: *traversing* it enters the jailed root
+# even when a bare `readlink` is unhelpful. The jailer unshares a mount namespace
+# and pivot_root()s, so readlink renders the root as '/' from the host namespace
+# — so prove the chroot by what the root actually holds: the files we injected
+# into the jail, and none of the host's filesystem (e.g. /etc/os-release).
+if sudo test -e "/proc/$pid/root/vmlinux" && sudo test -e "/proc/$pid/root/rootfs.ext4" &&
+  ! sudo test -e "/proc/$pid/root/etc/os-release"; then
+  ok "VMM is chrooted into $CHROOT (root holds injected vmlinux+rootfs, not the host fs)"
+else
+  die "VMM does not look chrooted: /proc/$pid/root is missing jail files or exposes host paths"
+fi
 
 log "VMM cgroup membership (← record in findings):"
 sudo cat "/proc/$pid/cgroup"
