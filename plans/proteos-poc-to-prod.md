@@ -183,7 +183,8 @@ POST /api/git/clone                  → clone repo into machine
 - **Frontend**: React (SPA), TypeScript, a router, a data-fetching layer; xterm.js for
   terminals; code-server embedded via the gateway.
 - **Backend**: Go; `pgx`/`sqlc` for Postgres; standard `net/http` reverse proxy + a WS
-  proxy for the gateway; Firecracker via `firecracker-containerd` or the Firecracker SDK.
+  proxy for the gateway; Firecracker via `firecracker-containerd` or the Firecracker SDK;
+  Testcontainers for testing. No mocks.
 - **Infra**: Postgres, OpenBao, compute hosts with KVM for Firecracker.
 
 ### Development environment (Firecracker requires Linux + KVM)
