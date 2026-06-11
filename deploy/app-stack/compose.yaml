@@ -20,7 +20,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proteos} -d ${POSTGRES_DB:-proteos}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-proteos} -d ${POSTGRES_DB:-proteos}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -394,14 +394,14 @@ browser→gateway→guest path that code-server and agents will reuse.
 
 ### Acceptance criteria
 
-- [ ] Guest agent runs inside the microVM and exposes a PTY over WS on the private network.
-- [ ] `WS /gw/terminal` authenticates the user, authorizes ownership of the target VM,
+- [x] Guest agent runs inside the microVM and exposes a PTY over WS on the private network.
+- [x] `WS /gw/terminal` authenticates the user, authorizes ownership of the target VM,
       and proxies to the guest — **no VM port is publicly reachable**.
-- [ ] React terminal is interactive (input/output, resize) against a real shell in the VM.
+- [x] React terminal is interactive (input/output, resize) against a real shell in the VM.
 - [ ] Terminal access is denied for users who don't own the machine / aren't logged in.
-- [ ] PTY sessions live in the guest agent, decoupled from the WS connection: a dropped
+- [x] PTY sessions live in the guest agent, decoupled from the WS connection: a dropped
       WS reconnects to the same shell with scrollback intact (tmux-like semantics).
-- [ ] Gateway↔guest channel is authenticated (vsock or mTLS); WS upgrades validate
+- [x] Gateway↔guest channel is authenticated (vsock or mTLS); WS upgrades validate
       `Origin`; logging out / revoking a session closes its live connections.
 
 ---

@@ -112,7 +112,11 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
 
   return {
     send(data) {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // PTY input MUST go as a binary frame: the guest reads binary frames as
+      // raw PTY bytes and text frames as JSON control messages (resize), so a
+      // string keystroke sent as text is parsed as JSON, fails, and is dropped.
+      ws.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
     },
     resize(cols, rows) {
       if (ws && ws.readyState === WebSocket.OPEN) {

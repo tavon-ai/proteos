@@ -265,6 +265,13 @@ body {
   flex-direction: column;
   overflow: hidden;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  /* Drag-resizable from the bottom-right until the Phase 9 window manager
+     lands; the Terminal's ResizeObserver picks this up and resizes the PTY. */
+  resize: both;
+  min-width: 360px;
+  min-height: 200px;
+  max-width: 96vw;
+  max-height: 92vh;
 }
 
 .terminal-modal-header {
