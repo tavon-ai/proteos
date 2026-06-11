@@ -105,18 +105,34 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 		return err
 	}
 
-	// Default-deny egress, evaluated in order on the forward hook for this tap:
-	//   1. allow established/related return traffic
-	//   2. DROP guest → private ranges (host, agent, control plane, peers)
-	//   3. allow guest → anywhere else (the internet)
-	// Rules are tagged with a comment carrying the tap name so Destroy can find
-	// and delete exactly this machine's rules.
-	// nft comment values containing a ':' must be quoted strings, so the
-	// double quotes are passed literally to nft (we exec it directly, no shell).
-	// The stored value is still `proteos:<tap>`, which is what
-	// deleteRulesByComment matches against in `nft list` output.
-	tag := `"proteos:` + tap + `"`
-	rules := [][]string{
+	for _, r := range egressRules(tap, guestCIDR, egress) {
+		if err := run("nft", r...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// commentTag is the nft comment value used to tag a tap's rules. It contains a
+// ':', which nft rejects in an unquoted token, so callers that pass it to nft
+// must quote it (see egressRules); deleteRulesByComment matches the unquoted
+// value as it appears inside the quotes in `nft list` output.
+func commentTag(tap string) string { return "proteos:" + tap }
+
+// egressRules builds the ordered nft rule argument lists implementing the
+// default-deny egress policy for one tap. It is pure (no I/O) so it can be unit
+// tested. The rules are evaluated in order on the forward hook:
+//  1. allow established/related return traffic
+//  2. DROP guest → private ranges (host, agent, control plane, peers)
+//  3. allow guest → anywhere else (the internet)
+//
+// Every rule carries a comment tag (the tap name) so teardownTap can find and
+// delete exactly this machine's rules. The comment is wrapped in literal double
+// quotes because the tag contains a ':' that nft rejects unquoted; we exec nft
+// directly (no shell), so the quotes must be in the argument itself.
+func egressRules(tap, guestCIDR, egress string) [][]string {
+	tag := `"` + commentTag(tap) + `"`
+	return [][]string{
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ct", "state", "established,related", "accept", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "oifname", tap, "ct", "state", "established,related", "accept", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "10.0.0.0/8", "drop", "comment", tag},
@@ -126,20 +142,14 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "oifname", egress, "accept", "comment", tag},
 		{"add", "rule", "ip", nftTable, "postrouting", "ip", "saddr", guestCIDR, "oifname", egress, "masquerade", "comment", tag},
 	}
-	for _, r := range rules {
-		if err := run("nft", r...); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // teardownTap removes this machine's nft rules (by comment tag) and deletes the
 // tap. Best-effort: missing objects are not an error.
 func teardownTap(tap string) {
 	// Delete every rule tagged for this tap from both chains.
-	deleteRulesByComment("forward", "proteos:"+tap)
-	deleteRulesByComment("postrouting", "proteos:"+tap)
+	deleteRulesByComment("forward", commentTag(tap))
+	deleteRulesByComment("postrouting", commentTag(tap))
 	if linkExists(tap) {
 		_ = run("ip", "link", "del", tap)
 	}
