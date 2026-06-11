@@ -207,8 +207,34 @@ Tick each row of the Phase 2 checklist in `plans/proteos-poc-to-prod.md`.
    curl --max-time 3 http://<APP_VM_IP>:8080/           # control plane -> MUST fail
    curl --max-time 3 https://1.1.1.1                    # internet    -> MUST succeed
    ```
-   This proves the per-tap nftables default-deny (drop guest→host/agent/control
-   plane/RFC1918/link-local; allow established + NAT to internet).
+   This exercises both nft hooks: the **input** chain drops guest→host-local
+   services (the gateway IP, where the node-agent listens — the forward chain
+   never sees host-destined traffic, so this must be blocked at `input`); the
+   **forward** chain drops guest→RFC1918/link-local and NATs everything else to
+   the internet.
+
+   **If a check is wrong, diagnose with the per-rule counters** (on the KVM host,
+   while re-running the guest curl):
+   ```bash
+   sudo nft list table ip proteos          # which rules' counters increment?
+   sysctl net.ipv4.ip_forward              # must be 1 for the internet path
+   sudo conntrack -L | grep <guest_ip>     # is the connection NATed (src rewritten to the host)?
+   ip route get 1.1.1.1                     # the host itself must reach the internet
+   sudo nft list ruleset | grep -iE 'hook forward|policy drop'   # a competing table (docker/ufw/firewalld) dropping forward?
+   ```
+   Reading the counters for a guest→`1.1.1.1` attempt:
+   - `forward … iifname <tap> oifname <egress> accept` **and** the `postrouting …
+     masquerade` counters both climb, but no reply → return path / an upstream
+     firewall is dropping the masqueraded traffic.
+   - the `forward … accept` counter does **not** climb → packets aren't being
+     forwarded: `ip_forward=0`, a competing `forward` chain with `policy drop`
+     (Docker/ufw/firewalld on the KVM host), or a routing problem.
+   - `masquerade` doesn't climb but `forward accept` does → NAT not applied
+     (egress interface mismatch); confirm `egress` matches `ip route get 1.1.1.1`.
+
+   > After deploying a node-agent fix, **existing machines keep their old rules**
+   > (rules are written at boot). Destroy/recreate the machine, or stop+start it,
+   > to pick up the new ruleset.
 
 7. **Authenticated agent channel.** Temporarily blank/!wrong-token a control-plane
    restart → agent calls 401 and machines go to `error` with reason; restore the

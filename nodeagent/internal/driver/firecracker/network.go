@@ -64,7 +64,14 @@ func ensureNftTable() error {
 	if err := run("nft", "add", "table", "ip", nftTable); err != nil {
 		return err
 	}
-	// Forward chain with default policy accept (per-tap chains enforce deny).
+	// Input chain (default policy accept; per-tap rules drop guest→host). The
+	// forward hook never sees host-destined traffic, so guest→host services
+	// (the node-agent) can only be blocked here.
+	if err := run("nft", "add", "chain", "ip", nftTable, "input",
+		"{ type filter hook input priority 0 ; }"); err != nil {
+		return err
+	}
+	// Forward chain with default policy accept (per-tap rules enforce deny).
 	if err := run("nft", "add", "chain", "ip", nftTable, "forward",
 		"{ type filter hook forward priority 0 ; }"); err != nil {
 		return err
@@ -120,34 +127,49 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 func commentTag(tap string) string { return "proteos:" + tap }
 
 // egressRules builds the ordered nft rule argument lists implementing the
-// default-deny egress policy for one tap. It is pure (no I/O) so it can be unit
-// tested. The rules are evaluated in order on the forward hook:
-//  1. allow established/related return traffic
-//  2. DROP guest → private ranges (host, agent, control plane, peers)
-//  3. allow guest → anywhere else (the internet)
+// default-deny policy for one tap. It is pure (no I/O) so it can be unit tested.
 //
-// Every rule carries a comment tag (the tap name) so teardownTap can find and
-// delete exactly this machine's rules. The comment is wrapped in literal double
-// quotes because the tag contains a ':' that nft rejects unquoted; we exec nft
-// directly (no shell), so the quotes must be in the argument itself.
+// input hook (guest → host-local services):
+//   - allow established/related return traffic (Phase 3 host→guest terminal)
+//   - DROP everything else — the guest must not reach the node-agent etc.
+//
+// forward hook (guest → routed destinations):
+//   - allow established/related return traffic
+//   - DROP guest → private ranges (host, agent, control plane, peers)
+//   - allow guest → anywhere else (the internet)
+//
+// postrouting: masquerade the guest to the internet.
+//
+// Every rule carries a `counter` (so `nft list table ip proteos` shows per-rule
+// hit counts for debugging) and a comment tag (the tap name) so teardownTap can
+// find and delete exactly this machine's rules. The comment is wrapped in
+// literal double quotes because the tag contains a ':' that nft rejects
+// unquoted; we exec nft directly (no shell), so the quotes must be in the
+// argument itself.
 func egressRules(tap, guestCIDR, egress string) [][]string {
 	tag := `"` + commentTag(tap) + `"`
 	return [][]string{
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ct", "state", "established,related", "accept", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "oifname", tap, "ct", "state", "established,related", "accept", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "10.0.0.0/8", "drop", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "172.16.0.0/12", "drop", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "192.168.0.0/16", "drop", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "169.254.0.0/16", "drop", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "oifname", egress, "accept", "comment", tag},
-		{"add", "rule", "ip", nftTable, "postrouting", "ip", "saddr", guestCIDR, "oifname", egress, "masquerade", "comment", tag},
+		// input: deny guest → host, except return traffic.
+		{"add", "rule", "ip", nftTable, "input", "iifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "iifname", tap, "counter", "drop", "comment", tag},
+		// forward: default-deny egress.
+		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "forward", "oifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "10.0.0.0/8", "counter", "drop", "comment", tag},
+		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "172.16.0.0/12", "counter", "drop", "comment", tag},
+		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "192.168.0.0/16", "counter", "drop", "comment", tag},
+		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "169.254.0.0/16", "counter", "drop", "comment", tag},
+		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "oifname", egress, "counter", "accept", "comment", tag},
+		// postrouting: NAT the guest out to the internet.
+		{"add", "rule", "ip", nftTable, "postrouting", "ip", "saddr", guestCIDR, "oifname", egress, "counter", "masquerade", "comment", tag},
 	}
 }
 
 // teardownTap removes this machine's nft rules (by comment tag) and deletes the
 // tap. Best-effort: missing objects are not an error.
 func teardownTap(tap string) {
-	// Delete every rule tagged for this tap from both chains.
+	// Delete every rule tagged for this tap from all three chains.
+	deleteRulesByComment("input", commentTag(tap))
 	deleteRulesByComment("forward", commentTag(tap))
 	deleteRulesByComment("postrouting", commentTag(tap))
 	if linkExists(tap) {

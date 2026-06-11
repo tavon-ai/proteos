@@ -45,6 +45,43 @@ func TestEgressRulesQuoteCommentTag(t *testing.T) {
 	}
 }
 
+// ruleHas reports whether token appears anywhere in the rule arg list.
+func ruleHas(rule []string, token string) bool {
+	for _, a := range rule {
+		if a == token {
+			return true
+		}
+	}
+	return false
+}
+
+// Regression for "guest could reach the node-agent on the gateway IP": the
+// forward hook never sees host-destined traffic, so there must be an input-hook
+// drop for the tap. We also require the established/related accept so Phase 3's
+// host→guest terminal keeps working.
+func TestEgressRulesDenyGuestToHost(t *testing.T) {
+	rules := egressRules("tape87d0754", "172.30.0.2/32", "eth0")
+
+	var inputDrop, inputReturn bool
+	for _, r := range rules {
+		if !ruleHas(r, "input") {
+			continue
+		}
+		if ruleHas(r, "drop") {
+			inputDrop = true
+		}
+		if ruleHas(r, "established,related") && ruleHas(r, "accept") {
+			inputReturn = true
+		}
+	}
+	if !inputDrop {
+		t.Error("no input-hook drop for the tap: guest could reach host services (node-agent)")
+	}
+	if !inputReturn {
+		t.Error("no input-hook established/related accept: host→guest return traffic would be dropped")
+	}
+}
+
 // The value nft stores (the comment with its surrounding quotes stripped) must
 // equal the tag teardownTap searches for via deleteRulesByComment, or cleanup
 // would never match these rules.
