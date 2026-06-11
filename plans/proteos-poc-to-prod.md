@@ -398,7 +398,7 @@ browser→gateway→guest path that code-server and agents will reuse.
 - [x] `WS /gw/terminal` authenticates the user, authorizes ownership of the target VM,
       and proxies to the guest — **no VM port is publicly reachable**.
 - [x] React terminal is interactive (input/output, resize) against a real shell in the VM.
-- [ ] Terminal access is denied for users who don't own the machine / aren't logged in.
+- [x] Terminal access is denied for users who don't own the machine / aren't logged in.
 - [x] PTY sessions live in the guest agent, decoupled from the WS connection: a dropped
       WS reconnects to the same shell with scrollback intact (tmux-like semantics).
 - [x] Gateway↔guest channel is authenticated (vsock or mTLS); WS upgrades validate
