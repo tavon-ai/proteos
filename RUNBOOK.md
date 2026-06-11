@@ -269,3 +269,11 @@ Tick each row of the Phase 2 checklist in `plans/proteos-poc-to-prod.md`.
 - Containers can't reach a `127.0.0.1` agent — use the KVM host's LAN IP (split
   VMs) or `host.docker.internal` (same host).
 - On plain HTTP keep `PROTEOS_COOKIE_SECURE=false`; put TLS in front for real use.
+- **Default-deny system FORWARD policy** (Docker, ufw, or a manual `iptables -P
+  FORWARD DROP` on the KVM host): the guest gets no internet even though the
+  `proteos` forward rules accept it, because that drop lives in a separate
+  iptables-managed `ip filter` chain our table can't override. The driver detects
+  the `ip filter` FORWARD chain and adds tap accept rules there. Caveat: a `ufw
+  reload` / `docker` restart can flush those — they're reapplied on the next
+  machine boot. Diagnose with `sudo nft list ruleset | grep -iE 'hook forward'`
+  (look for `policy drop`).

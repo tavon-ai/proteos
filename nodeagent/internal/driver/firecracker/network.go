@@ -91,6 +91,11 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 		return err
 	}
 
+	// Idempotency: drop any rules a prior boot of this tap left behind. stop is
+	// a plain shutdown that leaves the tap + rules in place, so start re-runs
+	// setupTap; without this, every restart would append duplicate rules.
+	deleteTapRules(tap)
+
 	// Tap device (idempotent: skip if it already exists).
 	if !linkExists(tap) {
 		if err := run("ip", "tuntap", "add", tap, "mode", "tap"); err != nil {
@@ -117,7 +122,13 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 			return err
 		}
 	}
-	return nil
+
+	// Punch this tap's forwarded traffic through the system FORWARD chain. A
+	// default-deny FORWARD policy (Docker, ufw, or a manual `iptables -P FORWARD
+	// DROP`) lives in the iptables-managed `ip filter` table — a separate base
+	// chain whose drop our `proteos` accept cannot override, so the accept has
+	// to be added there too. No-op on hosts without that chain.
+	return allowForwardInFilter(tap, egress)
 }
 
 // commentTag is the nft comment value used to tag a tap's rules. It contains a
@@ -165,22 +176,50 @@ func egressRules(tap, guestCIDR, egress string) [][]string {
 	}
 }
 
-// teardownTap removes this machine's nft rules (by comment tag) and deletes the
-// tap. Best-effort: missing objects are not an error.
+// allowForwardInFilter adds accept rules for this tap's forwarded traffic to the
+// iptables-managed `ip filter` FORWARD chain, so a default-deny FORWARD policy
+// there (Docker/ufw/manual) doesn't silently drop guest egress. Our proteos
+// accept can't override another base chain's drop — the accept must live in that
+// chain. No-op when the chain is absent (no such policy to defeat). The rules
+// carry our comment tag so deleteTapRules removes them like the rest.
+func allowForwardInFilter(tap, egress string) error {
+	if !nftChainExists("filter", "FORWARD") {
+		return nil
+	}
+	tag := `"` + commentTag(tap) + `"`
+	if err := run("nft", "add", "rule", "ip", "filter", "FORWARD",
+		"iifname", tap, "oifname", egress, "counter", "accept", "comment", tag); err != nil {
+		return err
+	}
+	return run("nft", "add", "rule", "ip", "filter", "FORWARD",
+		"iifname", egress, "oifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag)
+}
+
+// teardownTap removes this machine's nft rules and deletes the tap. Best-effort:
+// missing objects are not an error.
 func teardownTap(tap string) {
-	// Delete every rule tagged for this tap from all three chains.
-	deleteRulesByComment("input", commentTag(tap))
-	deleteRulesByComment("forward", commentTag(tap))
-	deleteRulesByComment("postrouting", commentTag(tap))
+	deleteTapRules(tap)
 	if linkExists(tap) {
 		_ = run("ip", "link", "del", tap)
 	}
 }
 
-// deleteRulesByComment removes all rules in a chain whose comment matches tag.
-// nft has no "delete by comment", so we list handles and delete each.
-func deleteRulesByComment(chain, tag string) {
-	out, err := runOut("nft", "-a", "list", "chain", "ip", nftTable, chain)
+// deleteTapRules removes every rule tagged for this tap, across our proteos
+// chains and the system filter FORWARD chain. Used by teardown and to make
+// setupTap idempotent across a stop→start.
+func deleteTapRules(tap string) {
+	tag := commentTag(tap)
+	deleteRulesByComment(nftTable, "input", tag)
+	deleteRulesByComment(nftTable, "forward", tag)
+	deleteRulesByComment(nftTable, "postrouting", tag)
+	deleteRulesByComment("filter", "FORWARD", tag)
+}
+
+// deleteRulesByComment removes all rules in a table's chain whose comment
+// matches tag. nft has no "delete by comment", so we list handles and delete
+// each. Best-effort: a missing table/chain just yields no matches.
+func deleteRulesByComment(table, chain, tag string) {
+	out, err := runOut("nft", "-a", "list", "chain", "ip", table, chain)
 	if err != nil {
 		return
 	}
@@ -194,8 +233,13 @@ func deleteRulesByComment(chain, tag string) {
 			continue
 		}
 		handle := strings.TrimSpace(line[idx+len("# handle "):])
-		_ = run("nft", "delete", "rule", "ip", nftTable, chain, "handle", handle)
+		_ = run("nft", "delete", "rule", "ip", table, chain, "handle", handle)
 	}
+}
+
+// nftChainExists reports whether the given ip-family table/chain is present.
+func nftChainExists(table, chain string) bool {
+	return exec.Command("nft", "list", "chain", "ip", table, chain).Run() == nil
 }
 
 func linkExists(name string) bool {
