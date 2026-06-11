@@ -23,16 +23,33 @@ GUEST_ECHO_REMOTE="/root/vsock-echo.py"
 
 # guest_start_echo installs and launches the vsock echo server in the guest,
 # listening on $VSOCK_PORT until killed. Idempotent (kills any previous one).
+#
+# The server daemonizes itself (double-fork + new session + fds → /dev/null)
+# AFTER a synchronous bind(), so the launching `ssh host python3 file.py`:
+#   - returns 0 the moment the listener is bound (no orphaned fd holds the SSH
+#     channel open — avoids the classic `ssh 'cmd &'` hang), and
+#   - returns non-zero with the reason in the log if bind() fails (e.g. the guest
+#     kernel/python lacks AF_VSOCK).
 guest_start_echo() {
   guest_ssh "cat > $GUEST_ECHO_REMOTE" <<PY
-import socket, sys
+import socket, os, sys
+LOG = "/tmp/vsock-echo.log"
 try:
     s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
     s.bind((socket.VMADDR_CID_ANY, $VSOCK_PORT))
     s.listen()
 except Exception as e:
-    sys.stderr.write("vsock-echo: %s\n" % e)
+    with open(LOG, "w") as f:
+        f.write("vsock-echo: %s\n" % e)
     sys.exit(1)
+# daemonize so the launcher returns immediately while we keep serving.
+if os.fork():
+    os._exit(0)
+os.setsid()
+if os.fork():
+    os._exit(0)
+null = os.open("/dev/null", os.O_RDWR)
+os.dup2(null, 0); os.dup2(null, 1); os.dup2(null, 2)
 while True:
     c, _ = s.accept()
     while True:
@@ -42,21 +59,12 @@ while True:
         c.sendall(d)
     c.close()
 PY
-  # Launch fully detached: redirect ALL three fds (incl. stdin from /dev/null)
-  # and setsid, otherwise the backgrounded process keeps the SSH session's fds
-  # open and `ssh host 'cmd &'` hangs waiting for the channel to close.
-  guest_ssh "pkill -f $GUEST_ECHO_REMOTE 2>/dev/null || true; \
-    rm -f /tmp/vsock-echo.log; \
-    setsid python3 $GUEST_ECHO_REMOTE >/tmp/vsock-echo.log 2>&1 </dev/null & \
-    true"
-  # Give the listener a moment to bind, then fail loudly if it crashed (e.g. the
-  # guest kernel/python lacks AF_VSOCK, or port already in use).
-  sleep 1
-  if guest_ssh "test -s /tmp/vsock-echo.log"; then
-    die "guest vsock echo server failed to start: $(guest_ssh cat /tmp/vsock-echo.log 2>/dev/null)"
+  guest_ssh "pkill -f $GUEST_ECHO_REMOTE 2>/dev/null; rm -f /tmp/vsock-echo.log; true"
+  # Bind happens synchronously before the daemon detaches, so a 0 exit here means
+  # the listener is already up — no sleep/poll needed.
+  if ! guest_ssh "python3 $GUEST_ECHO_REMOTE"; then
+    die "guest vsock echo server failed to start: $(guest_ssh cat /tmp/vsock-echo.log 2>/dev/null) (check guest virtio-vsock: ls /dev/vsock)"
   fi
-  guest_ssh "pgrep -f $GUEST_ECHO_REMOTE >/dev/null" ||
-    die "guest vsock echo server is not running (check guest virtio-vsock support: ls /dev/vsock)"
 }
 
 # boot_with_vsock <uds-path> [extra-boot-args] — full configure + boot with a
