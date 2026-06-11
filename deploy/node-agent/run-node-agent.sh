@@ -33,6 +33,10 @@ fi
 : "${PROTEOS_FIRECRACKER_BIN:=/usr/local/bin/firecracker}"
 : "${PROTEOS_JAILER_BIN:=/usr/local/bin/jailer}"
 : "${PROTEOS_AGENT_SUBNET:=172.30.0.0/24}"
+# Phase 4: per-machine LUKS volumes (disk + snapshot, encrypted at rest) and the
+# cryptsetup binary. The volumes dir MUST live outside PROTEOS_CHROOT_BASE_DIR.
+: "${PROTEOS_AGENT_VOLUMES_DIR:=/var/lib/proteos/volumes}"
+: "${PROTEOS_CRYPTSETUP_BIN:=/usr/sbin/cryptsetup}"
 # Preflight-only: must match the control plane's PROTEOS_KERNEL_REF/ROOTFS_REF.
 : "${PROTEOS_KERNEL_REF:=vmlinux}"
 : "${PROTEOS_ROOTFS_REF:=ubuntu-24.04.ext4}"
@@ -40,7 +44,12 @@ fi
 
 export PROTEOS_AGENT_ADDR PROTEOS_AGENT_DRIVER PROTEOS_AGENT_DATA_DIR \
        PROTEOS_AGENT_IMAGES_DIR PROTEOS_CHROOT_BASE_DIR PROTEOS_FIRECRACKER_BIN \
-       PROTEOS_JAILER_BIN PROTEOS_AGENT_SUBNET PROTEOS_AGENT_TOKEN
+       PROTEOS_JAILER_BIN PROTEOS_AGENT_SUBNET PROTEOS_AGENT_TOKEN \
+       PROTEOS_AGENT_VOLUMES_DIR PROTEOS_CRYPTSETUP_BIN
+# Optional TLS for the agent channel (Phase 4 decision #3): export only if both
+# are set, so an unset pair stays plain HTTP.
+[[ "${PROTEOS_AGENT_TLS_CERT:-}" && "${PROTEOS_AGENT_TLS_KEY:-}" ]] && \
+  export PROTEOS_AGENT_TLS_CERT PROTEOS_AGENT_TLS_KEY
 
 fail() { echo "[fail] $*" >&2; exit 1; }
 ok()   { echo "[ ok ] $*"; }
@@ -62,10 +71,16 @@ preflight() {
   [[ -x "$PROTEOS_JAILER_BIN" ]]      || fail "jailer not executable at $PROTEOS_JAILER_BIN (set PROTEOS_JAILER_BIN)"
   command -v ip  >/dev/null || fail "'ip' (iproute2) not found"
   command -v nft >/dev/null || fail "'nft' (nftables) not found"
+  # Phase 4: cryptsetup is needed to format/open the per-machine LUKS volumes.
+  [[ -x "$PROTEOS_CRYPTSETUP_BIN" ]] || command -v cryptsetup >/dev/null || \
+    fail "cryptsetup not found at $PROTEOS_CRYPTSETUP_BIN (set PROTEOS_CRYPTSETUP_BIN; apt install cryptsetup)"
   [[ -r "$PROTEOS_AGENT_IMAGES_DIR/$PROTEOS_KERNEL_REF" ]] || fail "kernel image missing: $PROTEOS_AGENT_IMAGES_DIR/$PROTEOS_KERNEL_REF"
   [[ -r "$PROTEOS_AGENT_IMAGES_DIR/$PROTEOS_ROOTFS_REF" ]] || fail "rootfs image missing: $PROTEOS_AGENT_IMAGES_DIR/$PROTEOS_ROOTFS_REF"
-  mkdir -p "$PROTEOS_AGENT_DATA_DIR" "$PROTEOS_CHROOT_BASE_DIR"
-  ok "preflight passed (kvm, firecracker, jailer, ip, nft, images)"
+  # The volumes dir holds encrypted disk+snapshot containers; keep it 0700 and
+  # OUTSIDE the jail base so jail teardown never deletes machine state.
+  mkdir -p "$PROTEOS_AGENT_DATA_DIR" "$PROTEOS_CHROOT_BASE_DIR" "$PROTEOS_AGENT_VOLUMES_DIR"
+  chmod 700 "$PROTEOS_AGENT_VOLUMES_DIR"
+  ok "preflight passed (kvm, firecracker, jailer, ip, nft, cryptsetup, images)"
 }
 
 case "${1:-run}" in

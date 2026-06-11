@@ -43,39 +43,43 @@ func (l jailLayout) vsockUDS() string {
 	return filepath.Join(l.root(), vsockUDSName)
 }
 
-// prepareChroot creates the jail root, copies the pinned kernel and a fresh
-// writable copy of the base rootfs into it, and chowns everything to the
-// per-VM uid/gid. Returns the in-jail paths the API calls must reference.
-func prepareChroot(l jailLayout, kernelSrc, rootfsSrc string, uid, gid int) (kernelInJail, rootfsInJail string, err error) {
-	// Start from a clean jail. stop is a plain shutdown that leaves the chroot in
-	// place, so on a restart the jailer's mknod of /dev/net/tun (and /dev/kvm)
-	// would fail with EEXIST. Wiping first also realises the plan's "fresh
-	// writable rootfs copy per boot". On a first boot this is a no-op.
+// prepareColdJail wipes any prior jail and lays down fresh scaffolding for a cold
+// boot: the run dir (for the API socket) and the pinned kernel. The rootfs is NOT
+// copied into the jail — it lives as rootfs.ext4 on the mounted encrypted volume
+// (/state), so the per-machine state survives across hibernate (Phase 4
+// decision #1). The caller mounts the volume and chowns the subtree afterward.
+//
+// Wiping first is required: stop leaves the chroot in place, so on a re-boot the
+// jailer's mknod of /dev/net/tun (and /dev/kvm) would fail with EEXIST. The
+// volume is unmounted before this runs (bootOnce closes it), so removeJail never
+// recurses into a live /state mount.
+func prepareColdJail(l jailLayout, kernelSrc string) (kernelInJail string, err error) {
+	if err := freshJailRoot(l); err != nil {
+		return "", err
+	}
+	if err := copyFile(kernelSrc, filepath.Join(l.root(), "vmlinux"), 0o644); err != nil {
+		return "", fmt.Errorf("copy kernel: %w", err)
+	}
+	return "/vmlinux", nil // as the chrooted VMM sees it
+}
+
+// prepareResumeJail wipes any prior jail and creates just the run dir. On resume
+// the kernel is not reloaded (it lives in the snapshotted guest RAM) and the
+// rootfs + snapshot files come from the mounted volume, so no files are copied
+// into the jail.
+func prepareResumeJail(l jailLayout) error {
+	return freshJailRoot(l)
+}
+
+// freshJailRoot removes any prior jail subtree and creates <root>/run.
+func freshJailRoot(l jailLayout) error {
 	if err := removeJail(l); err != nil {
-		return "", "", fmt.Errorf("clean jail: %w", err)
+		return fmt.Errorf("clean jail: %w", err)
 	}
-
-	root := l.root()
-	if err := os.MkdirAll(filepath.Join(root, "run"), 0o755); err != nil {
-		return "", "", fmt.Errorf("mkdir jail: %w", err)
+	if err := os.MkdirAll(filepath.Join(l.root(), "run"), 0o755); err != nil {
+		return fmt.Errorf("mkdir jail: %w", err)
 	}
-
-	if err := copyFile(kernelSrc, filepath.Join(root, "vmlinux"), 0o644); err != nil {
-		return "", "", fmt.Errorf("copy kernel: %w", err)
-	}
-	// A fresh per-boot copy of the rootfs (writable, discarded on destroy) —
-	// the plan's "rootfs = fresh writable copy of the pinned base image".
-	if err := copyFile(rootfsSrc, filepath.Join(root, "rootfs.ext4"), 0o644); err != nil {
-		return "", "", fmt.Errorf("copy rootfs: %w", err)
-	}
-
-	// chown the whole jail subtree to the unprivileged VMM user.
-	if err := chownRecursive(filepath.Join(l.chrootBaseDir, "firecracker", l.id), uid, gid); err != nil {
-		return "", "", fmt.Errorf("chown jail: %w", err)
-	}
-
-	// Paths as the chrooted VMM sees them (relative to its root).
-	return "/vmlinux", "/rootfs.ext4", nil
+	return nil
 }
 
 // launchJailer execs the jailer to start a daemonized, chrooted, uid-dropped

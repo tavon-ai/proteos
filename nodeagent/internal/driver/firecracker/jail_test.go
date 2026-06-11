@@ -10,9 +10,10 @@ import (
 
 // Regression: stop is a plain shutdown that leaves the chroot in place, so the
 // next start's jailer would mknod /dev/net/tun into a jail that already has it
-// (EEXIST). prepareChroot must wipe the jail first so a restart starts clean.
-// (uid/gid = current euid so chownRecursive works without root.)
-func TestPrepareChrootCleansStaleJail(t *testing.T) {
+// (EEXIST). prepareColdJail must wipe the jail first so a restart starts clean.
+// Phase 4: the rootfs is no longer copied into the jail (it lives on the
+// encrypted volume's /state), so only the kernel + run dir are laid down.
+func TestPrepareColdJailCleansStaleJail(t *testing.T) {
 	base := t.TempDir()
 	l := jailLayout{chrootBaseDir: base, id: "11111111-2222-3333-4444-555555555555"}
 
@@ -25,28 +26,29 @@ func TestPrepareChrootCleansStaleJail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Fake pinned kernel + rootfs sources to copy in.
 	kernelSrc := filepath.Join(base, "vmlinux")
-	rootfsSrc := filepath.Join(base, "rootfs.ext4")
-	for _, f := range []string{kernelSrc, rootfsSrc} {
-		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(kernelSrc, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	kInJail, rInJail, err := prepareChroot(l, kernelSrc, rootfsSrc, os.Geteuid(), os.Getegid())
+	kInJail, err := prepareColdJail(l, kernelSrc)
 	if err != nil {
-		t.Fatalf("prepareChroot: %v", err)
+		t.Fatalf("prepareColdJail: %v", err)
 	}
-	if kInJail != "/vmlinux" || rInJail != "/rootfs.ext4" {
-		t.Fatalf("in-jail paths = %q, %q", kInJail, rInJail)
+	if kInJail != "/vmlinux" {
+		t.Fatalf("in-jail kernel path = %q", kInJail)
 	}
 	if _, err := os.Stat(staleDev); !os.IsNotExist(err) {
-		t.Errorf("stale /dev/net/tun survived prepareChroot (err=%v); jailer mknod would EEXIST on restart", err)
+		t.Errorf("stale /dev/net/tun survived prepareColdJail (err=%v); jailer mknod would EEXIST on restart", err)
 	}
-	for _, f := range []string{"vmlinux", "rootfs.ext4"} {
-		if _, err := os.Stat(filepath.Join(l.root(), f)); err != nil {
-			t.Errorf("missing %s in fresh jail: %v", f, err)
-		}
+	if _, err := os.Stat(filepath.Join(l.root(), "vmlinux")); err != nil {
+		t.Errorf("missing kernel in fresh jail: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(l.root(), "run")); err != nil {
+		t.Errorf("missing run dir in fresh jail: %v", err)
+	}
+	// The rootfs must NOT be in the jail anymore (it lives on the volume).
+	if _, err := os.Stat(filepath.Join(l.root(), "rootfs.ext4")); !os.IsNotExist(err) {
+		t.Errorf("rootfs.ext4 should not be copied into the jail (Phase 4): err=%v", err)
 	}
 }

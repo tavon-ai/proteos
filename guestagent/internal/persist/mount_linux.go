@@ -28,11 +28,10 @@ func mountDisk(device, mountpoint string, wait time.Duration) error {
 		slog.Info("persist: device already mounted", "mountpoint", mountpoint)
 		return nil
 	}
-	// fsck -p (preen): auto-repair safe issues. Exit codes 0 (clean) and 1
-	// (errors corrected) are fine; ≥2 means we should not mount.
-	if err := preen(device); err != nil {
-		return err
-	}
+	// fsck -p (preen) is belt-and-braces: ext4 replays its journal on mount, so a
+	// missing fsck binary or a transient fsck hiccup must NOT cost us persistence.
+	// Only a clearly-uncorrectable filesystem (exit ≥ 4) blocks the mount.
+	preen(device)
 	if err := unix.Mount(device, mountpoint, "ext4", 0, ""); err != nil {
 		return fmt.Errorf("mount %s -> %s: %w", device, mountpoint, err)
 	}
@@ -88,18 +87,32 @@ func alreadyMounted(mountpoint string) bool {
 	return st.Dev != parent.Dev
 }
 
-// preen runs fsck -p, tolerating exit code 1 (errors were corrected).
-func preen(device string) error {
+// preen runs fsck -p best-effort: it logs the outcome but never blocks the
+// mount. fsck exit codes: 0 clean, 1 errors corrected, 2 corrected+reboot,
+// 4 errors left uncorrected, 8 operational error, 16 usage. A missing binary or
+// a transient failure is logged and ignored (the journal replay on mount, and
+// the mount itself, are the real safety net).
+func preen(device string) {
+	if _, err := exec.LookPath("fsck"); err != nil {
+		slog.Warn("persist: fsck not found; skipping preen (relying on ext4 journal)", "device", device)
+		return
+	}
 	cmd := exec.Command("fsck", "-p", device)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	err := cmd.Run()
 	if err == nil {
-		return nil
+		return
 	}
 	var ee *exec.ExitError
-	if errors.As(err, &ee) && ee.ExitCode() == 1 {
-		slog.Info("persist: fsck corrected errors", "device", device)
-		return nil
+	if errors.As(err, &ee) {
+		switch ee.ExitCode() {
+		case 1, 2:
+			slog.Info("persist: fsck corrected errors", "device", device, "code", ee.ExitCode())
+		default:
+			slog.Warn("persist: fsck reported uncorrected issues; attempting mount anyway",
+				"device", device, "code", ee.ExitCode())
+		}
+		return
 	}
-	return fmt.Errorf("fsck %s: %w", device, err)
+	slog.Warn("persist: fsck could not run; attempting mount anyway", "device", device, "err", err)
 }

@@ -67,6 +67,8 @@ func testDriver(t *testing.T) (*firecracker.Driver, string) {
 		ImagesDir:      imagesDir,
 		JailUIDStart:   100000,
 		JailUIDCount:   1000,
+		VolumesDir:     t.TempDir(), // Phase 4: per-machine LUKS containers
+		CryptsetupBin:  envOr("PROTEOS_CRYPTSETUP_BIN", "cryptsetup"),
 	}, store)
 	return d, ""
 }
@@ -126,6 +128,55 @@ func TestStopGraceful(t *testing.T) {
 	waitState(t, d, id, api.StateStopped, 20*time.Second)
 }
 
+// TestHibernateResumeCycle proves the Phase 4 driver mechanics on real
+// Firecracker: cold boot → hibernate (Full snapshot onto the encrypted volume,
+// volume closed afterward) → resume (boot=resumed, snapshot consumed). The
+// in-guest file/process survival proof is the 4.6 acceptance pass (it needs a
+// rootfs with the 4.3 guest agent baked in); here we verify the volume +
+// snapshot lifecycle the control plane observes via Status.
+func TestHibernateResumeCycle(t *testing.T) {
+	d, _ := testDriver(t)
+	id := "dddddddd-0000-0000-0000-000000000044"
+	ctx := context.Background()
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Destroy(ctx, id) })
+	st := waitState(t, d, id, api.StateRunning, 30*time.Second)
+	if st.Boot != api.BootCold {
+		t.Fatalf("first boot=%q, want cold", st.Boot)
+	}
+
+	// Hibernate: pause + snapshot, then volume closed.
+	if err := d.Stop(ctx, id, driver.StopModeHibernate); err != nil {
+		t.Fatalf("hibernate: %v", err)
+	}
+	st = waitState(t, d, id, api.StateStopped, 30*time.Second)
+	if !st.Snapshot.Present || st.Snapshot.FCVersion == "" || st.Snapshot.MemBytes == 0 {
+		t.Fatalf("snapshot metadata incomplete after hibernate: %+v", st.Snapshot)
+	}
+
+	// The LUKS mapper must be closed after stop (cryptsetup status != active).
+	mapper := "proteos-dddddddd" // proteos-<id8>
+	out, _ := exec.Command("cryptsetup", "status", mapper).CombinedOutput()
+	if strings.Contains(string(out), "is active") {
+		t.Fatalf("volume mapper %s still active after hibernate:\n%s", mapper, out)
+	}
+
+	// Resume from the snapshot.
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("resume ensure: %v", err)
+	}
+	st = waitState(t, d, id, api.StateRunning, 30*time.Second)
+	if st.Boot != api.BootResumed {
+		t.Fatalf("after resume boot=%q, want resumed", st.Boot)
+	}
+	if st.Snapshot.Present {
+		t.Fatalf("snapshot should be consumed after resume")
+	}
+}
+
 func TestEgressDefaultDeny(t *testing.T) {
 	d, _ := testDriver(t)
 	id := "cccccccc-0000-0000-0000-000000000003"
@@ -157,6 +208,9 @@ func TestEgressDefaultDeny(t *testing.T) {
 func spec(id string) driver.VMSpec {
 	return driver.VMSpec{
 		MachineID: id, Vcpus: 1, MemMiB: 256, KernelRef: "vmlinux", RootfsRef: "rootfs.ext4",
+		// Phase 4: a persistent disk + the volume key the driver luksOpens with.
+		Disks:     []driver.Disk{{ID: "disk-" + id, SizeMiB: 512}},
+		VolumeKey: []byte("0123456789abcdef0123456789abcdef"),
 	}
 }
 

@@ -5,12 +5,25 @@
 > 4.2 control-plane schema/lifecycle/key-broker, 4.3 guest-agent persist+SQLite+resume,
 > 4.5 dev-stack e2e + React. `go test ./...` green across all three modules (incl. the
 > `TestHibernateResumeE2E` dev-stack e2e: file survives stop/start, `boot:resumed`).
-> **Track B (Proxmox/Firecracker) remaining** — 4.0 spike `09-encrypted-disk.sh`,
-> 4.4 FirecrackerDriver volumes + hibernate/resume (`volume.go`/`snapshot.go`, the
-> `prepareChroot` split, version-guard fallback), 4.6 KVM acceptance pass. The
-> node-agent driver interface, state.Record, and FC `Stop` signature are already
-> extended to the Phase 4 contract; `firecracker.go` has TODO(4.4) markers where the
-> hibernate teardown plugs in.
+> **4.4 FirecrackerDriver landed (code-complete, needs Proxmox to verify)** —
+> `volume.go` (LUKS2 provision/open/mount/close, sizing), `snapshot.go` (pause+create,
+> load, version guard, consume, guest `/resume` hook), the `prepareChroot` →
+> `prepareColdJail`/`prepareResumeJail` split (rootfs now lives on the encrypted
+> `/state` volume, not the jail), cold-vs-resume dispatch with FC-version-mismatch /
+> restore-error cold-boot fallback, `Destroy`/`Reattach`/`cleanupHost` volume handling.
+> Cross-builds + `go vet` clean under `-tags firecracker`; a gated
+> `TestHibernateResumeCycle` exercises the volume/snapshot lifecycle on KVM.
+> `run-node-agent.sh` + `.env.example` updated (volumes dir, cryptsetup, optional TLS).
+> **Rootfs tooling updated for Phase 4** — `image/build-rootfs.sh` bakes the 4.3
+> guest agent (persist + SQLite + `/resume`, built from source), the systemd unit
+> documents disk mode (`/dev/vdb` → `/persist`, runs as root), the build warns if the
+> base lacks `fsck.ext4`, and the release stamp / manifest record
+> `features=terminal,persist,resume`. Guest `fsck` is best-effort so a missing binary
+> degrades to a journal-replay mount rather than disabling persistence. Run the script
+> on the Proxmox/Linux host and re-pin `PROTEOS_ROOTFS_REF` to the new `ga<gitshort>`.
+> **Track B remaining (run on KVM)** — 4.0 spike `09-encrypted-disk.sh`; 4.6 acceptance
+> pass: build/re-pin the rootfs, then the file/process-survival + no-plaintext-grep +
+> clock/entropy proofs on the Proxmox VM.
 > Prerequisites: Phase 2 (driver interface, jail layout, state store, lifecycle poller) and
 > Phase 3 (guest agent + vsock tunnel + gateway) — both landed. Phase 4 treats their
 > contracts as given and extends them; it does not rework the boot, tunnel, or gateway paths.

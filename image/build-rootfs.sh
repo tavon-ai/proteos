@@ -2,7 +2,9 @@
 # build-rootfs.sh — bake the ProteOS guest rootfs (Phase 3 decision #2).
 #
 # Takes the pinned Firecracker-CI base ext4, installs the statically-linked
-# guest agent binary, the proteos-guestagent systemd unit (enabled at boot), and
+# guest agent binary (Phase 4: with the persist + SQLite + /resume support — it
+# mounts the node-agent-attached /dev/vdb at /persist and bind-mounts $HOME/
+# workspace onto it), the proteos-guestagent systemd unit (enabled at boot), and
 # an /etc/proteos-release stamp, then emits:
 #
 #     proteos-rootfs-<base>-ga<gitshort>.ext4   (the baked image)
@@ -98,6 +100,16 @@ if [[ ! -e "$MNT/lib/systemd/systemd" && ! -e "$MNT/usr/lib/systemd/systemd" ]];
 fi
 ok "base confirmed systemd"
 
+# Phase 4: the guest agent preens /dev/vdb with fsck before mounting /persist.
+# The mount is a syscall (no `mount` binary needed) but fsck.ext4 (e2fsprogs)
+# should be present, or persistence falls back to a no-fsck mount. Warn loudly
+# if it is missing so the operator can add e2fsprogs to the base.
+if [[ -x "$MNT/sbin/fsck.ext4" || -x "$MNT/usr/sbin/fsck.ext4" ]]; then
+  ok "base ships fsck.ext4 (persist preen available)"
+else
+  log "WARNING: base image has no fsck.ext4 (e2fsprogs); /persist will mount without preen"
+fi
+
 log "installing guest agent + unit + release stamp"
 sudo install -D -m 0755 "$GA_BIN" "$MNT/usr/local/bin/guestagent"
 sudo install -D -m 0644 "$UNIT_SRC" "$MNT/etc/systemd/system/proteos-guestagent.service"
@@ -112,6 +124,7 @@ BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_GUESTAGENT_VERSION=$VERSION
+PROTEOS_GUESTAGENT_FEATURES=terminal,persist,resume
 PROTEOS_BUILD_AT=$BUILD_STAMP
 EOF
 
@@ -131,6 +144,7 @@ image          = $(basename "$OUT_IMG")
 sha256         = $SHA
 base_rootfs    = $BASE_NAME
 guestagent     = $VERSION
+features       = terminal,persist,resume
 built_at       = $BUILD_STAMP
 EOF
 ok "wrote $MANIFEST"

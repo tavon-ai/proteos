@@ -16,6 +16,14 @@ ExecStart=/usr/local/bin/guestagent
 Environment=PROTEOS_GUEST_LISTEN=vsock:1024
 Environment=PROTEOS_GUEST_SHELL=/bin/bash
 Environment=PROTEOS_GUEST_SCROLLBACK_KIB=256
+# Phase 4 (decision #7): persist mode. With PROTEOS_GUEST_PERSIST UNSET, the
+# agent runs in DISK mode — it waits for the persistent disk, fsck's it, mounts
+# it at /persist, and bind-mounts /persist/home→/root and /persist/workspace→
+# /workspace so $HOME + the workspace live on the encrypted disk. The device is
+# the node-agent-attached /dev/vdb. A missing disk degrades to ephemeral rather
+# than refusing terminals. The agent runs as root (no User= here) so it can
+# mount and, on resume, clock_settime + reseed the CRNG.
+Environment=PROTEOS_GUEST_PERSIST_DEV=/dev/vdb
 Restart=always
 RestartSec=1
 # The shell sessions are children of the agent; give them room.
