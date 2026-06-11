@@ -12,10 +12,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createDisk = `-- name: CreateDisk :one
+INSERT INTO disks (machine_id, size_mib)
+VALUES ($1, $2)
+RETURNING id, machine_id, size_mib, created_at
+`
+
+type CreateDiskParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	SizeMib   int32       `json:"size_mib"`
+}
+
+// Provision a machine's persistent disk at create time (1:1 with the machine).
+func (q *Queries) CreateDisk(ctx context.Context, arg CreateDiskParams) (Disk, error) {
+	row := q.db.QueryRow(ctx, createDisk, arg.MachineID, arg.SizeMib)
+	var i Disk
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.SizeMib,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createMachine = `-- name: CreateMachine :one
 INSERT INTO machines (user_id, host_id, state, kernel_ref, rootfs_ref, resource_spec)
 VALUES ($1, $2, 'requested', $3, $4, $5)
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot
 `
 
 type CreateMachineParams struct {
@@ -51,6 +75,8 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
 	)
 	return i, err
 }
@@ -81,6 +107,31 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	return i, err
 }
 
+const deleteSnapshot = `-- name: DeleteSnapshot :exec
+DELETE FROM snapshots WHERE machine_id = $1
+`
+
+func (q *Queries) DeleteSnapshot(ctx context.Context, machineID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSnapshot, machineID)
+	return err
+}
+
+const getDiskByMachineID = `-- name: GetDiskByMachineID :one
+SELECT id, machine_id, size_mib, created_at FROM disks WHERE machine_id = $1
+`
+
+func (q *Queries) GetDiskByMachineID(ctx context.Context, machineID pgtype.UUID) (Disk, error) {
+	row := q.db.QueryRow(ctx, getDiskByMachineID, machineID)
+	var i Disk
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.SizeMib,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getGitHubLink = `-- name: GetGitHubLink :one
 SELECT user_id, metadata, secret_ref, created_at, updated_at FROM github_links WHERE user_id = $1
 `
@@ -99,7 +150,7 @@ func (q *Queries) GetGitHubLink(ctx context.Context, userID pgtype.UUID) (Github
 }
 
 const getMachineByID = `-- name: GetMachineByID :one
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at FROM machines WHERE id = $1
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot FROM machines WHERE id = $1
 `
 
 func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, error) {
@@ -119,12 +170,14 @@ func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, 
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
 	)
 	return i, err
 }
 
 const getMachineByUserID = `-- name: GetMachineByUserID :one
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at FROM machines WHERE user_id = $1
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot FROM machines WHERE user_id = $1
 `
 
 func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (Machine, error) {
@@ -144,6 +197,8 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
 	)
 	return i, err
 }
@@ -183,6 +238,24 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.AvatarUrl,
 		&i.User.Status,
 		&i.User.CreatedAt,
+	)
+	return i, err
+}
+
+const getSnapshot = `-- name: GetSnapshot :one
+SELECT machine_id, fc_version, mem_bytes, kernel_ref, rootfs_ref, created_at FROM snapshots WHERE machine_id = $1
+`
+
+func (q *Queries) GetSnapshot(ctx context.Context, machineID pgtype.UUID) (Snapshot, error) {
+	row := q.db.QueryRow(ctx, getSnapshot, machineID)
+	var i Snapshot
+	err := row.Scan(
+		&i.MachineID,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -334,7 +407,7 @@ func (q *Queries) ListMachineEventsRecent(ctx context.Context, arg ListMachineEv
 }
 
 const listMachinesInStates = `-- name: ListMachinesInStates :many
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
 `
 
 // Used by the poller to find transitional machines to advance and running
@@ -362,6 +435,8 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 			&i.LastActiveAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DiskID,
+			&i.Boot,
 		); err != nil {
 			return nil, err
 		}
@@ -389,6 +464,76 @@ func (q *Queries) RevokeSession(ctx context.Context, tokenHash []byte) (pgtype.U
 	return id, err
 }
 
+const setMachineBoot = `-- name: SetMachineBoot :one
+UPDATE machines SET boot = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot
+`
+
+type SetMachineBootParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Boot *string     `json:"boot"`
+}
+
+// Record how the current run started ('cold' | 'resumed'); pass NULL to clear.
+func (q *Queries) SetMachineBoot(ctx context.Context, arg SetMachineBootParams) (Machine, error) {
+	row := q.db.QueryRow(ctx, setMachineBoot, arg.ID, arg.Boot)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
+	)
+	return i, err
+}
+
+const setMachineDisk = `-- name: SetMachineDisk :one
+UPDATE machines SET disk_id = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot
+`
+
+type SetMachineDiskParams struct {
+	ID     pgtype.UUID `json:"id"`
+	DiskID pgtype.UUID `json:"disk_id"`
+}
+
+// Attach the just-created disk to the machine row.
+func (q *Queries) SetMachineDisk(ctx context.Context, arg SetMachineDiskParams) (Machine, error) {
+	row := q.db.QueryRow(ctx, setMachineDisk, arg.ID, arg.DiskID)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.State,
+		&i.HostID,
+		&i.VmHandle,
+		&i.GuestIp,
+		&i.KernelRef,
+		&i.RootfsRef,
+		&i.ResourceSpec,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
+	)
+	return i, err
+}
+
 const setMachineRuntime = `-- name: SetMachineRuntime :one
 UPDATE machines
 SET vm_handle = $2,
@@ -396,7 +541,7 @@ SET vm_handle = $2,
     last_active_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot
 `
 
 type SetMachineRuntimeParams struct {
@@ -424,6 +569,8 @@ func (q *Queries) SetMachineRuntime(ctx context.Context, arg SetMachineRuntimePa
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
 	)
 	return i, err
 }
@@ -449,7 +596,7 @@ SET state = $1,
     last_error = $2,
     updated_at = now()
 WHERE id = $3 AND state = $4
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot
 `
 
 type UpdateMachineStateParams struct {
@@ -485,6 +632,8 @@ func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineState
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DiskID,
+		&i.Boot,
 	)
 	return i, err
 }
@@ -540,6 +689,48 @@ func (q *Queries) UpsertHostByName(ctx context.Context, arg UpsertHostByNamePara
 		&i.Name,
 		&i.AgentUrl,
 		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertSnapshot = `-- name: UpsertSnapshot :one
+INSERT INTO snapshots (machine_id, fc_version, mem_bytes, kernel_ref, rootfs_ref)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (machine_id) DO UPDATE
+    SET fc_version = EXCLUDED.fc_version,
+        mem_bytes  = EXCLUDED.mem_bytes,
+        kernel_ref = EXCLUDED.kernel_ref,
+        rootfs_ref = EXCLUDED.rootfs_ref,
+        created_at = now()
+RETURNING machine_id, fc_version, mem_bytes, kernel_ref, rootfs_ref, created_at
+`
+
+type UpsertSnapshotParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	FcVersion string      `json:"fc_version"`
+	MemBytes  int64       `json:"mem_bytes"`
+	KernelRef string      `json:"kernel_ref"`
+	RootfsRef string      `json:"rootfs_ref"`
+}
+
+// Record (replacing) the machine's current hibernation snapshot metadata. One
+// row per machine; consumed on resume / invalidated on cold stop via DeleteSnapshot.
+func (q *Queries) UpsertSnapshot(ctx context.Context, arg UpsertSnapshotParams) (Snapshot, error) {
+	row := q.db.QueryRow(ctx, upsertSnapshot,
+		arg.MachineID,
+		arg.FcVersion,
+		arg.MemBytes,
+		arg.KernelRef,
+		arg.RootfsRef,
+	)
+	var i Snapshot
+	err := row.Scan(
+		&i.MachineID,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.KernelRef,
+		&i.RootfsRef,
 		&i.CreatedAt,
 	)
 	return i, err

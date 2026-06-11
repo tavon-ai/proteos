@@ -16,6 +16,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
 	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	"github.com/tavon/proteos/controlplane/internal/testutil"
@@ -31,7 +32,7 @@ type stubNodeClient struct{}
 func (stubNodeClient) Ensure(context.Context, string, agentapi.EnsureRequest) (agentapi.EnsureResponse, error) {
 	return agentapi.EnsureResponse{}, nil
 }
-func (stubNodeClient) Stop(context.Context, string) error { return nil }
+func (stubNodeClient) Stop(context.Context, string, string) error { return nil }
 func (stubNodeClient) Status(context.Context, string) (agentapi.MachineStatus, error) {
 	return agentapi.MachineStatus{}, nil
 }
@@ -98,7 +99,7 @@ func setupCP(t *testing.T, dialer gateway.GuestDialer, origins []string) cpFixtu
 	sessions.SetRevocationListener(registry)
 	gw := gateway.NewProxy(origins, dialer, registry)
 
-	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), host.ID, machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
+	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
 	srv := &httpapi.Server{Sessions: sessions, Machines: svc, Broker: machine.NewBroker(), Queries: q, Gateway: gw}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

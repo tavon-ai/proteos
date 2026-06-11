@@ -3,12 +3,14 @@ import type { MachineState, MachineSummary } from "../api/client";
 import { useMachine, useMachineEvents, useMachineMutations } from "../api/hooks";
 import { TerminalPanel } from "./TerminalPanel";
 
-// Transitional states show a spinner and disable action buttons.
+// Transitional states show a spinner and disable action buttons. hibernating is
+// the Phase 4 stop=hibernate path (running → hibernating → stopped).
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
   "requested",
   "provisioning",
   "starting",
   "stopping",
+  "hibernating",
 ]);
 
 function isTransitional(s: MachineState): boolean {
@@ -49,6 +51,7 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
     <section className="machine-card">
       <div className="machine-header">
         <StateBadge state={machine.state} />
+        {machine.boot && <BootChip boot={machine.boot} />}
         {isTransitional(machine.state) && <span className="spinner" aria-label="working" />}
       </div>
 
@@ -68,6 +71,10 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
           <dd>
             {machine.kernel_ref} / {machine.rootfs_ref}
           </dd>
+        </div>
+        <div>
+          <dt>Disk</dt>
+          <dd>{formatDisk(machine.disk_mib ?? machine.resource_spec.disk_mib ?? null)}</dd>
         </div>
       </dl>
 
@@ -106,6 +113,24 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
 
 function StateBadge({ state }: { state: MachineState }) {
   return <span className={`badge badge-${state}`}>{state}</span>;
+}
+
+// BootChip shows how the current run started: "resumed" (from a hibernation
+// snapshot) or "cold". Hidden until the machine has booted at least once.
+function BootChip({ boot }: { boot: "cold" | "resumed" }) {
+  const label = boot === "resumed" ? "resumed" : "cold boot";
+  return (
+    <span className={`chip chip-boot chip-boot-${boot}`} title="How this run started">
+      {label}
+    </span>
+  );
+}
+
+// formatDisk renders a disk size in MiB as GiB when it divides evenly, else MiB.
+function formatDisk(mib: number | null): string {
+  if (mib == null || mib <= 0) return "—";
+  if (mib % 1024 === 0) return `${mib / 1024} GiB`;
+  return `${mib} MiB`;
 }
 
 function EventLog({ events }: { events: import("../api/client").MachineEvent[] }) {

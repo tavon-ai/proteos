@@ -2,6 +2,7 @@ package machine
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	agentapi "github.com/tavon/proteos/nodeagent/api"
 )
@@ -26,7 +28,7 @@ var (
 // as an interface so the service and poller are testable against a fake agent.
 type NodeClient interface {
 	Ensure(ctx context.Context, id string, req agentapi.EnsureRequest) (agentapi.EnsureResponse, error)
-	Stop(ctx context.Context, id string) error
+	Stop(ctx context.Context, id, mode string) error
 	Status(ctx context.Context, id string) (agentapi.MachineStatus, error)
 }
 
@@ -34,6 +36,7 @@ type NodeClient interface {
 type Spec struct {
 	Vcpus     int
 	MemMiB    int
+	DiskMiB   int // Phase 4: persistent disk size (default 10240)
 	KernelRef string
 	RootfsRef string
 }
@@ -42,18 +45,20 @@ type Spec struct {
 // state changes go through machine.Transition, so the audit log and SSE stream
 // stay consistent with the machines table.
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *store.Queries
-	nodes  NodeClient
-	broker *Broker
-	hostID pgtype.UUID
-	spec   Spec
+	pool    *pgxpool.Pool
+	q       *store.Queries
+	nodes   NodeClient
+	broker  *Broker
+	secrets secrets.Store
+	hostID  pgtype.UUID
+	spec    Spec
 }
 
 // NewService wires a lifecycle service. broker may be nil (publishing is then a
-// no-op), which keeps unit tests that don't care about SSE simple.
-func NewService(pool *pgxpool.Pool, nodes NodeClient, broker *Broker, hostID pgtype.UUID, spec Spec) *Service {
-	return &Service{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, hostID: hostID, spec: spec}
+// no-op), which keeps unit tests that don't care about SSE simple. sec holds
+// per-machine volume keys (Phase 4); it must be non-nil.
+func NewService(pool *pgxpool.Pool, nodes NodeClient, broker *Broker, sec secrets.Store, hostID pgtype.UUID, spec Spec) *Service {
+	return &Service{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, secrets: sec, hostID: hostID, spec: spec}
 }
 
 // Get returns the user's machine, or ErrNoMachine.
@@ -63,6 +68,31 @@ func (s *Service) Get(ctx context.Context, userID pgtype.UUID) (store.Machine, e
 		return store.Machine{}, ErrNoMachine
 	}
 	return m, err
+}
+
+// DiskFor returns the machine's persistent disk, or nil if none is provisioned.
+func (s *Service) DiskFor(ctx context.Context, machineID pgtype.UUID) (*store.Disk, error) {
+	d, err := s.q.GetDiskByMachineID(ctx, machineID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// SnapshotFor returns the machine's current hibernation snapshot, or nil if the
+// machine is not hibernated.
+func (s *Service) SnapshotFor(ctx context.Context, machineID pgtype.UUID) (*store.Snapshot, error) {
+	snap, err := s.q.GetSnapshot(ctx, machineID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &snap, nil
 }
 
 // GetByID returns the machine with the given id, or ErrNoMachine. Ownership is
@@ -89,7 +119,11 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID) (store.Machine
 		return store.Machine{}, fmt.Errorf("lookup existing machine: %w", err)
 	}
 
-	specJSON, _ := json.Marshal(map[string]int{"vcpus": s.spec.Vcpus, "mem_mib": s.spec.MemMiB})
+	diskMiB := s.spec.DiskMiB
+	if diskMiB <= 0 {
+		diskMiB = 10240
+	}
+	specJSON, _ := json.Marshal(map[string]int{"vcpus": s.spec.Vcpus, "mem_mib": s.spec.MemMiB, "disk_mib": diskMiB})
 	m, err := s.q.CreateMachine(ctx, store.CreateMachineParams{
 		UserID:       userID,
 		HostID:       s.hostID,
@@ -99,6 +133,21 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID) (store.Machine
 	})
 	if err != nil {
 		return store.Machine{}, fmt.Errorf("create machine: %w", err)
+	}
+
+	// Phase 4: allocate the persistent disk (1:1) and attach it to the machine,
+	// then mint the machine's LUKS volume key into the secret store. The key is
+	// delivered to the agent on every ensure and never persisted in Postgres.
+	disk, err := s.q.CreateDisk(ctx, store.CreateDiskParams{MachineID: m.ID, SizeMib: int32(diskMiB)})
+	if err != nil {
+		return store.Machine{}, fmt.Errorf("create disk: %w", err)
+	}
+	m, err = s.q.SetMachineDisk(ctx, store.SetMachineDiskParams{ID: m.ID, DiskID: disk.ID})
+	if err != nil {
+		return store.Machine{}, fmt.Errorf("attach disk: %w", err)
+	}
+	if _, err := secrets.MintMachineVolumeKey(s.secrets, rand.Reader, UUIDString(m.ID)); err != nil {
+		return store.Machine{}, fmt.Errorf("mint volume key: %w", err)
 	}
 
 	m, _, err = s.transition(ctx, m.ID, StateRequested, StateProvisioning, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
@@ -127,8 +176,10 @@ func (s *Service) Start(ctx context.Context, userID pgtype.UUID) (store.Machine,
 	return s.ensureOnAgent(ctx, m, m.KernelRef, m.RootfsRef)
 }
 
-// Stop gracefully shuts down a running machine: transition to stopping → ask the
-// agent to stop. Invalid current state ⇒ ErrInvalidState.
+// Stop hibernates a running machine (Phase 4 decision #4: stop = hibernate):
+// transition running → hibernating → ask the agent to pause+snapshot. The agent
+// falls back to a cold poweroff internally if snapshotting fails; either way the
+// poller advances the machine to stopped. Invalid current state ⇒ ErrInvalidState.
 func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
 	m, err := s.Get(ctx, userID)
 	if err != nil {
@@ -137,14 +188,14 @@ func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, 
 	if State(m.State) != StateRunning {
 		return store.Machine{}, ErrInvalidState
 	}
-	m, _, err = s.transition(ctx, m.ID, StateRunning, StateStopping, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
+	m, _, err = s.transition(ctx, m.ID, StateRunning, StateHibernating, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
 	if err != nil {
 		return store.Machine{}, mapTransitionErr(err)
 	}
 
 	id := UUIDString(m.ID)
-	if err := s.nodes.Stop(ctx, id); err != nil {
-		return s.fail(ctx, m, StateStopping, "node-agent stop failed: "+err.Error())
+	if err := s.nodes.Stop(ctx, id, agentapi.StopModeHibernate); err != nil {
+		return s.fail(ctx, m, StateHibernating, "node-agent stop failed: "+err.Error())
 	}
 	return m, nil
 }
@@ -155,12 +206,27 @@ func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, 
 // machine transitional for the poller to advance to running.
 func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (store.Machine, error) {
 	id := UUIDString(m.ID)
-	resp, err := s.nodes.Ensure(ctx, id, agentapi.EnsureRequest{
+
+	// Phase 4: deliver the disk and the volume key on every ensure (the only
+	// call that needs the key — for luksOpen). The key is fetched fresh from the
+	// secret store and never logged.
+	req := agentapi.EnsureRequest{
 		Vcpus:     s.spec.Vcpus,
 		MemMiB:    s.spec.MemMiB,
 		KernelRef: kernelRef,
 		RootfsRef: rootfsRef,
-	})
+	}
+	if disk, err := s.q.GetDiskByMachineID(ctx, m.ID); err == nil {
+		req.DiskID = UUIDString(disk.ID)
+		req.DiskMiB = int(disk.SizeMib)
+	}
+	keyB64, err := secrets.GetMachineVolumeKey(s.secrets, id)
+	if err != nil {
+		return s.fail(ctx, m, State(m.State), "fetch volume key: "+err.Error())
+	}
+	req.VolumeKeyB64 = keyB64
+
+	resp, err := s.nodes.Ensure(ctx, id, req)
 	if err != nil {
 		return s.fail(ctx, m, State(m.State), "node-agent ensure failed: "+err.Error())
 	}

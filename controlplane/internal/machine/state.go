@@ -38,13 +38,16 @@ const (
 func ActorUser(userID string) string { return "user:" + userID }
 
 // allowed is the single source of truth for legal transitions. A transition
-// from→to is permitted iff allowed[from] contains to. (Phase 2 set, per the
-// plan; hibernating has no edges yet — it lands in Phase 4.)
+// from→to is permitted iff allowed[from] contains to. Phase 4 adds the
+// hibernate path: running → hibernating → stopped (resume is stopped → starting
+// → running, already present). stopping stays the cold/poweroff path (and the
+// driver's automatic fallback when snapshotting fails).
 var allowed = map[State]map[State]bool{
 	StateRequested:    {StateProvisioning: true, StateError: true},
 	StateProvisioning: {StateRunning: true, StateError: true},
-	StateRunning:      {StateStopping: true, StateError: true},
+	StateRunning:      {StateStopping: true, StateHibernating: true, StateError: true},
 	StateStopping:     {StateStopped: true, StateError: true},
+	StateHibernating:  {StateStopped: true, StateError: true},
 	StateStopped:      {StateStarting: true},
 	StateStarting:     {StateRunning: true, StateError: true},
 	StateError:        {StateStarting: true},
@@ -59,7 +62,7 @@ func CanTransition(from, to State) bool {
 // (the control plane is waiting on the agent to finish an async operation).
 func (s State) Transitional() bool {
 	switch s {
-	case StateProvisioning, StateStarting, StateStopping:
+	case StateProvisioning, StateStarting, StateStopping, StateHibernating:
 		return true
 	default:
 		return false

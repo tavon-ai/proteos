@@ -124,7 +124,7 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 			if !sameUser(u.Machine.UserID, user.ID) || u.Event.ID <= lastSent {
 				continue
 			}
-			if err := writeMachineEvent(w, u.Machine, u.Event); err != nil {
+			if err := s.writeMachineEvent(ctx, w, u.Machine, u.Event); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -139,7 +139,7 @@ func (s *Server) writeSnapshot(ctx context.Context, w http.ResponseWriter, f htt
 	data := snapshotData{Events: []machineEventJSON{}}
 	var maxID int64
 	if hasMachine {
-		summary := toSummary(m)
+		summary := s.summary(ctx, m)
 		data.Machine = &summary
 		evs, err := s.Queries.ListMachineEventsRecent(ctx, store.ListMachineEventsRecentParams{MachineID: m.ID, Limit: 50})
 		if err == nil {
@@ -165,7 +165,7 @@ func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.
 	}
 	maxID := lastID
 	for _, e := range evs {
-		if writeMachineEvent(w, m, e) != nil {
+		if s.writeMachineEvent(ctx, w, m, e) != nil {
 			break
 		}
 		maxID = e.ID
@@ -175,9 +175,9 @@ func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.
 }
 
 // writeMachineEvent emits one `machine` SSE event with id: set to the row id.
-func writeMachineEvent(w http.ResponseWriter, m store.Machine, e store.MachineEvent) error {
+func (s *Server) writeMachineEvent(ctx context.Context, w http.ResponseWriter, m store.Machine, e store.MachineEvent) error {
 	return writeSSE(w, "machine", strconv.FormatInt(e.ID, 10), machineData{
-		Machine: toSummary(m),
+		Machine: s.summary(ctx, m),
 		Event:   toEventJSON(e),
 	})
 }

@@ -62,9 +62,18 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""
 	go func() {
-		slog.Info("node-agent listening", "addr", cfg.Addr, "driver", cfg.Driver, "data_dir", cfg.DataDir)
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Info("node-agent listening", "addr", cfg.Addr, "driver", cfg.Driver, "data_dir", cfg.DataDir, "tls", tlsEnabled)
+		var err error
+		if tlsEnabled {
+			// Decision #3: the channel now carries volume keys, so it is TLS once
+			// certs are provisioned. The control plane pins this cert/CA.
+			err = httpServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+		} else {
+			err = httpServer.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("http server", "err", err)
 		}
 	}()

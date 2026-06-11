@@ -10,6 +10,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Disk struct {
+	ID        pgtype.UUID        `json:"id"`
+	MachineID pgtype.UUID        `json:"machine_id"`
+	SizeMib   int32              `json:"size_mib"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type GithubLink struct {
 	UserID    pgtype.UUID        `json:"user_id"`
 	Metadata  []byte             `json:"metadata"`
@@ -40,6 +47,8 @@ type Machine struct {
 	LastActiveAt pgtype.Timestamptz `json:"last_active_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	DiskID       pgtype.UUID        `json:"disk_id"`
+	Boot         *string            `json:"boot"`
 }
 
 type MachineEvent struct {
@@ -60,6 +69,15 @@ type Session struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type Snapshot struct {
+	MachineID pgtype.UUID        `json:"machine_id"`
+	FcVersion string             `json:"fc_version"`
+	MemBytes  int64              `json:"mem_bytes"`
+	KernelRef string             `json:"kernel_ref"`
+	RootfsRef string             `json:"rootfs_ref"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {

@@ -193,9 +193,11 @@ func (d *Driver) bootOnce(rec state.Record) error {
 	return err
 }
 
-// Stop gracefully shuts down a running machine (SendCtrlAltDel, then kill after
-// stopGrace), asynchronously.
-func (d *Driver) Stop(ctx context.Context, machineID string) error {
+// Stop shuts down a running machine asynchronously. StopModePoweroff is the cold
+// path (SendCtrlAltDel, then kill after stopGrace). StopModeHibernate pauses +
+// snapshots before tearing down — implemented in Task 4.4 (snapshot.go); until
+// then it falls back to the cold path so the verb never wedges a machine.
+func (d *Driver) Stop(ctx context.Context, machineID string, mode driver.StopMode) error {
 	rec, ok, err := d.store.Load(machineID)
 	if err != nil {
 		return err
@@ -206,7 +208,14 @@ func (d *Driver) Stop(ctx context.Context, machineID string) error {
 	if rec.State == api.StateStopped {
 		return nil
 	}
-	if _, _, err := d.store.Update(machineID, func(r *state.Record) { r.State = api.StateStopping }); err != nil {
+	transition := api.StateStopping
+	if mode == driver.StopModeHibernate {
+		// TODO(4.4): pause + PUT /snapshot/create onto the encrypted volume, then
+		// kill + umount + luksClose. For now the transitional state is set but the
+		// teardown is the cold path below.
+		transition = api.StateHibernating
+	}
+	if _, _, err := d.store.Update(machineID, func(r *state.Record) { r.State = transition }); err != nil {
 		return err
 	}
 	go d.finishStop(rec)

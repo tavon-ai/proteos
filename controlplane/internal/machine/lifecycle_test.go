@@ -12,6 +12,7 @@ import (
 
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	"github.com/tavon/proteos/controlplane/internal/testutil"
 	agentapi "github.com/tavon/proteos/nodeagent/api"
@@ -26,26 +27,52 @@ type fakeAgent struct {
 	failEnsure  bool
 	ensureCalls int
 	stopCalls   int
+	lastEnsure  map[string]agentapi.EnsureRequest // captured per id (incl. volume key)
+	stopModes   []string                          // modes seen on stop calls
 }
 
 func newFakeAgent() *fakeAgent {
-	return &fakeAgent{status: map[string]agentapi.MachineStatus{}}
+	return &fakeAgent{status: map[string]agentapi.MachineStatus{}, lastEnsure: map[string]agentapi.EnsureRequest{}}
 }
 
 func (f *fakeAgent) SetStatus(id, state, reason, guestIP string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Preserve any snapshot/boot already set for this id.
+	prev := f.status[id]
 	f.status[id] = agentapi.MachineStatus{
 		MachineID: id, State: state, Reason: reason, GuestIP: guestIP, Handle: "fc-" + id[:8],
+		Boot: prev.Boot, Snapshot: prev.Snapshot,
 	}
+}
+
+// SetSnapshot sets the snapshot metadata the agent reports for id (Phase 4).
+func (f *fakeAgent) SetSnapshot(id string, present bool, fcVersion string, memBytes int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.status[id]
+	st.Snapshot = agentapi.SnapshotInfo{Present: present, FCVersion: fcVersion, MemBytes: memBytes, CreatedAt: "2026-06-11T00:00:00Z"}
+	f.status[id] = st
+}
+
+// SetBoot sets how the agent reports the machine started (cold|resumed).
+func (f *fakeAgent) SetBoot(id, boot string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.status[id]
+	st.Boot = boot
+	f.status[id] = st
 }
 
 func (f *fakeAgent) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(agentapi.RouteEnsure, func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var req agentapi.EnsureRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
 		f.ensureCalls++
+		f.lastEnsure[id] = req
 		fail := f.failEnsure
 		if !fail {
 			// A real boot starts in creating; tests advance it with SetStatus.
@@ -64,8 +91,11 @@ func (f *fakeAgent) handler() http.Handler {
 	})
 	mux.HandleFunc(agentapi.RouteStop, func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		var req agentapi.StopRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
 		f.stopCalls++
+		f.stopModes = append(f.stopModes, req.Mode)
 		if st, ok := f.status[id]; ok {
 			st.State = agentapi.StateStopping
 			f.status[id] = st
@@ -95,6 +125,7 @@ type harness struct {
 	poller *machine.Poller
 	agent  *fakeAgent
 	srv    *httptest.Server
+	sec    *secrets.MemStore
 	userID pgtype.UUID
 }
 
@@ -118,11 +149,12 @@ func newHarness(t *testing.T) *harness {
 
 	nc := nodeclient.New(srv.URL, "tok")
 	broker := machine.NewBroker()
-	svc := machine.NewService(pool, nc, broker, host.ID, machine.Spec{
-		Vcpus: 2, MemMiB: 2048, KernelRef: "k1", RootfsRef: "r1",
+	sec := secrets.NewMemStore()
+	svc := machine.NewService(pool, nc, broker, sec, host.ID, machine.Spec{
+		Vcpus: 2, MemMiB: 2048, DiskMiB: 10240, KernelRef: "k1", RootfsRef: "r1",
 	})
 	poller := machine.NewPoller(pool, nc, broker)
-	return &harness{q: q, svc: svc, poller: poller, agent: agent, srv: srv, userID: user.ID}
+	return &harness{q: q, svc: svc, poller: poller, agent: agent, srv: srv, sec: sec, userID: user.ID}
 }
 
 func (h *harness) machine(t *testing.T) store.Machine {
@@ -206,8 +238,9 @@ func TestFullLifecycle(t *testing.T) {
 		t.Fatalf("after restart poll state=%q, want running", got)
 	}
 
-	// Every transition wrote an event row, in order.
-	want := []string{"provisioning", "running", "stopping", "stopped", "starting", "running"}
+	// Every transition wrote an event row, in order. Stop hibernates (decision
+	// #4), so the cold-stop "stopping" state is replaced by "hibernating".
+	want := []string{"provisioning", "running", "hibernating", "stopped", "starting", "running"}
 	got := h.eventStates(t, id)
 	if len(got) != len(want) {
 		t.Fatalf("event sequence=%v, want %v", got, want)

@@ -74,11 +74,25 @@ func (d *DevDriver) guestSockPath(machineID string) string {
 	return filepath.Join(d.store.MachineDir(machineID), "guest.sock")
 }
 
+// persistDir is the per-machine directory standing in for the real driver's
+// persistent disk (decision #10). It is handed to the guest agent via
+// PROTEOS_GUEST_PERSIST and survives hibernate/resume (kept across Stop, only
+// removed by Destroy).
+func (d *DevDriver) persistDir(machineID string) string {
+	return filepath.Join(d.store.MachineDir(machineID), "persist")
+}
+
 // EnsureRunning is idempotent: a machine already booting/running is a no-op that
 // returns its handle; a stopped/error/dead machine is (re)booted, reusing its
-// previously allocated network resources.
+// previously allocated network resources. A stopped machine that carries a
+// (fake, dev-only) hibernation snapshot resumes from it (boot=resumed) and the
+// snapshot is consumed; otherwise it cold-boots (boot=cold).
 func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string, error) {
 	handle := state.Handle(spec.MachineID)
+	diskID, diskMiB := "", 0
+	if len(spec.Disks) > 0 {
+		diskID, diskMiB = spec.Disks[0].ID, spec.Disks[0].SizeMiB
+	}
 
 	rec, existed, err := d.store.Reserve(spec.MachineID, func(a state.Alloc) state.Record {
 		return state.Record{
@@ -89,6 +103,9 @@ func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (stri
 			MemMiB:    spec.MemMiB,
 			KernelRef: spec.KernelRef,
 			RootfsRef: spec.RootfsRef,
+			DiskID:    diskID,
+			DiskMiB:   diskMiB,
+			Boot:      agentapi.BootCold,
 			TapName:   a.TapName,
 			GuestIP:   a.GuestIP.String(),
 			GatewayIP: a.GatewayIP.String(),
@@ -104,7 +121,15 @@ func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (stri
 		if (rec.State == agentapi.StateCreating || rec.State == agentapi.StateRunning) && d.alive(spec.MachineID, rec.Pid) {
 			return handle, nil
 		}
-		// Otherwise a (re)boot: refresh the desired spec and reset to creating.
+		// Otherwise a (re)boot: refresh the desired spec, decide cold-vs-resume
+		// from the persisted snapshot, and consume it. The real FC driver
+		// restores guest RAM here; the dev driver only relaunches the guest
+		// agent against the same persist dir, so PTY sessions do NOT survive —
+		// only files on the persist dir do (documented; decision #10).
+		boot := agentapi.BootCold
+		if rec.Snapshot.Present {
+			boot = agentapi.BootResumed
+		}
 		rec, _, err = d.store.Update(spec.MachineID, func(r *state.Record) {
 			r.State = agentapi.StateCreating
 			r.Reason = ""
@@ -112,6 +137,12 @@ func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (stri
 			r.MemMiB = spec.MemMiB
 			r.KernelRef = spec.KernelRef
 			r.RootfsRef = spec.RootfsRef
+			if diskID != "" {
+				r.DiskID = diskID
+				r.DiskMiB = diskMiB
+			}
+			r.Boot = boot
+			r.Snapshot = state.SnapshotRecord{} // consumed on resume
 		})
 		if err != nil {
 			return "", err
@@ -172,11 +203,20 @@ func (d *DevDriver) buildCmd(machineID string) (*exec.Cmd, error) {
 	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale guest.sock: %w", err)
 	}
+	// The persist dir stands in for the real driver's persistent disk: it is
+	// created once and kept across hibernate, so files written under $HOME /
+	// workspace survive stop/start (decision #10). The guest agent's dir-mode
+	// persist path (decision #7) uses it directly — no mkfs/mount in dev.
+	persist := d.persistDir(machineID)
+	if err := os.MkdirAll(persist, 0o700); err != nil {
+		return nil, fmt.Errorf("mkdir persist dir: %w", err)
+	}
 
 	cmd := exec.Command(d.guestAgentBin)
 	cmd.Env = append(os.Environ(),
 		"PROTEOS_GUEST_LISTEN=unix:"+sock,
 		"PROTEOS_GUEST_SHELL=/bin/bash",
+		"PROTEOS_GUEST_PERSIST="+persist,
 	)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd, nil
@@ -210,9 +250,12 @@ func (d *DevDriver) finishBoot(machineID, kernelRef string, cmd *exec.Cmd) {
 	})
 }
 
-// Stop requests a graceful shutdown: state→stopping immediately, then the child
-// is signalled and (after a grace period) killed asynchronously.
-func (d *DevDriver) Stop(ctx context.Context, machineID string) error {
+// Stop shuts the machine down. StopModeHibernate moves it through hibernating →
+// stopped and records a (fake, dev-only) snapshot so the next ensure resumes;
+// StopModePoweroff is a cold shutdown (stopping → stopped) that clears any
+// snapshot. The child is signalled and (after a grace period) killed
+// asynchronously either way — the persist dir is kept (only Destroy removes it).
+func (d *DevDriver) Stop(ctx context.Context, machineID string, mode driver.StopMode) error {
 	rec, ok, err := d.store.Load(machineID)
 	if err != nil {
 		return err
@@ -224,7 +267,12 @@ func (d *DevDriver) Stop(ctx context.Context, machineID string) error {
 		return nil // already there; idempotent
 	}
 
-	if _, _, err := d.store.Update(machineID, func(r *state.Record) { r.State = agentapi.StateStopping }); err != nil {
+	hibernate := mode != driver.StopModePoweroff // default + explicit hibernate
+	transition := agentapi.StateStopping
+	if hibernate {
+		transition = agentapi.StateHibernating
+	}
+	if _, _, err := d.store.Update(machineID, func(r *state.Record) { r.State = transition }); err != nil {
 		return err
 	}
 
@@ -232,12 +280,15 @@ func (d *DevDriver) Stop(ctx context.Context, machineID string) error {
 	cmd := d.procs[machineID]
 	d.mu.Unlock()
 
-	go d.finishStop(machineID, cmd)
+	go d.finishStop(machineID, cmd, hibernate)
 	return nil
 }
 
-// finishStop terminates the stub child (graceful then hard) and records stopped.
-func (d *DevDriver) finishStop(machineID string, cmd *exec.Cmd) {
+// finishStop terminates the child (graceful then hard) and records stopped. On
+// hibernate it writes fake snapshot metadata (fc_version "dev"); on poweroff it
+// clears any prior snapshot. The dev driver cannot capture guest RAM, so this
+// metadata is the contract surface only — live sessions are lost on resume.
+func (d *DevDriver) finishStop(machineID string, cmd *exec.Cmd, hibernate bool) {
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		done := make(chan struct{})
@@ -253,9 +304,20 @@ func (d *DevDriver) finishStop(machineID string, cmd *exec.Cmd) {
 	delete(d.procs, machineID)
 	d.mu.Unlock()
 
+	now := time.Now().UTC().Format(time.RFC3339)
 	_, _, _ = d.store.Update(machineID, func(r *state.Record) {
 		r.State = agentapi.StateStopped
 		r.Pid = 0
+		if hibernate {
+			r.Snapshot = state.SnapshotRecord{
+				Present:   true,
+				CreatedAt: now,
+				FCVersion: "dev",
+				MemBytes:  int64(r.MemMiB) * 1024 * 1024,
+			}
+		} else {
+			r.Snapshot = state.SnapshotRecord{}
+		}
 	})
 }
 
@@ -335,15 +397,15 @@ func (d *DevDriver) Reattach(ctx context.Context) error {
 					r.Pid = 0
 				})
 			}
-		case agentapi.StateStopping:
+		case agentapi.StateStopping, agentapi.StateHibernating:
+			hibernate := rec.State == agentapi.StateHibernating
 			if alive {
 				d.adopt(rec.MachineID, rec.Pid)
-				go d.finishStop(rec.MachineID, d.procs[rec.MachineID])
+				go d.finishStop(rec.MachineID, d.procs[rec.MachineID], hibernate)
 			} else {
-				_, _, _ = d.store.Update(rec.MachineID, func(r *state.Record) {
-					r.State = agentapi.StateStopped
-					r.Pid = 0
-				})
+				// Child already gone: finalize directly so we still record the
+				// (fake) snapshot a mid-hibernate restart would otherwise lose.
+				go d.finishStop(rec.MachineID, nil, hibernate)
 			}
 		}
 	}
@@ -393,6 +455,14 @@ func statusOf(rec state.Record) driver.Status {
 		Reason:    rec.Reason,
 		Handle:    rec.Handle,
 		GuestIP:   rec.GuestIP,
+		Boot:      rec.Boot,
+		DiskID:    rec.DiskID,
+		Snapshot: driver.Snapshot{
+			Present:   rec.Snapshot.Present,
+			CreatedAt: rec.Snapshot.CreatedAt,
+			FCVersion: rec.Snapshot.FCVersion,
+			MemBytes:  rec.Snapshot.MemBytes,
+		},
 	}
 }
 

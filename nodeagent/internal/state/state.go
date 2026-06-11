@@ -40,6 +40,33 @@ type Record struct {
 	// re-attach. For the dev driver this is the stub child pid; for firecracker
 	// it is the jailed firecracker pid.
 	Pid int `json:"pid"`
+
+	// --- Phase 4: persistent disk + hibernate/resume ------------------------
+
+	// DiskID is the persistent disk (machine volume) attached to this machine,
+	// echoed from the ensure request. Empty for pre-Phase-4 records.
+	DiskID  string `json:"disk_id,omitempty"`
+	DiskMiB int    `json:"disk_mib,omitempty"`
+
+	// Boot records how the current/last run started: agentapi.BootCold or
+	// agentapi.BootResumed. The driver, not the control plane, decides this.
+	Boot string `json:"boot,omitempty"`
+
+	// Snapshot describes the current hibernation snapshot. Present is true only
+	// while the machine is hibernated (stopped with a usable snapshot); it is
+	// cleared once the snapshot is consumed by a resume or invalidated by a cold
+	// stop. The volume key is NEVER stored here (or anywhere on the host).
+	Snapshot SnapshotRecord `json:"snapshot,omitzero"`
+}
+
+// SnapshotRecord is the persisted hibernation-snapshot metadata for a machine
+// (Phase 4). It never contains key material — the snapshot files live encrypted
+// on the machine volume; this is only the metadata the control plane records.
+type SnapshotRecord struct {
+	Present   bool   `json:"present,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"` // RFC3339
+	FCVersion string `json:"fc_version,omitempty"`
+	MemBytes  int64  `json:"mem_bytes,omitempty"`
 }
 
 // Store is a concurrency-safe, disk-backed collection of machine Records plus

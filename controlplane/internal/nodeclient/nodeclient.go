@@ -10,12 +10,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -37,9 +39,11 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	tlsCfg  *tls.Config // pinned CA for HTTPS agents (Phase 4 decision #3); nil ⇒ system roots / plain HTTP
 }
 
-// New returns a client for the agent at baseURL authenticating with token.
+// New returns a client for the agent at baseURL authenticating with token over
+// plain HTTP (dev) or HTTPS with the system trust store.
 func New(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -48,6 +52,34 @@ func New(baseURL, token string) *Client {
 	}
 }
 
+// NewPinned returns a client that verifies the agent's TLS certificate against
+// the PEM CA/cert in caFile (decision #3: the channel now carries volume keys,
+// so the agent cert is pinned rather than trusted via the system store). caFile
+// empty ⇒ behaves like New.
+func NewPinned(baseURL, token, caFile string) (*Client, error) {
+	c := New(baseURL, token)
+	if caFile == "" {
+		return c, nil
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read node CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("node CA file %q contains no usable certificates", caFile)
+	}
+	c.tlsCfg = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	c.http = &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: c.tlsCfg.Clone()},
+	}
+	return c, nil
+}
+
+// BaseURL returns the agent's base URL (no trailing slash).
+func (c *Client) BaseURL() string { return c.baseURL }
+
 // Ensure issues PUT /v1/machines/{id} (idempotent ensure-running).
 func (c *Client) Ensure(ctx context.Context, id string, req agentapi.EnsureRequest) (agentapi.EnsureResponse, error) {
 	var out agentapi.EnsureResponse
@@ -55,9 +87,15 @@ func (c *Client) Ensure(ctx context.Context, id string, req agentapi.EnsureReque
 	return out, err
 }
 
-// Stop issues POST /v1/machines/{id}/stop (graceful shutdown).
-func (c *Client) Stop(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/machines/"+id+"/stop", nil, nil, http.StatusAccepted)
+// Stop issues POST /v1/machines/{id}/stop with the requested mode (Phase 4:
+// "hibernate" pauses+snapshots, "poweroff" is a cold shutdown). An empty mode
+// lets the agent default (hibernate).
+func (c *Client) Stop(ctx context.Context, id, mode string) error {
+	var body any
+	if mode != "" {
+		body = agentapi.StopRequest{Mode: mode}
+	}
+	return c.do(ctx, http.MethodPost, "/v1/machines/"+id+"/stop", body, nil, http.StatusAccepted)
 }
 
 // Status issues GET /v1/machines/{id}. A 404 maps to ErrUnknownMachine.
@@ -163,6 +201,9 @@ func (c *Client) dialRaw(ctx context.Context, u *url.URL) (net.Conn, error) {
 			host = net.JoinHostPort(u.Hostname(), "443")
 		}
 		td := &tls.Dialer{NetDialer: &d}
+		if c.tlsCfg != nil {
+			td.Config = c.tlsCfg.Clone() // pin the agent cert (decision #3)
+		}
 		return td.DialContext(ctx, "tcp", host)
 	default:
 		return nil, fmt.Errorf("unsupported scheme %q", u.Scheme)

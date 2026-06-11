@@ -30,7 +30,7 @@ type fakeGuestDriver struct {
 func (f *fakeGuestDriver) EnsureRunning(context.Context, driver.VMSpec) (string, error) {
 	return "h", nil
 }
-func (f *fakeGuestDriver) Stop(context.Context, string) error { return nil }
+func (f *fakeGuestDriver) Stop(context.Context, string, driver.StopMode) error { return nil }
 func (f *fakeGuestDriver) Status(_ context.Context, id string) (driver.Status, error) {
 	if f.unknown {
 		return driver.Status{}, driver.ErrUnknownMachine

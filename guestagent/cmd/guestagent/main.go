@@ -18,6 +18,7 @@ import (
 
 	"github.com/tavon/proteos/guestagent/internal/config"
 	"github.com/tavon/proteos/guestagent/internal/listen"
+	"github.com/tavon/proteos/guestagent/internal/persist"
 	"github.com/tavon/proteos/guestagent/internal/server"
 	"github.com/tavon/proteos/guestagent/internal/term"
 )
@@ -45,10 +46,27 @@ func run() error {
 	}
 	defer ln.Close()
 
-	mgr := term.NewManager(term.Config{Shell: cfg.Shell, ScrollbackKiB: cfg.ScrollbackKiB})
+	// Persistence runs first, before any shell spawns, so $HOME and the
+	// workspace are on the disk (decision #7). A degraded handle (no disk) still
+	// serves terminals — ephemerally.
+	p, err := persist.Setup(persist.Config{
+		Dir:     cfg.PersistDir,
+		Device:  cfg.PersistDevice,
+		Version: version,
+	})
+	if err != nil {
+		return err
+	}
+	defer p.Close()
+
+	mgr := term.NewManager(term.Config{
+		Shell:         cfg.Shell,
+		ScrollbackKiB: cfg.ScrollbackKiB,
+		Env:           p.ShellEnv(),
+	})
 	defer mgr.Shutdown()
 
-	srv := server.New(mgr)
+	srv := server.New(mgr, p)
 	httpServer := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

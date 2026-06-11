@@ -22,6 +22,17 @@ type Config struct {
 
 	// ScrollbackKiB is the per-session scrollback ring size.
 	ScrollbackKiB int
+
+	// --- Phase 4: persistent disk -------------------------------------------
+
+	// PersistDir (PROTEOS_GUEST_PERSIST), when set, is the dev override: the
+	// guest agent uses this plain directory as the persist root and skips
+	// mounting (decision #7). Empty ⇒ disk mode (mount PersistDevice).
+	PersistDir string
+
+	// PersistDevice (PROTEOS_GUEST_PERSIST_DEV) is the block device to mount at
+	// the persist mount point in disk mode. Default /dev/vdb.
+	PersistDevice string
 }
 
 // Load reads and validates configuration from the environment.
@@ -30,6 +41,8 @@ func Load() (*Config, error) {
 		Listen:        getenv("PROTEOS_GUEST_LISTEN", "vsock:1024"),
 		Shell:         getenv("PROTEOS_GUEST_SHELL", "/bin/bash"),
 		ScrollbackKiB: getenvInt("PROTEOS_GUEST_SCROLLBACK_KIB", 256),
+		PersistDir:    os.Getenv("PROTEOS_GUEST_PERSIST"),
+		PersistDevice: getenv("PROTEOS_GUEST_PERSIST_DEV", "/dev/vdb"),
 	}
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)

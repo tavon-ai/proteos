@@ -125,3 +125,43 @@ ORDER BY id ASC;
 SELECT * FROM machine_events
 WHERE machine_id = $1 AND id > $2
 ORDER BY id ASC;
+
+-- name: CreateDisk :one
+-- Provision a machine's persistent disk at create time (1:1 with the machine).
+INSERT INTO disks (machine_id, size_mib)
+VALUES ($1, $2)
+RETURNING *;
+
+-- name: GetDiskByMachineID :one
+SELECT * FROM disks WHERE machine_id = $1;
+
+-- name: SetMachineDisk :one
+-- Attach the just-created disk to the machine row.
+UPDATE machines SET disk_id = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: SetMachineBoot :one
+-- Record how the current run started ('cold' | 'resumed'); pass NULL to clear.
+UPDATE machines SET boot = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpsertSnapshot :one
+-- Record (replacing) the machine's current hibernation snapshot metadata. One
+-- row per machine; consumed on resume / invalidated on cold stop via DeleteSnapshot.
+INSERT INTO snapshots (machine_id, fc_version, mem_bytes, kernel_ref, rootfs_ref)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (machine_id) DO UPDATE
+    SET fc_version = EXCLUDED.fc_version,
+        mem_bytes  = EXCLUDED.mem_bytes,
+        kernel_ref = EXCLUDED.kernel_ref,
+        rootfs_ref = EXCLUDED.rootfs_ref,
+        created_at = now()
+RETURNING *;
+
+-- name: GetSnapshot :one
+SELECT * FROM snapshots WHERE machine_id = $1;
+
+-- name: DeleteSnapshot :exec
+DELETE FROM snapshots WHERE machine_id = $1;

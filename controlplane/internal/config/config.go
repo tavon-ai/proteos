@@ -59,10 +59,17 @@ type Config struct {
 	// match the agent's PROTEOS_AGENT_TOKEN.
 	AgentToken string
 
-	// MachineVcpus / MachineMemMiB are the resource spec stamped on every new
-	// machine row at create time.
-	MachineVcpus  int
-	MachineMemMiB int
+	// NodeCAFile pins the node-agent's TLS certificate/CA (PEM). When set, the
+	// control plane verifies the agent against it instead of the system trust
+	// store (Phase 4 decision #3). Empty ⇒ plain HTTP / system roots (dev).
+	NodeCAFile string
+
+	// MachineVcpus / MachineMemMiB / MachineDiskMiB are the resource spec stamped
+	// on every new machine row at create time. DiskMiB is the persistent disk
+	// size provisioned per machine (Phase 4, default 10240).
+	MachineVcpus   int
+	MachineMemMiB  int
+	MachineDiskMiB int
 
 	// KernelRef / RootfsRef are the pinned image refs stamped per machine; the
 	// node-agent resolves them against its images dir.
@@ -95,10 +102,12 @@ func Load() (*Config, error) {
 		HostName:      getenv("PROTEOS_HOST_NAME", "local"),
 		NodeAgentURL:  getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
 		AgentToken:    os.Getenv("PROTEOS_AGENT_TOKEN"),
-		MachineVcpus:  getenvInt("PROTEOS_MACHINE_VCPUS", 2),
-		MachineMemMiB: getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
-		KernelRef:     getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
-		RootfsRef:     getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
+		NodeCAFile:    os.Getenv("PROTEOS_NODE_CA_FILE"),
+		MachineVcpus:   getenvInt("PROTEOS_MACHINE_VCPUS", 2),
+		MachineMemMiB:  getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
+		MachineDiskMiB: getenvInt("PROTEOS_MACHINE_DISK_MIB", 10240),
+		KernelRef:      getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
+		RootfsRef:      getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
 	}
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {

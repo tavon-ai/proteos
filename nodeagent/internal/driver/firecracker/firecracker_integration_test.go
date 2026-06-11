@@ -120,7 +120,7 @@ func TestStopGraceful(t *testing.T) {
 	t.Cleanup(func() { _ = d.Destroy(ctx, id) })
 	waitState(t, d, id, api.StateRunning, 30*time.Second)
 
-	if err := d.Stop(ctx, id); err != nil {
+	if err := d.Stop(ctx, id, driver.StopModePoweroff); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	waitState(t, d, id, api.StateStopped, 20*time.Second)

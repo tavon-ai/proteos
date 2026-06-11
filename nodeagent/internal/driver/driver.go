@@ -15,32 +15,62 @@ var ErrUnknownMachine = errors.New("driver: unknown machine")
 
 // VMSpec is the desired shape of a microVM. Net is filled by the driver/agent
 // (it owns IP/tap allocation), so EnsureRunning ignores any Net the caller
-// passes. Disks stays empty until Phase 4 (persistent disks); adding it now
-// keeps the interface stable when snapshot/resume land.
+// passes.
 type VMSpec struct {
 	MachineID string
 	Vcpus     int
 	MemMiB    int
 	KernelRef string
 	RootfsRef string
-	Disks     []Disk // empty this phase
+	Disks     []Disk // Phase 4: the persistent disk(s) to attach (single entry today)
+
+	// VolumeKey is the 32-byte LUKS key for the machine volume (Phase 4
+	// decision #2), delivered fresh on every ensure and held only in memory for
+	// luksOpen. Never persisted host-side, never logged.
+	VolumeKey []byte
 }
 
-// Disk is reserved for Phase 4 persistent disks.
+// Disk is a persistent block device attached to the VM (Phase 4). Single entry
+// per machine this phase; the slice is the seam for future multi-disk / network
+// storage behind the same abstraction.
 type Disk struct {
-	ID       string
-	PathRef  string
-	ReadOnly bool
+	ID      string
+	SizeMiB int
+}
+
+// StopMode selects how Stop shuts a machine down (Phase 4 decision #4).
+type StopMode string
+
+const (
+	// StopModeHibernate pauses the VM, takes a Full snapshot onto the encrypted
+	// volume, kills the VMM, and closes the volume. Start resumes from it.
+	StopModeHibernate StopMode = "hibernate"
+	// StopModePoweroff is the cold path (CtrlAltDel/poweroff): no snapshot.
+	StopModePoweroff StopMode = "poweroff"
+)
+
+// Snapshot is the driver-level view of a machine's current hibernation snapshot.
+type Snapshot struct {
+	Present   bool
+	CreatedAt string // RFC3339
+	FCVersion string
+	MemBytes  int64
 }
 
 // Status is the driver-level view of a machine. The control plane maps State
 // onto its own machine states.
 type Status struct {
 	MachineID string
-	State     string // agentapi.State*: creating|running|stopping|stopped|error
+	State     string // agentapi.State*: creating|running|stopping|hibernating|stopped|error
 	Reason    string // populated in the error state
 	Handle    string
 	GuestIP   string
+
+	// Phase 4: how the current/last run started, the attached disk, and the
+	// current snapshot (if hibernated).
+	Boot     string // agentapi.BootCold | agentapi.BootResumed
+	DiskID   string
+	Snapshot Snapshot
 }
 
 // Driver is the desired-state interface the agent drives. EnsureRunning is the
@@ -52,9 +82,10 @@ type Driver interface {
 	// the actual boot completes asynchronously and is observed via Status.
 	EnsureRunning(ctx context.Context, spec VMSpec) (handle string, err error)
 
-	// Stop requests a graceful shutdown (async): the machine moves to stopping
-	// and then stopped. Unknown machine ⇒ ErrUnknownMachine.
-	Stop(ctx context.Context, machineID string) error
+	// Stop requests a shutdown (async). StopModeHibernate pauses + snapshots
+	// (machine moves through hibernating → stopped); StopModePoweroff does a cold
+	// shutdown (stopping → stopped). Unknown machine ⇒ ErrUnknownMachine.
+	Stop(ctx context.Context, machineID string, mode StopMode) error
 
 	// Status returns the current driver-level status. Unknown ⇒ ErrUnknownMachine.
 	Status(ctx context.Context, machineID string) (Status, error)

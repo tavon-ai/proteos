@@ -43,26 +43,66 @@ const UpgradeGuestProto = "proteos-guest"
 // Driver-level states reported by the agent. The control plane maps these onto
 // its own machine states (see controlplane/internal/machine).
 const (
-	StateCreating = "creating"
-	StateRunning  = "running"
-	StateStopping = "stopping"
-	StateStopped  = "stopped"
-	StateError    = "error"
+	StateCreating    = "creating"
+	StateRunning     = "running"
+	StateStopping    = "stopping"    // cold poweroff in progress
+	StateHibernating = "hibernating" // pause + snapshot in progress (Phase 4)
+	StateStopped     = "stopped"
+	StateError       = "error"
+)
+
+// Stop modes carried in StopRequest.Mode (Phase 4 decision #4). Hibernate is the
+// default: pause + Full snapshot + close volume. Poweroff is the cold path
+// (CtrlAltDel) used explicitly or as the automatic fallback when snapshotting
+// fails.
+const (
+	StopModeHibernate = "hibernate"
+	StopModePoweroff  = "poweroff"
+)
+
+// Boot kinds reported in MachineStatus.Boot: how the current/last run started.
+const (
+	BootCold    = "cold"
+	BootResumed = "resumed"
 )
 
 // EnsureRequest is the body of PUT /v1/machines/{id}: the desired VM shape and
 // the pinned image refs. Idempotent — re-PUTing an already-running machine is a
 // no-op that returns the existing handle.
+//
+// VolumeKeyB64 carries the machine's 32-byte LUKS volume key (base64), minted
+// and held by the control plane (Phase 4 decision #2). It is sent on every
+// ensure (the only call that needs it, for luksOpen), held in agent memory, and
+// MUST NEVER be logged or persisted host-side — the request logger redacts it.
 type EnsureRequest struct {
-	Vcpus     int    `json:"vcpus"`
-	MemMiB    int    `json:"mem_mib"`
-	KernelRef string `json:"kernel_ref"`
-	RootfsRef string `json:"rootfs_ref"`
+	Vcpus        int    `json:"vcpus"`
+	MemMiB       int    `json:"mem_mib"`
+	KernelRef    string `json:"kernel_ref"`
+	RootfsRef    string `json:"rootfs_ref"`
+	DiskID       string `json:"disk_id,omitempty"`
+	DiskMiB      int    `json:"disk_mib,omitempty"`
+	VolumeKeyB64 string `json:"volume_key_b64,omitempty"`
 }
 
 // EnsureResponse is returned by PUT /v1/machines/{id} (202).
 type EnsureResponse struct {
 	Handle string `json:"handle"`
+}
+
+// StopRequest is the (optional) body of POST /v1/machines/{id}/stop. An empty
+// body defaults to hibernate (Phase 4 decision #4).
+type StopRequest struct {
+	Mode string `json:"mode,omitempty"` // StopModeHibernate (default) | StopModePoweroff
+}
+
+// SnapshotInfo describes the current hibernation snapshot, if any. Reported in
+// MachineStatus so the control-plane poller can record snapshot metadata in
+// Postgres (Phase 4 decision #5/#6).
+type SnapshotInfo struct {
+	Present   bool   `json:"present"`
+	CreatedAt string `json:"created_at,omitempty"` // RFC3339
+	FCVersion string `json:"fc_version,omitempty"`
+	MemBytes  int64  `json:"mem_bytes,omitempty"`
 }
 
 // MachineStatus is the body of GET /v1/machines/{id} (200). Reason is non-empty
@@ -73,6 +113,12 @@ type MachineStatus struct {
 	Reason    string `json:"reason,omitempty"`
 	Handle    string `json:"handle,omitempty"`
 	GuestIP   string `json:"guest_ip,omitempty"`
+
+	// Phase 4: how the current/last run started, the attached disk, and the
+	// current snapshot (if the machine is hibernated).
+	Boot     string       `json:"boot,omitempty"` // BootCold | BootResumed
+	DiskID   string       `json:"disk_id,omitempty"`
+	Snapshot SnapshotInfo `json:"snapshot"`
 }
 
 // ListResponse is the body of GET /v1/machines (200), used for reconciliation.

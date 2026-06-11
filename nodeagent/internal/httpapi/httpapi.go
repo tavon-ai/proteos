@@ -6,8 +6,10 @@ package httpapi
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -68,13 +70,29 @@ func (s *Server) handleEnsure(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, api.ErrBadRequest)
 		return
 	}
-	handle, err := s.drv.EnsureRunning(r.Context(), driver.VMSpec{
+	// The volume key arrives base64 on the wire and is held only as raw bytes
+	// for luksOpen — never logged, never persisted host-side (decision #2).
+	var volumeKey []byte
+	if req.VolumeKeyB64 != "" {
+		var err error
+		volumeKey, err = base64.StdEncoding.DecodeString(req.VolumeKeyB64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, api.ErrBadRequest)
+			return
+		}
+	}
+	spec := driver.VMSpec{
 		MachineID: id,
 		Vcpus:     req.Vcpus,
 		MemMiB:    req.MemMiB,
 		KernelRef: req.KernelRef,
 		RootfsRef: req.RootfsRef,
-	})
+		VolumeKey: volumeKey,
+	}
+	if req.DiskID != "" {
+		spec.Disks = []driver.Disk{{ID: req.DiskID, SizeMiB: req.DiskMiB}}
+	}
+	handle, err := s.drv.EnsureRunning(r.Context(), spec)
 	if err != nil {
 		slog.Error("ensure failed", "machine", id, "err", err)
 		writeError(w, http.StatusInternalServerError, api.ErrInternal)
@@ -85,7 +103,25 @@ func (s *Server) handleEnsure(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := s.drv.Stop(r.Context(), id); err != nil {
+	mode := driver.StopModeHibernate // default per decision #4
+	// The body is optional; tolerate an empty/missing one.
+	if body, _ := io.ReadAll(r.Body); len(body) > 0 {
+		var req api.StopRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, api.ErrBadRequest)
+			return
+		}
+		switch req.Mode {
+		case "", api.StopModeHibernate:
+			mode = driver.StopModeHibernate
+		case api.StopModePoweroff:
+			mode = driver.StopModePoweroff
+		default:
+			writeError(w, http.StatusBadRequest, api.ErrBadRequest)
+			return
+		}
+	}
+	if err := s.drv.Stop(r.Context(), id, mode); err != nil {
 		s.writeDriverError(w, id, err)
 		return
 	}
@@ -143,6 +179,14 @@ func toWire(st driver.Status) api.MachineStatus {
 		Reason:    st.Reason,
 		Handle:    st.Handle,
 		GuestIP:   st.GuestIP,
+		Boot:      st.Boot,
+		DiskID:    st.DiskID,
+		Snapshot: api.SnapshotInfo{
+			Present:   st.Snapshot.Present,
+			CreatedAt: st.Snapshot.CreatedAt,
+			FCVersion: st.Snapshot.FCVersion,
+			MemBytes:  st.Snapshot.MemBytes,
+		},
 	}
 }
 

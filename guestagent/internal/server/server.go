@@ -12,6 +12,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -32,26 +33,88 @@ const pingInterval = 30 * time.Second
 // a large bound only matters for big pastes.
 const readLimit = 1 << 20
 
-// Server bridges terminal WebSockets to PTY sessions managed by mgr.
+// Persister is the persistence surface the server exposes over /resume and
+// /info (Phase 4). Implemented by *persist.Persist; nil in tests/builds that
+// run without persistence, in which case those routes report 503.
+type Persister interface {
+	// Resume applies the host clock + entropy after a snapshot restore and
+	// returns the corrected skew in milliseconds.
+	Resume(unixNanos int64, entropy []byte) (int64, error)
+	// Info returns the current persistence/boot info.
+	Info() guestwire.Info
+}
+
+// Server bridges terminal WebSockets to PTY sessions managed by mgr, and serves
+// the Phase 4 control surface (/resume, /info) backed by persist.
 type Server struct {
-	mgr *term.Manager
+	mgr     *term.Manager
+	persist Persister
 }
 
-// New returns a Server backed by mgr.
-func New(mgr *term.Manager) *Server {
-	return &Server{mgr: mgr}
+// New returns a Server backed by mgr and (optionally) persist. A nil persist
+// disables the /resume and /info routes (they report 503).
+func New(mgr *term.Manager, persist Persister) *Server {
+	return &Server{mgr: mgr, persist: persist}
 }
 
-// Handler builds the HTTP handler. /terminal is the only route; /healthz is a
-// trivial liveness probe usable over the transport.
+// Handler builds the HTTP handler. /terminal serves sessions; /resume + /info
+// are the Phase 4 control surface; /healthz is a trivial liveness probe.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /terminal", s.handleTerminal)
+	mux.HandleFunc(guestwire.RouteResume, s.handleResume)
+	mux.HandleFunc(guestwire.RouteInfo, s.handleInfo)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
 	return mux
+}
+
+// handleResume applies the host-provided clock + entropy after a snapshot
+// restore (decision #9) and returns the corrected skew.
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	if s.persist == nil {
+		http.Error(w, "persistence disabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req guestwire.ResumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	var entropy []byte
+	if req.EntropyB64 != "" {
+		b, err := base64.StdEncoding.DecodeString(req.EntropyB64)
+		if err != nil {
+			http.Error(w, "bad entropy_b64", http.StatusBadRequest)
+			return
+		}
+		entropy = b
+	}
+	skewMS, err := s.persist.Resume(req.UnixNanos, entropy)
+	if err != nil {
+		slog.Error("resume failed", "err", err)
+		http.Error(w, "resume failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSONResp(w, guestwire.ResumeResponse{SkewCorrectedMS: skewMS})
+}
+
+// handleInfo returns the guest agent version, persistence mode, and last boot.
+func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
+	if s.persist == nil {
+		http.Error(w, "persistence disabled", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSONResp(w, s.persist.Info())
+}
+
+func writeJSONResp(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("write json failed", "err", err)
+	}
 }
 
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {

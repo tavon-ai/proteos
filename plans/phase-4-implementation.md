@@ -1,6 +1,16 @@
 # Phase 4 Implementation Plan: Persistent disk + hibernate/resume
 
-> Source: `plans/proteos-poc-to-prod.md` Phase 4, planned 2026-06-11. Status: **not started.**
+> Source: `plans/proteos-poc-to-prod.md` Phase 4, planned 2026-06-11.
+> Status: **Track A (Mac/dev-driver) landed** — 4.1 node-agent contract + DevDriver,
+> 4.2 control-plane schema/lifecycle/key-broker, 4.3 guest-agent persist+SQLite+resume,
+> 4.5 dev-stack e2e + React. `go test ./...` green across all three modules (incl. the
+> `TestHibernateResumeE2E` dev-stack e2e: file survives stop/start, `boot:resumed`).
+> **Track B (Proxmox/Firecracker) remaining** — 4.0 spike `09-encrypted-disk.sh`,
+> 4.4 FirecrackerDriver volumes + hibernate/resume (`volume.go`/`snapshot.go`, the
+> `prepareChroot` split, version-guard fallback), 4.6 KVM acceptance pass. The
+> node-agent driver interface, state.Record, and FC `Stop` signature are already
+> extended to the Phase 4 contract; `firecracker.go` has TODO(4.4) markers where the
+> hibernate teardown plugs in.
 > Prerequisites: Phase 2 (driver interface, jail layout, state store, lifecycle poller) and
 > Phase 3 (guest agent + vsock tunnel + gateway) — both landed. Phase 4 treats their
 > contracts as given and extends them; it does not rework the boot, tunnel, or gateway paths.

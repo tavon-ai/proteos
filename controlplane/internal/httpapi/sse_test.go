@@ -17,6 +17,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	"github.com/tavon/proteos/controlplane/internal/testutil"
@@ -165,7 +166,7 @@ func newSSEHarness(t *testing.T) *sseHarness {
 
 	nc := nodeclient.New(agentSrv.URL, "tok")
 	broker := machine.NewBroker()
-	svc := machine.NewService(pool, nc, broker, host.ID, machine.Spec{Vcpus: 2, MemMiB: 2048, KernelRef: "k", RootfsRef: "r"})
+	svc := machine.NewService(pool, nc, broker, secrets.NewMemStore(), host.ID, machine.Spec{Vcpus: 2, MemMiB: 2048, KernelRef: "k", RootfsRef: "r"})
 	poller := machine.NewPoller(pool, nc, broker)
 
 	sessions := session.NewManager(q, time.Hour)
@@ -248,17 +249,17 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 		t.Fatalf("frame1 not running or id not increasing: %s", f1.data)
 	}
 
-	// Transition 2: running→stopping.
+	// Transition 2: running→hibernating.
 	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
 		t.Fatal(err)
 	}
-	stoppingID := h.lastEventID(t, m.ID)
+	hibernatingID := h.lastEventID(t, m.ID)
 	f2 := nextFrame(t, frames)
-	if f2.event != "machine" || f2.id != strconv.FormatInt(stoppingID, 10) {
-		t.Fatalf("frame2 event=%q id=%q, want machine/%d", f2.event, f2.id, stoppingID)
+	if f2.event != "machine" || f2.id != strconv.FormatInt(hibernatingID, 10) {
+		t.Fatalf("frame2 event=%q id=%q, want machine/%d", f2.event, f2.id, hibernatingID)
 	}
-	if stoppingID <= runningID || !strings.Contains(f2.data, `"state":"stopping"`) {
-		t.Fatalf("frame2 not stopping or id not increasing: %s", f2.data)
+	if hibernatingID <= runningID || !strings.Contains(f2.data, `"state":"hibernating"`) {
+		t.Fatalf("frame2 not hibernating or id not increasing: %s", f2.data)
 	}
 }
 
@@ -274,7 +275,7 @@ func TestSSEReplaysFromLastEventID(t *testing.T) {
 	h.agent.set(idStr, agentapi.StateRunning, "172.30.0.2")
 	h.poller.AdvanceTransitional(ctx) // running event
 	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
-		t.Fatal(err) // stopping event
+		t.Fatal(err) // hibernating event
 	}
 
 	// The machine now has exactly three events; their ids are whatever the DB
@@ -283,7 +284,7 @@ func TestSSEReplaysFromLastEventID(t *testing.T) {
 	if len(ids) != 3 {
 		t.Fatalf("want 3 events, got %d (%v)", len(ids), ids)
 	}
-	provID, runningID, stoppingID := ids[0], ids[1], ids[2]
+	provID, runningID, hibernatingID := ids[0], ids[1], ids[2]
 
 	// Reconnect claiming we last saw the provisioning event ⇒ replay the
 	// running + stopping events from the DB, in order, with the right ids.
@@ -298,7 +299,7 @@ func TestSSEReplaysFromLastEventID(t *testing.T) {
 		t.Fatalf("replay1=%+v, want machine/%d to_state running", r1, runningID)
 	}
 	r2 := nextFrame(t, frames)
-	if r2.event != "machine" || r2.id != strconv.FormatInt(stoppingID, 10) || !strings.Contains(r2.data, `"to_state":"stopping"`) {
-		t.Fatalf("replay2=%+v, want machine/%d to_state stopping", r2, stoppingID)
+	if r2.event != "machine" || r2.id != strconv.FormatInt(hibernatingID, 10) || !strings.Contains(r2.data, `"to_state":"hibernating"`) {
+		t.Fatalf("replay2=%+v, want machine/%d to_state hibernating", r2, hibernatingID)
 	}
 }

@@ -63,7 +63,7 @@ func (p *Poller) Run(ctx context.Context) {
 // AdvanceTransitional runs one reconciliation pass over machines in
 // provisioning/starting/stopping. Exported so tests can drive it deterministically.
 func (p *Poller) AdvanceTransitional(ctx context.Context) {
-	states := []string{string(StateProvisioning), string(StateStarting), string(StateStopping)}
+	states := []string{string(StateProvisioning), string(StateStarting), string(StateStopping), string(StateHibernating)}
 	machines, err := p.q.ListMachinesInStates(ctx, states)
 	if err != nil {
 		slog.Error("poller: list transitional", "err", err)
@@ -111,7 +111,7 @@ func (p *Poller) advanceOne(ctx context.Context, m store.Machine) {
 		// complete, so fail with a reason (the retry path is Start for a
 		// provisioning/starting machine; a stopping failure is terminal-ish).
 		if errors.Is(err, nodeclient.ErrUnknownMachine) {
-			if from == StateStopping {
+			if from == StateStopping || from == StateHibernating {
 				// Agent no longer tracks it ⇒ effectively stopped.
 				p.transition(ctx, m, from, StateStopped, ActorPoller, EventTransition, nil, nil)
 				return
@@ -135,19 +135,41 @@ func (p *Poller) advanceOne(ctx context.Context, m store.Machine) {
 		default: // stopping/stopped during boot is unexpected
 			p.toError(ctx, m, from, "unexpected agent state during boot: "+st.State)
 		}
-	case StateStopping:
+	case StateStopping, StateHibernating:
 		switch st.State {
 		case agentapi.StateStopped:
-			p.transition(ctx, m, from, StateStopped, ActorPoller, EventTransition, nil, nil)
+			p.toStopped(ctx, m, from, st)
 		case agentapi.StateError:
 			p.toError(ctx, m, from, agentReason(st, "stop failed"))
-		default: // stopping / still running: wait
+		default: // stopping / hibernating / still running: wait
 		}
 	}
 }
 
-// toRunning records the agent-reported guest IP + handle, then transitions the
-// machine to running.
+// toStopped records the snapshot metadata the agent reports (present ⇒ upsert
+// the current-snapshot row; absent ⇒ a cold stop, so clear any prior row), then
+// transitions the machine to stopped.
+func (p *Poller) toStopped(ctx context.Context, m store.Machine, from State, st agentapi.MachineStatus) {
+	if st.Snapshot.Present {
+		if _, err := p.q.UpsertSnapshot(ctx, store.UpsertSnapshotParams{
+			MachineID: m.ID,
+			FcVersion: st.Snapshot.FCVersion,
+			MemBytes:  st.Snapshot.MemBytes,
+			KernelRef: m.KernelRef,
+			RootfsRef: m.RootfsRef,
+		}); err != nil {
+			slog.Error("poller: upsert snapshot", "machine", UUIDString(m.ID), "err", err)
+		}
+	} else if err := p.q.DeleteSnapshot(ctx, m.ID); err != nil {
+		slog.Error("poller: clear snapshot on cold stop", "machine", UUIDString(m.ID), "err", err)
+	}
+	p.transition(ctx, m, from, StateStopped, ActorPoller, EventTransition, snapshotPayload(st), nil)
+}
+
+// toRunning records the agent-reported guest IP + handle and how the machine
+// started (boot: cold|resumed), consumes any snapshot (a running machine never
+// has one), then transitions to running. The boot kind goes into both the
+// machine row (for the API summary) and the transition event payload (audit).
 func (p *Poller) toRunning(ctx context.Context, m store.Machine, from State, st agentapi.MachineStatus) {
 	handle := st.Handle
 	params := store.SetMachineRuntimeParams{ID: m.ID, VmHandle: &handle}
@@ -160,7 +182,20 @@ func (p *Poller) toRunning(ctx context.Context, m store.Machine, from State, st 
 		slog.Error("poller: set runtime", "machine", UUIDString(m.ID), "err", err)
 		// fall through; the transition still records running
 	}
-	p.transition(ctx, m, from, StateRunning, ActorPoller, EventTransition, nil, nil)
+
+	if st.Boot != "" {
+		boot := st.Boot
+		if _, err := p.q.SetMachineBoot(ctx, store.SetMachineBootParams{ID: m.ID, Boot: &boot}); err != nil {
+			slog.Error("poller: set boot", "machine", UUIDString(m.ID), "err", err)
+		}
+	}
+	// A resume consumes the snapshot; a cold boot has none. Either way a running
+	// machine carries no current snapshot.
+	if err := p.q.DeleteSnapshot(ctx, m.ID); err != nil {
+		slog.Error("poller: clear snapshot on running", "machine", UUIDString(m.ID), "err", err)
+	}
+
+	p.transition(ctx, m, from, StateRunning, ActorPoller, EventTransition, bootPayload(st), nil)
 }
 
 // toError moves a machine to the error state with a reason, recorded in both
@@ -193,4 +228,25 @@ func agentReason(st agentapi.MachineStatus, fallback string) string {
 		return st.Reason
 	}
 	return fallback
+}
+
+// bootPayload records how the machine started in the transition event payload.
+func bootPayload(st agentapi.MachineStatus) []byte {
+	if st.Boot == "" {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]string{"boot": st.Boot})
+	return b
+}
+
+// snapshotPayload records whether a stop produced a snapshot (hibernate) or not
+// (cold poweroff), with the snapshot metadata, in the transition event payload.
+func snapshotPayload(st agentapi.MachineStatus) []byte {
+	m := map[string]any{"snapshot_present": st.Snapshot.Present}
+	if st.Snapshot.Present {
+		m["fc_version"] = st.Snapshot.FCVersion
+		m["mem_bytes"] = st.Snapshot.MemBytes
+	}
+	b, _ := json.Marshal(m)
+	return b
 }

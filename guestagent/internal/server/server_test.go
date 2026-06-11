@@ -19,7 +19,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mgr := term.NewManager(term.Config{Shell: "/bin/bash", ScrollbackKiB: 256})
 	t.Cleanup(mgr.Shutdown)
-	ts := httptest.NewServer(New(mgr).Handler())
+	ts := httptest.NewServer(New(mgr, nil).Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }

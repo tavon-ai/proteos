@@ -80,11 +80,15 @@ func run(migrate, migrateOnly bool) error {
 	if cfg.AgentToken == "" {
 		slog.Warn("PROTEOS_AGENT_TOKEN is empty; node-agent calls will be unauthenticated and will fail")
 	}
-	nodes := nodeclient.New(cfg.NodeAgentURL, cfg.AgentToken)
+	nodes, err := nodeclient.NewPinned(cfg.NodeAgentURL, cfg.AgentToken, cfg.NodeCAFile)
+	if err != nil {
+		return err
+	}
 	broker := machine.NewBroker()
-	machineSvc := machine.NewService(pool, nodes, broker, host.ID, machine.Spec{
+	machineSvc := machine.NewService(pool, nodes, broker, sec, host.ID, machine.Spec{
 		Vcpus:     cfg.MachineVcpus,
 		MemMiB:    cfg.MachineMemMiB,
+		DiskMiB:   cfg.MachineDiskMiB,
 		KernelRef: cfg.KernelRef,
 		RootfsRef: cfg.RootfsRef,
 	})

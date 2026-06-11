@@ -23,10 +23,24 @@ type MachineSummary struct {
 	ResourceSpec json.RawMessage `json:"resource_spec"`
 	LastError    *string         `json:"last_error"`
 	CreatedAt    string          `json:"created_at"`
+
+	// Phase 4: persistent disk + hibernate/resume.
+	Boot     *string          `json:"boot"`              // "cold" | "resumed" | null
+	DiskID   *string          `json:"disk_id"`           // null if not yet provisioned
+	DiskMiB  *int             `json:"disk_mib"`          // attached disk size
+	Snapshot *SnapshotSummary `json:"snapshot"`          // present only when hibernated
 }
 
-// toSummary renders a store.Machine as the API summary.
-func toSummary(m store.Machine) MachineSummary {
+// SnapshotSummary is the current hibernation snapshot metadata in the API.
+type SnapshotSummary struct {
+	FCVersion string `json:"fc_version"`
+	MemBytes  int64  `json:"mem_bytes"`
+	CreatedAt string `json:"created_at"`
+}
+
+// toSummary renders a store.Machine (plus its optional disk + snapshot) as the
+// API summary. disk/snap may be nil when absent.
+func toSummary(m store.Machine, disk *store.Disk, snap *store.Snapshot) MachineSummary {
 	s := MachineSummary{
 		ID:           machine.UUIDString(m.ID),
 		State:        m.State,
@@ -34,6 +48,7 @@ func toSummary(m store.Machine) MachineSummary {
 		RootfsRef:    m.RootfsRef,
 		ResourceSpec: json.RawMessage(m.ResourceSpec),
 		LastError:    m.LastError,
+		Boot:         m.Boot,
 	}
 	if m.GuestIp != nil {
 		ip := m.GuestIp.String()
@@ -42,7 +57,34 @@ func toSummary(m store.Machine) MachineSummary {
 	if m.CreatedAt.Valid {
 		s.CreatedAt = m.CreatedAt.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
 	}
+	if disk != nil {
+		id := machine.UUIDString(disk.ID)
+		size := int(disk.SizeMib)
+		s.DiskID, s.DiskMiB = &id, &size
+	}
+	if snap != nil {
+		created := ""
+		if snap.CreatedAt.Valid {
+			created = snap.CreatedAt.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+		}
+		s.Snapshot = &SnapshotSummary{FCVersion: snap.FcVersion, MemBytes: snap.MemBytes, CreatedAt: created}
+	}
 	return s
+}
+
+// summary enriches a machine with its disk + current snapshot and renders the
+// API summary. Disk/snapshot lookups are best-effort: a lookup error degrades to
+// a summary without that field rather than failing the whole response.
+func (s *Server) summary(ctx context.Context, m store.Machine) MachineSummary {
+	disk, err := s.Machines.DiskFor(ctx, m.ID)
+	if err != nil {
+		disk = nil
+	}
+	snap, err := s.Machines.SnapshotFor(ctx, m.ID)
+	if err != nil {
+		snap = nil
+	}
+	return toSummary(m, disk, snap)
 }
 
 // handleGetMachine returns the authenticated user's machine, or 404 no_machine.
@@ -61,7 +103,7 @@ func (s *Server) handleGetMachine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	writeJSON(w, http.StatusOK, toSummary(m))
+	writeJSON(w, http.StatusOK, s.summary(r.Context(), m))
 }
 
 // handleCreateMachine provisions the user's machine. 202 with the (provisioning)
@@ -81,7 +123,7 @@ func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, toSummary(m))
+	writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 }
 
 // handleStartMachine cold-boots a stopped/errored machine. 202 or 409 invalid_state.
@@ -111,6 +153,6 @@ func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
-		writeJSON(w, http.StatusAccepted, toSummary(m))
+		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 	}
 }

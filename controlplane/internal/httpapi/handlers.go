@@ -38,7 +38,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	m, err := s.Machines.Get(r.Context(), user.ID)
 	switch {
 	case err == nil:
-		summary := toSummary(m)
+		summary := s.summary(r.Context(), m)
 		resp.Machine = &summary
 	case errors.Is(err, machine.ErrNoMachine):
 		// leave Machine nil

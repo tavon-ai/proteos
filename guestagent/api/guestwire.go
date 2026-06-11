@@ -65,6 +65,60 @@ const (
 // DefaultSession is the session name attached to when ?session= is absent.
 const DefaultSession = "main"
 
+// Phase 4 control surface, served by the guest agent on the same private
+// transport (vsock/unix). These are NOT browser-facing; the node-agent calls
+// them directly after a snapshot restore (decision #9). Routes:
+//
+//	PUT /resume  {ResumeRequest}  → 200 {ResumeResponse}
+//	GET /info                     → 200 {Info}
+const (
+	RouteResume = "PUT /resume"
+	RouteInfo   = "GET /info"
+)
+
+// Persistence modes reported in Info.Persist.
+const (
+	PersistDisk = "disk" // /persist is a mounted (encrypted) block device
+	PersistDir  = "dir"  // a plain directory (dev override), no mount
+	PersistNone = "none" // degraded: no persistent storage available
+)
+
+// ResumeRequest is the body of PUT /resume: the host-provided wall clock and a
+// blob of fresh entropy to reseed the guest CRNG after a snapshot restore
+// (decision #9). Driving it from the host keeps resume deterministic — no
+// dependency on guest NTP egress at the resume instant.
+type ResumeRequest struct {
+	UnixNanos  int64  `json:"unix_nanos"`
+	EntropyB64 string `json:"entropy_b64,omitempty"`
+}
+
+// ResumeResponse is the body of a successful PUT /resume: the wall-clock skew
+// the guest corrected, in milliseconds (signed: positive ⇒ guest clock was
+// behind the host and was advanced).
+type ResumeResponse struct {
+	SkewCorrectedMS int64 `json:"skew_corrected_ms"`
+}
+
+// Boot describes one boot/resume event recorded in the machine SQLite.
+type Boot struct {
+	Kind string `json:"kind"` // "cold" | "resumed"
+	TS   int64  `json:"ts"`   // unix seconds
+}
+
+// Info is the body of GET /info: the guest agent version, the persistence mode,
+// and the most recent boot event (used by tests and the control plane).
+type Info struct {
+	Version  string `json:"version"`
+	Persist  string `json:"persist"` // PersistDisk | PersistDir | PersistNone
+	LastBoot *Boot  `json:"last_boot,omitempty"`
+}
+
+// Boot kinds recorded in the machine SQLite and reported in Boot.Kind.
+const (
+	BootCold    = "cold"
+	BootResumed = "resumed"
+)
+
 // sessionNameRe constrains session names to a small, path/identifier-safe set:
 // 1–32 chars of lowercase letters, digits, and hyphens.
 var sessionNameRe = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)

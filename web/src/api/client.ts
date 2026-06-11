@@ -42,15 +42,29 @@ export type MachineState =
   | "stopped"
   | "error";
 
+// SnapshotSummary is the current hibernation snapshot metadata (Phase 4),
+// present only while the machine is hibernated (stopped with a usable snapshot).
+export interface SnapshotSummary {
+  fc_version: string;
+  mem_bytes: number;
+  created_at: string;
+}
+
 export interface MachineSummary {
   id: string;
   state: MachineState;
   guest_ip: string | null;
   kernel_ref: string;
   rootfs_ref: string;
-  resource_spec: { vcpus: number; mem_mib: number };
+  resource_spec: { vcpus: number; mem_mib: number; disk_mib?: number };
   last_error: string | null;
   created_at: string;
+
+  // Phase 4: persistent disk + hibernate/resume.
+  boot: "cold" | "resumed" | null;
+  disk_id: string | null;
+  disk_mib: number | null;
+  snapshot: SnapshotSummary | null;
 }
 
 export interface MachineEvent {

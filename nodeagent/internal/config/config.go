@@ -21,6 +21,12 @@ type Config struct {
 	// value; both sides compare in constant time. Required (non-empty).
 	Token string
 
+	// TLSCert / TLSKey, when both set, make the agent serve HTTPS instead of
+	// plain HTTP (Phase 4 decision #3: the channel now carries volume keys). Dev
+	// stacks (loopback/Mac) leave them empty and stay on plain HTTP.
+	TLSCert string
+	TLSKey  string
+
 	// DataDir is where per-machine state.json files and the IP allocator table
 	// are persisted, so the agent re-attaches across restarts.
 	DataDir string
@@ -69,6 +75,17 @@ type Config struct {
 	// to (uid = JailUIDStart + offset derived from the machine).
 	JailUIDStart int
 	JailUIDCount int
+
+	// --- Phase 4: persistent disk + hibernate/resume -------------------------
+
+	// VolumesDir holds the per-machine LUKS volume container files
+	// (<VolumesDir>/<machine-id>.luks). It lives OUTSIDE the jail tree so
+	// prepareChroot never deletes it (decision #1). Unused by the dev driver.
+	VolumesDir string
+
+	// CryptsetupBin is the absolute path to cryptsetup, used to format/open/close
+	// the machine volume. Unused by the dev driver.
+	CryptsetupBin string
 }
 
 // Load reads and validates configuration from the environment.
@@ -76,6 +93,8 @@ func Load() (*Config, error) {
 	c := &Config{
 		Addr:           getenv("PROTEOS_AGENT_ADDR", ":9090"),
 		Token:          os.Getenv("PROTEOS_AGENT_TOKEN"),
+		TLSCert:        os.Getenv("PROTEOS_AGENT_TLS_CERT"),
+		TLSKey:         os.Getenv("PROTEOS_AGENT_TLS_KEY"),
 		DataDir:        getenv("PROTEOS_AGENT_DATA_DIR", ".data/agent"),
 		Driver:         getenv("PROTEOS_AGENT_DRIVER", "dev"),
 		StubPath:       os.Getenv("PROTEOS_DEV_STUB"),
@@ -87,6 +106,12 @@ func Load() (*Config, error) {
 		ImagesDir:      getenv("PROTEOS_AGENT_IMAGES_DIR", "/var/lib/proteos/images"),
 		JailUIDStart:   getenvInt("PROTEOS_JAIL_UID_START", 100000),
 		JailUIDCount:   getenvInt("PROTEOS_JAIL_UID_COUNT", 1000),
+		VolumesDir:     getenv("PROTEOS_AGENT_VOLUMES_DIR", "/var/lib/proteos/volumes"),
+		CryptsetupBin:  getenv("PROTEOS_CRYPTSETUP_BIN", "/usr/sbin/cryptsetup"),
+	}
+
+	if (c.TLSCert == "") != (c.TLSKey == "") {
+		return nil, fmt.Errorf("PROTEOS_AGENT_TLS_CERT and PROTEOS_AGENT_TLS_KEY must be set together")
 	}
 
 	subnetStr := getenv("PROTEOS_AGENT_SUBNET", "172.30.0.0/24")

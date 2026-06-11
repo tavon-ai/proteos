@@ -91,7 +91,7 @@ func newHarness(t *testing.T, gh *fakeGitHub, allowlist []string) *harness {
 	// /api/me reports the user's machine; wire a real (DB-backed) machine
 	// service. No machine is ever created in these auth tests, so the node
 	// client is never dialed — Get just resolves to ErrNoMachine.
-	machineSvc := machine.NewService(pool, nil, nil, pgtype.UUID{}, machine.Spec{})
+	machineSvc := machine.NewService(pool, nil, nil, secrets.NewMemStore(), pgtype.UUID{}, machine.Spec{})
 	api := &httpapi.Server{Sessions: sessions, Auth: authHandler, Machines: machineSvc, Queries: q}
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
