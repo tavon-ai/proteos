@@ -1,0 +1,85 @@
+# ProteOS app stack: Postgres + control plane + web (SPA behind nginx).
+# Runs on the app VM; dials the native node-agent on the KVM host over the LAN.
+#
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up -d --build
+#   # browse to $PROTEOS_BASE_URL and sign in with GitHub
+#
+# The node-agent is NOT part of this stack — it runs natively on the KVM host
+# (see deploy/node-agent/). Set PROTEOS_NODE_AGENT_URL to that host's address.
+
+name: proteos
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-proteos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proteos}
+      POSTGRES_DB: ${POSTGRES_DB:-proteos}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proteos} -d ${POSTGRES_DB:-proteos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  controlplane:
+    build:
+      context: ../..
+      dockerfile: deploy/app-stack/controlplane.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PROTEOS_ADDR: ":8080"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-proteos}:${POSTGRES_PASSWORD:-proteos}@postgres:5432/${POSTGRES_DB:-proteos}?sslmode=disable"
+
+      # Browser-facing origin (the web service below). Must equal the URL you
+      # open AND the host+port in the GitHub App's callback URL.
+      PROTEOS_BASE_URL: ${PROTEOS_BASE_URL:?set to e.g. http://APP_VM_IP:8080}
+      PROTEOS_COOKIE_SECURE: ${PROTEOS_COOKIE_SECURE:-false}
+
+      # Phase-1 file-backed secrets store, persisted on the data volume below.
+      PROTEOS_SECRETS_FILE: /var/lib/proteos/secrets.json
+
+      # Native node-agent on the KVM host. Token must match the agent's.
+      PROTEOS_NODE_AGENT_URL: ${PROTEOS_NODE_AGENT_URL:?set to http://KVM_HOST_IP:9090}
+      PROTEOS_AGENT_TOKEN: ${PROTEOS_AGENT_TOKEN:?shared bearer token (must match the node-agent)}
+      PROTEOS_HOST_NAME: ${PROTEOS_HOST_NAME:-proxmox-fc-1}
+
+      # Image refs stamped on each machine; must match files staged in the
+      # agent's PROTEOS_AGENT_IMAGES_DIR.
+      PROTEOS_KERNEL_REF: ${PROTEOS_KERNEL_REF:-vmlinux}
+      PROTEOS_ROOTFS_REF: ${PROTEOS_ROOTFS_REF:-ubuntu-24.04.ext4}
+      PROTEOS_MACHINE_VCPUS: ${PROTEOS_MACHINE_VCPUS:-2}
+      PROTEOS_MACHINE_MEM_MIB: ${PROTEOS_MACHINE_MEM_MIB:-2048}
+
+      # GitHub OAuth (Phase 1 auth).
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:?}
+      GITHUB_APP_CLIENT_SECRET: ${GITHUB_APP_CLIENT_SECRET:?}
+      PROTEOS_STATE_KEY: ${PROTEOS_STATE_KEY:?32+ byte random hex}
+      ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
+    volumes:
+      - cpdata:/var/lib/proteos
+    # If you instead co-locate this stack on the SAME host as the node-agent,
+    # set PROTEOS_NODE_AGENT_URL=http://host.docker.internal:9090 and uncomment:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/app-stack/web.Dockerfile
+    depends_on:
+      - controlplane
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  cpdata:

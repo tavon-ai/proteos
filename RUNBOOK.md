@@ -1,0 +1,245 @@
+# ProteOS — Full-stack runbook (Phase 2 acceptance)
+
+How to run the complete Phase 2 stack and check off the acceptance criteria in
+`plans/proteos-poc-to-prod.md`. This completes Task 2.8 ("run the full stack on
+the Proxmox VM").
+
+It is written to be **reproducible by someone else on different machines** —
+every host-specific value is an env var with an `.env.example`, and the only
+manual host step (the KVM VM) is the one already documented in
+`spike/firecracker/00-proxmox-vm.md`.
+
+## Topology
+
+Two machines:
+
+```
+┌───────────────────────────┐         ┌──────────────────────────────────────┐
+│ App VM (any Docker host)  │         │ KVM host = Proxmox VM (nested KVM)    │
+│                           │  HTTP   │                                      │
+│  docker compose:          │  :9090  │  native (root) systemd service:      │
+│   postgres                │ ──────► │   proteos-node-agent                 │
+│   controlplane  ──────────┼─────────┤   (Firecracker driver)               │
+│   web (nginx + SPA)       │ bearer  │     └─ jailer ► microVMs (guests)    │
+│   browser ⇒ :8080         │  token  │                                      │
+└───────────────────────────┘         └──────────────────────────────────────┘
+```
+
+- The **node-agent cannot be containerised** — it needs `/dev/kvm`, root, tap
+  devices, the jailer, and host nftables. It runs natively on the KVM host.
+- Everything else (Postgres, control plane, web) is portable and ships as a
+  Docker Compose stack on the **app VM**.
+- The control plane dials the agent **only** (plan decision #2), authenticated
+  by a shared bearer token. Status flows back via the control plane's poller.
+- The browser talks to one origin (the `web` nginx); nginx serves the SPA and
+  reverse-proxies `/api` to the control plane so cookies + CSRF work.
+
+Artifacts: `deploy/node-agent/` (KVM host) and `deploy/app-stack/` (app VM).
+
+> Can both run on the **same** Proxmox VM? Yes — run the node-agent natively and
+> the compose stack on the same box; set `PROTEOS_NODE_AGENT_URL=http://host.docker.internal:9090`
+> and uncomment `extra_hosts` in `compose.yml`. The two-VM split below is the
+> documented path.
+
+---
+
+## Part A — node-agent on the KVM host
+
+Prereqs: the Firecracker spike has been run on this VM (`spike/firecracker/01-host-setup.sh`),
+so `/dev/kvm` works and the pinned `firecracker`+`jailer` binaries exist under
+`~/fc-spike/bin`. Go is installed (you already ran the `-tags=firecracker` tests).
+
+### A1. Stage the pinned images
+
+The driver resolves `kernel_ref`/`rootfs_ref` as filenames under the images dir
+(`filepath.Join(ImagesDir, ref)`), and makes a fresh writable rootfs copy per
+boot — so the base files stay pristine. Reuse the spike artifacts:
+
+```bash
+sudo mkdir -p /var/lib/proteos/images /srv/jailer
+sudo cp ~/fc-spike/images/vmlinux           /var/lib/proteos/images/vmlinux
+sudo cp ~/fc-spike/images/ubuntu-24.04.ext4 /var/lib/proteos/images/ubuntu-24.04.ext4
+```
+
+### A2. Point the agent at the firecracker/jailer binaries
+
+The spike leaves them in `~/fc-spike/bin`. Either copy them to `/usr/local/bin`
+(the defaults), or set `PROTEOS_FIRECRACKER_BIN`/`PROTEOS_JAILER_BIN` in the env
+file. Copying is cleaner for a service:
+
+```bash
+sudo cp ~/fc-spike/bin/firecracker ~/fc-spike/bin/jailer /usr/local/bin/
+```
+
+### A3. Configure + run
+
+```bash
+cd <repo>/deploy/node-agent
+cp .env.example .env
+# set PROTEOS_AGENT_TOKEN (openssl rand -hex 32 — save it, the app VM needs it)
+# confirm the paths and PROTEOS_AGENT_SUBNET
+$EDITOR .env
+
+sudo ./run-node-agent.sh        # preflight, build (-tags=firecracker), run foreground
+```
+
+Preflight prints `[ ok ]` for kvm/firecracker/jailer/ip/nft/images, or `[fail]`
+with the exact missing thing. From another shell:
+
+```bash
+curl -s 127.0.0.1:9090/healthz   # {"status":"ok"}
+```
+
+### A4. (Recommended) Run it as a service
+
+Persist across reboots and capture logs — see the install block at the top of
+`deploy/node-agent/proteos-node-agent.service`. In short: build the binary once
+(`run-node-agent.sh build`), put the env file at `/etc/proteos/node-agent.env`,
+install + `systemctl enable --now proteos-node-agent`, then
+`journalctl -u proteos-node-agent -f`.
+
+### A5. Open the port to the app VM only
+
+The agent listens on `0.0.0.0:9090`; the bearer token authenticates callers, but
+still scope it at the firewall:
+
+```bash
+sudo ufw allow from <APP_VM_IP> to any port 9090 proto tcp   # example
+```
+
+---
+
+## Part B — app stack on the app VM
+
+Prereq: Docker + Docker Compose v2. Clone the repo (or copy `deploy/app-stack/`
+plus the `controlplane/`, `nodeagent/`, `web/`, `go.work*` trees the images
+build from).
+
+### B1. GitHub App callback
+
+In your GitHub App (the Phase 1 one), set the user-authorization callback URL to:
+
+```
+http://<APP_VM_IP>:<WEB_PORT>/api/auth/github/callback
+```
+
+This must match `PROTEOS_BASE_URL` below exactly.
+
+### B2. Configure
+
+```bash
+cd <repo>/deploy/app-stack
+cp .env.example .env
+$EDITOR .env
+```
+
+Set, at minimum:
+- `WEB_PORT` + `PROTEOS_BASE_URL` — the browser origin (e.g. `http://10.0.0.5:8080`).
+- `PROTEOS_NODE_AGENT_URL` — `http://<KVM_HOST_IP>:9090`.
+- `PROTEOS_AGENT_TOKEN` — **the same token** you set in Part A3.
+- `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `PROTEOS_STATE_KEY` (`openssl rand -hex 32`).
+- Keep `PROTEOS_KERNEL_REF` / `PROTEOS_ROOTFS_REF` matching the staged filenames.
+
+### B3. Build + run
+
+```bash
+docker compose up -d --build
+docker compose logs -f controlplane   # "applying migrations" then listening on :8080
+```
+
+The control plane applies migration `000002` on startup (`-migrate`), upserts the
+host row from `PROTEOS_HOST_NAME` + `PROTEOS_NODE_AGENT_URL`, and starts the
+poller. Confirm it reached the agent:
+
+```bash
+docker compose exec controlplane /usr/local/bin/controlplane --help >/dev/null 2>&1 || true
+# from the app VM:
+curl -s http://<KVM_HOST_IP>:9090/healthz   # reachable across the LAN?
+```
+
+### B4. Sign in
+
+Open `PROTEOS_BASE_URL` in a browser → "Sign in with GitHub" → you land on the
+Dashboard with a machine card (no machine yet).
+
+---
+
+## Part C — Phase 2 acceptance walkthrough
+
+Tick each row of the Phase 2 checklist in `plans/proteos-poc-to-prod.md`.
+
+1. **Create → provisioning → running (real FC VM).** Click **Create**. The card
+   goes `provisioning → running` live over SSE (no refresh). On the KVM host:
+   ```bash
+   ps -ef | grep -i firecracker        # VMM running under a per-VM uid (>=100000)
+   ls /srv/jailer/firecracker/         # one jail per machine
+   sudo ip link | grep tap             # a tap device exists
+   ```
+
+2. **Every VMM is jailed.** The firecracker process runs as the dropped uid in a
+   chroot — confirm the uid in `ps` is in the configured jail range, not 0.
+
+3. **stop / start transitions persisted + one event row each.** Use the card's
+   Stop then Start. Then:
+   ```bash
+   docker compose exec postgres psql -U proteos -d proteos \
+     -c "select from_state, to_state, type, actor from machine_events order by id;"
+   ```
+   Expect rows for each transition (`requested→provisioning→running→stopping→stopped→starting→running`).
+
+4. **tap + private IP; vm_handle/host recorded.**
+   ```bash
+   docker compose exec postgres psql -U proteos -d proteos \
+     -c "select state, host_id, vm_handle, guest_ip from machines;"
+   ```
+   `guest_ip` populated, `vm_handle` set, `host_id` points at the seeded host.
+
+5. **Dashboard live state + event stream.** Open the browser devtools Network
+   tab → `GET /api/machine/events` stays open (SSE), and a second tab's
+   Stop/Start updates the first without refresh.
+
+6. **Basic default-deny egress (the decisive check).** Get a shell in a guest
+   (via its tap/`guest_ip`, the spike's `03-network.sh` scheme), then:
+   ```bash
+   # inside the guest:
+   curl --max-time 3 http://<gateway .1>:9090/healthz   # node-agent  -> MUST fail/time out
+   curl --max-time 3 http://<KVM_HOST_IP>:9090/healthz  # agent (host)-> MUST fail
+   curl --max-time 3 http://<APP_VM_IP>:8080/           # control plane -> MUST fail
+   curl --max-time 3 https://1.1.1.1                    # internet    -> MUST succeed
+   ```
+   This proves the per-tap nftables default-deny (drop guest→host/agent/control
+   plane/RFC1918/link-local; allow established + NAT to internet).
+
+7. **Authenticated agent channel.** Temporarily blank/!wrong-token a control-plane
+   restart → agent calls 401 and machines go to `error` with reason; restore the
+   token to recover.
+
+8. **Driver interface + pinned kernel/rootfs on the machine record.**
+   ```bash
+   docker compose exec postgres psql -U proteos -d proteos \
+     -c "select kernel_ref, rootfs_ref, resource_spec from machines;"
+   ```
+
+---
+
+## Reproducibility notes
+
+- **Pinned versions** live in `spike/firecracker/env.sh` + the committed
+  `versions.lock`; firecracker/jailer/kernel/rootfs come from there.
+- **A fresh person needs**: (1) a Proxmox VM per `00-proxmox-vm.md` + the spike's
+  `01-host-setup.sh`; (2) any Docker host for the app stack; (3) the two
+  `.env.example` files filled in with a shared token and matching image refs.
+- **No host-specific paths are baked into code** — they are all env vars with
+  documented defaults.
+- **Clean slate** before a run: `spike/firecracker/07-teardown.sh` clears stale
+  taps/nft rules; `docker compose down -v` drops the app stack + DB.
+
+## Gotchas
+
+- The agent's `PROTEOS_AGENT_SUBNET` (`172.30.0.0/24`) must not collide with the
+  Proxmox bridge or the app VM subnet.
+- `PROTEOS_BASE_URL`, `WEB_PORT`, and the GitHub callback URL must all agree, or
+  OAuth fails with a redirect-uri mismatch.
+- Containers can't reach a `127.0.0.1` agent — use the KVM host's LAN IP (split
+  VMs) or `host.docker.internal` (same host).
+- On plain HTTP keep `PROTEOS_COOKIE_SECURE=false`; put TLS in front for real use.
