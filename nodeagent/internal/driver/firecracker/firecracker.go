@@ -36,6 +36,10 @@ type Config struct {
 	ImagesDir      string
 	JailUIDStart   int
 	JailUIDCount   int
+	// GuestVsockPort is the fixed guest port the in-VM agent listens on; the
+	// host reaches it through the jailed vsock uds via the CONNECT/OK handshake
+	// (Phase 3 decision #3). Zero defaults to 1024.
+	GuestVsockPort int
 }
 
 // Driver implements driver.Driver against jailed Firecracker VMMs.
@@ -166,6 +170,13 @@ func (d *Driver) bootOnce(rec state.Record) error {
 	if err := apiClient.put(ctx, "/network-interfaces/eth0", networkInterface{
 		IfaceID: "eth0", GuestMAC: rec.MAC, HostDevName: rec.TapName,
 	}); err != nil {
+		return err
+	}
+
+	// 4b. attach the vsock device (Phase 3): the in-VM guest agent listens on
+	// the fixed guest port; the host reaches it through this jailed uds. Like
+	// the NIC, it must be configured before InstanceStart (no hot-add).
+	if err := apiClient.put(ctx, "/vsock", vsockDevice{GuestCID: guestCID, UDSPath: vsockUDSName}); err != nil {
 		return err
 	}
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/tavon/proteos/controlplane/internal/auth"
+	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -25,6 +26,10 @@ type Server struct {
 	// stream). Queries is the read-only side used for the snapshot/replay.
 	Broker  *machine.Broker
 	Queries *store.Queries
+
+	// Gateway proxies the browser terminal WebSocket to the machine's guest
+	// agent (Phase 3). Nil disables the /gw/terminal route.
+	Gateway *gateway.Proxy
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
@@ -55,6 +60,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machine/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
 	mux.Handle("POST /api/machine/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
+
+	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check
+	// and ownership resolution happen inside the handler/proxy. EventSource-style
+	// CSRF does not apply — the WS Origin check is the CSRF equivalent here.
+	if s.Gateway != nil {
+		mux.Handle("GET /gw/terminal", s.requireAuth(http.HandlerFunc(s.handleGatewayTerminal)))
+	}
 
 	// Wrap everything in request logging.
 	return requestLogger(mux)

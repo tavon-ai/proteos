@@ -68,6 +68,13 @@ type Config struct {
 	// node-agent resolves them against its images dir.
 	KernelRef string
 	RootfsRef string
+
+	// --- Phase 3: terminal gateway -----------------------------------------
+
+	// AllowedWSOrigins is the exact-match allowlist for the terminal WebSocket's
+	// Origin header (PROTEOS_ALLOWED_WS_ORIGINS, CSV). Defaults to the BaseURL
+	// origin; in dev the Vite origin (http://localhost:5173) is also added.
+	AllowedWSOrigins []string
 }
 
 // Load reads configuration from the environment and validates it. The
@@ -96,6 +103,17 @@ func Load() (*Config, error) {
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {
 		c.StateSigningKey = []byte(key)
+	}
+
+	// Allowed WebSocket origins: explicit CSV wins; otherwise default to the
+	// BaseURL origin, plus the Vite dev origin when BaseURL is localhost.
+	if origins := splitList(os.Getenv("PROTEOS_ALLOWED_WS_ORIGINS")); len(origins) > 0 {
+		c.AllowedWSOrigins = origins
+	} else {
+		c.AllowedWSOrigins = []string{c.BaseURL}
+		if strings.Contains(c.BaseURL, "localhost") || strings.Contains(c.BaseURL, "127.0.0.1") {
+			c.AllowedWSOrigins = append(c.AllowedWSOrigins, "http://localhost:5173")
+		}
 	}
 
 	return c, nil

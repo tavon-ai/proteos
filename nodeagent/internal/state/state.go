@@ -67,6 +67,11 @@ func (s *Store) Gateway() netip.Addr { return s.gateway }
 
 func (s *Store) path(id string) string { return filepath.Join(s.dir, id+".json") }
 
+// MachineDir is a per-machine directory under the store root, for runtime
+// artifacts that are not the state record itself (e.g. the dev driver's
+// guest.sock). It is sibling to the machine's <id>.json file.
+func (s *Store) MachineDir(id string) string { return filepath.Join(s.dir, id) }
+
 // Reserve returns the existing record for id, or — if none exists — allocates
 // network resources (lowest free IP, derived tap name + MAC), persists a fresh
 // record in the "creating" state, and returns it. Allocation and persistence

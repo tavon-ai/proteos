@@ -51,3 +51,12 @@ NET_BOOT_ARGS="ip=$GUEST_IP::$HOST_IP:$NET_MASK::eth0:off"
 # --- jailer (06) ---------------------------------------------------------------
 JAIL_ID="spike"
 FC_USER="fc-spike"
+
+# --- vsock (08) ----------------------------------------------------------------
+# Fixed guest CID + port for every VM (Phase 3 decision #3): the host never uses
+# AF_VSOCK, so a shared CID 3 is fine — each VM has its own host-side uds. The
+# host connects to the uds and asks Firecracker's hybrid handshake to reach the
+# guest port (CONNECT <port>\n → OK <port>\n).
+GUEST_CID=3
+VSOCK_PORT=1024
+VSOCK_UDS="$RUN_DIR/v.sock" # plain-boot uds (06/jailer uses an in-chroot path)

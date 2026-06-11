@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { MachineState, MachineSummary } from "../api/client";
 import { useMachine, useMachineEvents, useMachineMutations } from "../api/hooks";
+import { TerminalPanel } from "./TerminalPanel";
 
 // Transitional states show a spinner and disable action buttons.
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
@@ -21,6 +23,7 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
   const { data: machine } = useMachine(initialMachine);
   const events = useMachineEvents();
   const { create, start, stop } = useMachineMutations();
+  const [terminalOpen, setTerminalOpen] = useState(false);
 
   if (!machine) {
     return (
@@ -76,9 +79,14 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
 
       <div className="machine-actions">
         {machine.state === "running" && (
-          <button className="btn" onClick={() => stop.mutate()} disabled={busy}>
-            Stop
-          </button>
+          <>
+            <button className="btn" onClick={() => setTerminalOpen(true)}>
+              Open terminal
+            </button>
+            <button className="btn" onClick={() => stop.mutate()} disabled={busy}>
+              Stop
+            </button>
+          </>
         )}
         {(machine.state === "stopped" || machine.state === "error") && (
           <button className="btn" onClick={() => start.mutate()} disabled={busy}>
@@ -88,6 +96,10 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
       </div>
 
       <EventLog events={events} />
+
+      {terminalOpen && machine.state === "running" && (
+        <TerminalPanel machineID={machine.id} onClose={() => setTerminalOpen(false)} />
+      )}
     </section>
   );
 }

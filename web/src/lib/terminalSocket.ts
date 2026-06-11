@@ -1,0 +1,140 @@
+// terminalSocket wraps the browser side of the terminal WebSocket protocol
+// (guestwire): binary frames carry raw PTY bytes, text frames carry small JSON
+// control messages. It owns reconnection with capped exponential backoff while
+// the panel is open, surfaces a coarse status to the UI, and resets the
+// terminal before each (re)connection so the guest's scrollback replay is
+// idempotent rather than appended to stale content.
+//
+// Close-code handling mirrors the gateway (decision #11):
+//   1000 normal       — the shell exited; terminal, no reconnect
+//   4001 revoked       — session revoked / logged out; terminal, no reconnect
+//   4002 machine_stop  — the machine stopped; terminal, no reconnect
+//   anything else      — transient; reconnect with backoff
+// The browser WebSocket API hides the pre-upgrade HTTP status (401/403/404/409),
+// so a connection that never opens across several attempts is treated as a
+// persistent rejection and we stop rather than hammer the gateway.
+
+export type TerminalStatus =
+  | { kind: "connecting" }
+  | { kind: "connected" }
+  | { kind: "reconnecting"; attempt: number }
+  | { kind: "closed"; reason: string };
+
+export interface TerminalSocketHandlers {
+  /** Raw PTY output to write into the terminal. */
+  onData: (bytes: Uint8Array) => void;
+  /** Reset the terminal before a scrollback replay (idempotent reconnects). */
+  onReset: () => void;
+  /** Coarse connection status for the UI banner. */
+  onStatus: (status: TerminalStatus) => void;
+}
+
+export interface TerminalSocket {
+  /** Send user input (keystrokes / paste) to the shell. */
+  send: (data: string | Uint8Array) => void;
+  /** Tell the guest the viewport changed. */
+  resize: (cols: number, rows: number) => void;
+  /** Close the socket and stop reconnecting. */
+  dispose: () => void;
+}
+
+const BACKOFF_MIN_MS = 500;
+const BACKOFF_MAX_MS = 8000;
+const MAX_FAILED_OPENS = 5;
+
+export function connectTerminal(url: string, handlers: TerminalSocketHandlers): TerminalSocket {
+  let ws: WebSocket | null = null;
+  let disposed = false;
+  let backoff = BACKOFF_MIN_MS;
+  let attempt = 0; // consecutive (re)connect attempts since the last open
+  let everOpened = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function open() {
+    handlers.onStatus(attempt === 0 ? { kind: "connecting" } : { kind: "reconnecting", attempt });
+
+    const socket = new WebSocket(url);
+    socket.binaryType = "arraybuffer";
+    ws = socket;
+
+    socket.onopen = () => {
+      everOpened = true;
+      attempt = 0;
+      backoff = BACKOFF_MIN_MS;
+      // Reset before the guest replays its scrollback ring so reconnects don't
+      // stack duplicate history in the viewport.
+      handlers.onReset();
+      handlers.onStatus({ kind: "connected" });
+    };
+
+    socket.onmessage = (ev) => {
+      if (typeof ev.data === "string") {
+        // Control frame (hello/exit). hello needs no action; exit is followed by
+        // a 1000 close handled in onclose.
+        return;
+      }
+      handlers.onData(new Uint8Array(ev.data as ArrayBuffer));
+    };
+
+    socket.onclose = (ev) => {
+      if (disposed) return;
+      switch (ev.code) {
+        case 1000:
+          handlers.onStatus({ kind: "closed", reason: "Session ended." });
+          return;
+        case 4001:
+          handlers.onStatus({ kind: "closed", reason: "Session revoked — please sign in again." });
+          return;
+        case 4002:
+          handlers.onStatus({ kind: "closed", reason: "Machine stopped." });
+          return;
+      }
+      attempt++;
+      if (!everOpened && attempt > MAX_FAILED_OPENS) {
+        handlers.onStatus({ kind: "closed", reason: "Unable to connect to the terminal." });
+        return;
+      }
+      scheduleReconnect();
+    };
+
+    socket.onerror = () => {
+      // onclose always follows; reconnection is handled there.
+    };
+  }
+
+  function scheduleReconnect() {
+    handlers.onStatus({ kind: "reconnecting", attempt });
+    reconnectTimer = setTimeout(open, backoff);
+    backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
+  }
+
+  open();
+
+  return {
+    send(data) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+    },
+    resize(cols, rows) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      }
+    },
+    dispose() {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.close(1000);
+      }
+    },
+  };
+}
+
+// terminalURL builds the same-origin gateway WebSocket URL. In dev, Vite proxies
+// /gw to the control plane with ws:true.
+export function terminalURL(machineID: string, session = "main"): string {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const params = new URLSearchParams({ machine: machineID, session });
+  return `${proto}://${window.location.host}/gw/terminal?${params.toString()}`;
+}

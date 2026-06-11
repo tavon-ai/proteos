@@ -7,9 +7,12 @@ package dev
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -35,13 +38,20 @@ type DevDriver struct {
 	stubPath  string
 	stubArgs  []string
 
+	// guestAgentBin, when set (PROTEOS_DEV_GUESTAGENT_BIN), makes each "VM" the
+	// real guest agent listening on a per-machine unix socket, so the whole
+	// browser→gateway→node-agent→guest path runs on a Mac with no hypervisor.
+	// Empty ⇒ the plain stub (Phase 2 behaviour).
+	guestAgentBin string
+
 	mu    sync.Mutex
 	procs map[string]*exec.Cmd // machineID -> running stub child
 }
 
 // New builds a DevDriver. stubPath empty ⇒ resolve `sleep` from PATH. The stub
-// just needs to be a process that stays alive until signalled.
-func New(store *state.Store, bootDelay time.Duration, stubPath string) *DevDriver {
+// just needs to be a process that stays alive until signalled. guestAgentBin,
+// when non-empty, replaces the stub with the real guest agent (see field doc).
+func New(store *state.Store, bootDelay time.Duration, stubPath, guestAgentBin string) *DevDriver {
 	args := []string{"2147483647"} // ~68 years; `sleep` accepts a plain number on darwin+linux
 	if stubPath == "" {
 		if p, err := exec.LookPath("sleep"); err == nil {
@@ -49,12 +59,19 @@ func New(store *state.Store, bootDelay time.Duration, stubPath string) *DevDrive
 		}
 	}
 	return &DevDriver{
-		store:     store,
-		bootDelay: bootDelay,
-		stubPath:  stubPath,
-		stubArgs:  args,
-		procs:     make(map[string]*exec.Cmd),
+		store:         store,
+		bootDelay:     bootDelay,
+		stubPath:      stubPath,
+		stubArgs:      args,
+		guestAgentBin: guestAgentBin,
+		procs:         make(map[string]*exec.Cmd),
 	}
+}
+
+// guestSockPath is the per-machine unix socket the guest agent listens on (and
+// DialGuest connects to).
+func (d *DevDriver) guestSockPath(machineID string) string {
+	return filepath.Join(d.store.MachineDir(machineID), "guest.sock")
 }
 
 // EnsureRunning is idempotent: a machine already booting/running is a no-op that
@@ -114,7 +131,10 @@ func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (stri
 // boot launches the stub child, records its pid, and schedules the asynchronous
 // creating→running (or →error for the fail-boot ref) transition.
 func (d *DevDriver) boot(machineID, kernelRef string) error {
-	cmd := exec.Command(d.stubPath, d.stubArgs...)
+	cmd, err := d.buildCmd(machineID)
+	if err != nil {
+		return err
+	}
 	// New process group so a restarted agent can still find/signal it and it
 	// is not accidentally killed by a signal sent to the agent's group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -133,6 +153,33 @@ func (d *DevDriver) boot(machineID, kernelRef string) error {
 
 	go d.finishBoot(machineID, kernelRef, cmd)
 	return nil
+}
+
+// buildCmd constructs the child process for a machine. With guestAgentBin set
+// the child is the real guest agent listening on the machine's guest.sock (its
+// 0700 dir is created and any stale socket cleared first); otherwise it is the
+// plain keep-alive stub.
+func (d *DevDriver) buildCmd(machineID string) (*exec.Cmd, error) {
+	if d.guestAgentBin == "" {
+		return exec.Command(d.stubPath, d.stubArgs...), nil
+	}
+
+	dir := d.store.MachineDir(machineID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("mkdir machine dir: %w", err)
+	}
+	sock := d.guestSockPath(machineID)
+	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("remove stale guest.sock: %w", err)
+	}
+
+	cmd := exec.Command(d.guestAgentBin)
+	cmd.Env = append(os.Environ(),
+		"PROTEOS_GUEST_LISTEN=unix:"+sock,
+		"PROTEOS_GUEST_SHELL=/bin/bash",
+	)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd, nil
 }
 
 // finishBoot waits out the simulated boot delay, then flips creating→running —
@@ -231,8 +278,25 @@ func (d *DevDriver) Destroy(ctx context.Context, machineID string) error {
 	delete(d.procs, machineID)
 	d.mu.Unlock()
 	d.kill(machineID, cmd)
+	// Remove the per-machine runtime dir (guest.sock, etc.). Best-effort.
+	_ = os.RemoveAll(d.store.MachineDir(machineID))
 	return d.store.Delete(machineID)
 }
+
+// DialGuest connects to the machine's guest agent over its guest.sock. The
+// machine must be tracked (else ErrUnknownMachine); the HTTP layer is
+// responsible for the running-state check before calling this.
+func (d *DevDriver) DialGuest(ctx context.Context, machineID string) (net.Conn, error) {
+	if _, ok, err := d.store.Load(machineID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, driver.ErrUnknownMachine
+	}
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, "unix", d.guestSockPath(machineID))
+}
+
+var _ driver.GuestDialer = (*DevDriver)(nil)
 
 // List returns the status of every tracked machine.
 func (d *DevDriver) List(ctx context.Context) ([]driver.Status, error) {

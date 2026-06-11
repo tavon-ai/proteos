@@ -25,7 +25,20 @@ const (
 	RouteGetMachine  = "GET /v1/machines/{id}"
 	RouteListMachine = "GET /v1/machines"
 	RouteDestroy     = "DELETE /v1/machines/{id}"
+
+	// RouteGuest opens an opaque byte tunnel to the machine's in-guest agent
+	// (Phase 3). The control plane sends an HTTP Upgrade with UpgradeGuestProto;
+	// on 101 the connection becomes a raw bidirectional stream bridged to the
+	// VM's vsock port 1024 (dev: the machine's guest.sock). The node-agent never
+	// parses what flows through — the gateway and guest speak WebSocket to each
+	// other across it.
+	RouteGuest = "GET /v1/machines/{id}/guest"
 )
+
+// UpgradeGuestProto is the token in the Connection/Upgrade headers of the guest
+// tunnel handshake. It is deliberately not "websocket": the node-agent does not
+// terminate the WebSocket, it only relays bytes.
+const UpgradeGuestProto = "proteos-guest"
 
 // Driver-level states reported by the agent. The control plane maps these onto
 // its own machine states (see controlplane/internal/machine).
@@ -79,8 +92,10 @@ type ErrorResponse struct {
 
 // Error codes returned in ErrorResponse.
 const (
-	ErrUnknownMachine = "unknown_machine"
-	ErrUnauthorized   = "unauthorized"
-	ErrBadRequest     = "bad_request"
-	ErrInternal       = "internal"
+	ErrUnknownMachine   = "unknown_machine"
+	ErrUnauthorized     = "unauthorized"
+	ErrBadRequest       = "bad_request"
+	ErrInternal         = "internal"
+	ErrNotRunning       = "not_running"       // guest tunnel: machine is not running (409)
+	ErrGuestUnreachable = "guest_unreachable" // guest tunnel: could not reach the guest agent (502)
 )

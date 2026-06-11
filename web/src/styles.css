@@ -242,3 +242,71 @@ body {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+
+/* --- Terminal (Phase 3) --------------------------------------------------- */
+
+.terminal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.terminal-modal {
+  width: min(960px, 92vw);
+  height: min(640px, 86vh);
+  background: #0b0e14;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+}
+
+.terminal-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.terminal-modal-title {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.terminal-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.terminal-surface {
+  flex: 1;
+  min-height: 0;
+  padding: 0.5rem;
+}
+
+.terminal-banner {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.terminal-banner-connecting,
+.terminal-banner-reconnecting {
+  background: #1f2937;
+  color: #cbd5e1;
+}
+
+.terminal-banner-closed {
+  background: #3b1d1d;
+  color: #fca5a5;
+}

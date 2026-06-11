@@ -1,0 +1,25 @@
+[Unit]
+Description=ProteOS guest agent (PTY broker over vsock)
+Documentation=https://github.com/tavon/proteos
+# Start once the vsock device and base filesystems are ready. The agent does
+# not need the network (it serves over vsock), so we do not order on it.
+After=local-fs.target
+DefaultDependencies=yes
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/guestagent
+# vsock:1024 + a login bash shell as root (Phase 3 decision #6). The control
+# plane reaches this only through the host-side jailed uds — see decision #10
+# (the trust boundary is the per-VM uds; per-machine app-layer identity arrives
+# in Phase 5).
+Environment=PROTEOS_GUEST_LISTEN=vsock:1024
+Environment=PROTEOS_GUEST_SHELL=/bin/bash
+Environment=PROTEOS_GUEST_SCROLLBACK_KIB=256
+Restart=always
+RestartSec=1
+# The shell sessions are children of the agent; give them room.
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

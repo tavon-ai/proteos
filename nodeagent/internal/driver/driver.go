@@ -6,6 +6,7 @@ package driver
 import (
 	"context"
 	"errors"
+	"net"
 )
 
 // ErrUnknownMachine is returned by Status/Stop/Destroy for an id the driver has
@@ -69,4 +70,19 @@ type Driver interface {
 	// startup: live processes are re-adopted; dead ones are marked stopped or
 	// error. Called once before serving.
 	Reattach(ctx context.Context) error
+}
+
+// GuestDialer is implemented by drivers that can open a byte stream to a
+// machine's in-guest agent (Phase 3). The HTTP layer's guest-tunnel route
+// type-asserts the driver to this interface; the returned conn is bridged 1:1
+// to the caller (the control-plane gateway) so the node-agent never parses the
+// terminal protocol — it is a dumb pipe (decision #4).
+//
+//   - FirecrackerDriver: connects to the jailed vsock uds and performs the
+//     hybrid CONNECT/OK handshake to reach guest port 1024.
+//   - DevDriver: dials the machine's guest.sock unix socket.
+//
+// DialGuest returns ErrUnknownMachine for an id the driver does not track.
+type GuestDialer interface {
+	DialGuest(ctx context.Context, machineID string) (net.Conn, error)
 }

@@ -41,6 +41,16 @@ type Config struct {
 	// Empty means "resolve `sleep` from PATH".
 	StubPath string
 
+	// GuestAgentBin (PROTEOS_DEV_GUESTAGENT_BIN), when set, makes the dev driver
+	// run the real guest agent per machine on a unix socket instead of the stub
+	// (Phase 3): the whole terminal path then works on a Mac with no hypervisor.
+	GuestAgentBin string
+
+	// GuestVsockPort is the fixed guest port the in-VM agent listens on; the
+	// firecracker driver connects to it via the jailed vsock uds (Phase 3,
+	// decision #3). Unused by the dev driver.
+	GuestVsockPort int
+
 	// --- firecracker driver (Task 2.7); unused by the dev driver -------------
 
 	// FirecrackerBin / JailerBin are absolute paths to the pinned binaries.
@@ -69,6 +79,8 @@ func Load() (*Config, error) {
 		DataDir:        getenv("PROTEOS_AGENT_DATA_DIR", ".data/agent"),
 		Driver:         getenv("PROTEOS_AGENT_DRIVER", "dev"),
 		StubPath:       os.Getenv("PROTEOS_DEV_STUB"),
+		GuestAgentBin:  os.Getenv("PROTEOS_DEV_GUESTAGENT_BIN"),
+		GuestVsockPort: getenvInt("PROTEOS_GUEST_VSOCK_PORT", 1024),
 		FirecrackerBin: getenv("PROTEOS_FIRECRACKER_BIN", "/usr/local/bin/firecracker"),
 		JailerBin:      getenv("PROTEOS_JAILER_BIN", "/usr/local/bin/jailer"),
 		ChrootBaseDir:  getenv("PROTEOS_CHROOT_BASE_DIR", "/srv/jailer"),

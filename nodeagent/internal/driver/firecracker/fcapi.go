@@ -119,3 +119,12 @@ type networkInterface struct {
 type action struct {
 	ActionType string `json:"action_type"`
 }
+
+// vsockDevice configures the VM's single virtio-vsock device (pre-boot, like
+// NICs — no hot-add). UDSPath is relative to the jail chroot; Firecracker
+// creates the socket there and the host reaches the guest via the hybrid
+// CONNECT/OK handshake on it.
+type vsockDevice struct {
+	GuestCID int    `json:"guest_cid"`
+	UDSPath  string `json:"uds_path"`
+}

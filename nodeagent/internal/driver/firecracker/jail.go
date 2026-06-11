@@ -33,6 +33,16 @@ func (l jailLayout) socket() string {
 	return filepath.Join(l.root(), "run", "firecracker.socket")
 }
 
+// vsockUDSName is the vsock unix socket's path *relative to the jail root* (what
+// we pass to PUT /vsock). Firecracker, running as the jail uid, creates it.
+const vsockUDSName = "v.sock"
+
+// vsockUDS is the host-side path of the vsock socket inside the chroot — what
+// DialGuest connects to.
+func (l jailLayout) vsockUDS() string {
+	return filepath.Join(l.root(), vsockUDSName)
+}
+
 // prepareChroot creates the jail root, copies the pinned kernel and a fresh
 // writable copy of the base rootfs into it, and chowns everything to the
 // per-VM uid/gid. Returns the in-jail paths the API calls must reference.

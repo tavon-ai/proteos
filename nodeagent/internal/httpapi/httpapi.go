@@ -36,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(api.RouteGetMachine, s.auth(http.HandlerFunc(s.handleGet)))
 	mux.Handle(api.RouteListMachine, s.auth(http.HandlerFunc(s.handleList)))
 	mux.Handle(api.RouteDestroy, s.auth(http.HandlerFunc(s.handleDestroy)))
+	mux.Handle(api.RouteGuest, s.auth(http.HandlerFunc(s.handleGuest)))
 	return requestLogger(mux)
 }
 

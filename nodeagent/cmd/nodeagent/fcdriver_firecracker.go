@@ -20,5 +20,6 @@ func newFirecrackerDriver(cfg *config.Config, store *state.Store) (driver.Driver
 		ImagesDir:      cfg.ImagesDir,
 		JailUIDStart:   cfg.JailUIDStart,
 		JailUIDCount:   cfg.JailUIDCount,
+		GuestVsockPort: cfg.GuestVsockPort,
 	}, store), nil
 }

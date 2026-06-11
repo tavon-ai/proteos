@@ -1,7 +1,10 @@
 # Phase 3 Implementation Plan: Browser terminal through the gateway
 
-> Source: `plans/proteos-poc-to-prod.md` Phase 3, planned 2026-06-10. Status: **not started**.
-> Prerequisite: Phase 2 (`plans/phase-2-implementation.md`) — also not yet implemented. Phase 3 treats its contracts (nodeagent module, `agentapi`, bearer token, driver interface, machines/hosts tables, machine.Service/broker) as given. Tasks note which parts can start before Phase 2 lands (3.0, 3.1, 3.2 are fully buildable today).
+> Source: `plans/proteos-poc-to-prod.md` Phase 3, planned 2026-06-10. Status (2026-06-11): **Track A implemented + tested on the dev stack; Track B authored, host validation pending on Proxmox.**
+> Prerequisite: Phase 2 — landed. Phase 3 treats its contracts (nodeagent module, `agentapi`, bearer token, driver interface, machines/hosts tables, machine.Service/broker) as given.
+>
+> Implemented & green on macOS/CI (Track A): 3.1 guestagent PTY core, 3.2 WS server/protocol/listeners, 3.3 node-agent guest tunnel, 3.4 control-plane gateway (incl. e2e: browser→gateway→node-agent→real guest agent round-trip + authz table + revocation 4001), 3.5 React xterm.js terminal.
+> Authored, pending host run (Track B — needs KVM on 192.168.2.137): 3.0 `spike/firecracker/08-vsock.sh`, 3.6 `image/build-rootfs.sh` + unit + FirecrackerDriver `PUT /vsock` + `DialGuest` (cross-builds with `-tags firecracker`), 3.7 `//go:build firecracker` vsock terminal integration test (in the gated KVM CI job). The master-plan Phase 3 acceptance boxes get ticked during the 3.7 acceptance pass on Proxmox.
 
 ## Context
 

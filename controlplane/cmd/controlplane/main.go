@@ -12,6 +12,7 @@ import (
 
 	"github.com/tavon/proteos/controlplane/internal/auth"
 	"github.com/tavon/proteos/controlplane/internal/config"
+	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
 	"github.com/tavon/proteos/controlplane/internal/machine"
@@ -90,6 +91,13 @@ func run(migrate, migrateOnly bool) error {
 	poller := machine.NewPoller(pool, nodes, broker)
 	go poller.Run(ctx)
 
+	// Phase 3: the terminal gateway proxies the browser WS to each machine's
+	// guest agent through the node-agent tunnel. The conn registry is wired as
+	// the session revocation listener so logout/revoke closes live terminals.
+	gwRegistry := gateway.NewRegistry()
+	sessions.SetRevocationListener(gwRegistry)
+	gw := gateway.NewProxy(cfg.AllowedWSOrigins, nodes, gwRegistry)
+
 	var authHandler *auth.Handler
 	if err := cfg.ValidateOAuth(); err != nil {
 		// Without OAuth config the server still serves /healthz and the
@@ -116,6 +124,7 @@ func run(migrate, migrateOnly bool) error {
 		Machines: machineSvc,
 		Broker:   broker,
 		Queries:  q,
+		Gateway:  gw,
 	}
 
 	httpServer := &http.Server{

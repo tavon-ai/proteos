@@ -126,7 +126,51 @@ put_network() {
   }"
 }
 
+# put_vsock <uds-path> — attach a virtio-vsock device (pre-boot, like NICs;
+# Firecracker cannot hot-add). Firecracker creates <uds-path> and listens on it
+# for host-initiated connects; guest-initiated connects land on <uds-path>_<port>.
+put_vsock() {
+  fc_api PUT /vsock "{
+    \"guest_cid\": $GUEST_CID,
+    \"uds_path\": \"${1:-$VSOCK_UDS}\"
+  }"
+}
+
 start_instance() { fc_api PUT /actions '{"action_type": "InstanceStart"}'; }
+
+# vsock_echo <uds-path> <message> — host→guest round trip over the hybrid
+# handshake: connect the uds, send "CONNECT <port>\n", expect "OK <port>\n", then
+# send <message> and read it back from the guest's echo listener. Prints the
+# echoed bytes; returns non-zero on handshake or echo failure. Uses python3
+# (always present on the CI rootfs and the Proxmox host) for precise framing.
+vsock_echo() {
+  local uds=$1 msg=$2
+  UDS="$uds" PORT="$VSOCK_PORT" MSG="$msg" python3 - <<'PY'
+import os, socket, sys
+uds, port, msg = os.environ["UDS"], int(os.environ["PORT"]), os.environ["MSG"]
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(5)
+s.connect(uds)
+s.sendall(f"CONNECT {port}\n".encode())
+# Read the "OK <port>\n" handshake line byte-by-byte (don't over-read into data).
+line = b""
+while not line.endswith(b"\n"):
+    b = s.recv(1)
+    if not b:
+        sys.exit("vsock: connection closed during handshake")
+    line += b
+if not line.startswith(b"OK"):
+    sys.exit(f"vsock: unexpected handshake reply: {line!r}")
+s.sendall(msg.encode())
+got = b""
+while len(got) < len(msg):
+    chunk = s.recv(len(msg) - len(got))
+    if not chunk:
+        break
+    got += chunk
+sys.stdout.write(got.decode(errors="replace"))
+PY
+}
 
 console_has_login() { grep -q 'login:' "$VM_LOG"; }
 wait_for_boot() { wait_for "guest boot (login prompt on serial console)" 30 console_has_login; }

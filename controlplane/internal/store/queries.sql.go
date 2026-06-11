@@ -373,14 +373,20 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 	return items, nil
 }
 
-const revokeSession = `-- name: RevokeSession :exec
+const revokeSession = `-- name: RevokeSession :one
 UPDATE sessions SET revoked_at = now()
 WHERE token_hash = $1 AND revoked_at IS NULL
+RETURNING id
 `
 
-func (q *Queries) RevokeSession(ctx context.Context, tokenHash []byte) error {
-	_, err := q.db.Exec(ctx, revokeSession, tokenHash)
-	return err
+// Revoke a live session by token hash, returning its id so the gateway can
+// close any in-process WebSockets bound to it. No row (ErrNoRows) means the
+// token was unknown or already revoked — a no-op.
+func (q *Queries) RevokeSession(ctx context.Context, tokenHash []byte) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeSession, tokenHash)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const setMachineRuntime = `-- name: SetMachineRuntime :one

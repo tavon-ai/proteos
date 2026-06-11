@@ -3,6 +3,7 @@ module github.com/tavon/proteos/controlplane
 go 1.26.4
 
 require (
+	github.com/coder/websocket v1.8.12
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/testcontainers/testcontainers-go v0.42.0

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# build-rootfs.sh — bake the ProteOS guest rootfs (Phase 3 decision #2).
+#
+# Takes the pinned Firecracker-CI base ext4, installs the statically-linked
+# guest agent binary, the proteos-guestagent systemd unit (enabled at boot), and
+# an /etc/proteos-release stamp, then emits:
+#
+#     proteos-rootfs-<base>-ga<gitshort>.ext4   (the baked image)
+#     manifest.lock                              (sha256 + provenance — commit it)
+#
+# This is the pinned MANUAL seed of Phase 12's image pipeline: one offline build
+# step, no per-boot injection machinery (snapshot-friendly — Phase 4 restores RAM
+# and an init-time injector would be dead code there).
+#
+# Linux-only: it loop-mounts the ext4 (needs sudo + a Linux kernel). Run it on
+# the Proxmox host (or any Linux box); it is NOT part of `go test`.
+#
+# Usage:
+#   image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4 \
+#                         [--out-dir image] [--grow-mib 256]
+#
+# The base must be a systemd image (the unit is installed for systemd); the
+# script asserts this and fails loudly otherwise.
+
+set -euo pipefail
+
+log() { printf '\e[1;34m[rootfs]\e[0m %s\n' "$*"; }
+ok() { printf '\e[1;32m[ ok ]\e[0m %s\n' "$*"; }
+die() {
+  printf '\e[1;31m[fail]\e[0m %s\n' "$*" >&2
+  exit 1
+}
+
+# --- args -------------------------------------------------------------------
+BASE=""
+OUT_DIR=""
+GROW_MIB=256
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --base) BASE=$2; shift 2 ;;
+    --out-dir) OUT_DIR=$2; shift 2 ;;
+    --grow-mib) GROW_MIB=$2; shift 2 ;;
+    *) die "unknown arg: $1" ;;
+  esac
+done
+[[ -n $BASE ]] || die "--base <pinned firecracker-ci ext4> is required"
+[[ -f $BASE ]] || die "base rootfs not found: $BASE"
+
+# Resolve repo paths relative to this script.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUT_DIR="${OUT_DIR:-$SCRIPT_DIR}"
+UNIT_SRC="$SCRIPT_DIR/proteos-guestagent.service"
+[[ -f $UNIT_SRC ]] || die "missing unit file: $UNIT_SRC"
+
+command -v sudo >/dev/null || die "sudo required (loop-mount)"
+command -v go >/dev/null || die "go toolchain required to build the guest agent"
+[[ "$(uname -s)" == "Linux" ]] || die "this script loop-mounts ext4 — run it on Linux"
+
+# --- 1. build the static guest agent ----------------------------------------
+GIT_SHORT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+VERSION="ga-$GIT_SHORT"
+BASE_NAME="$(basename "$BASE" .ext4)"
+OUT_IMG="$OUT_DIR/proteos-rootfs-${BASE_NAME}-ga${GIT_SHORT}.ext4"
+
+WORK="$(mktemp -d)"
+GA_BIN="$WORK/guestagent"
+log "building static guest agent ($VERSION)"
+( cd "$REPO_ROOT/guestagent" &&
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$GA_BIN" ./cmd/guestagent )
+file "$GA_BIN" | grep -q "statically linked\|ELF" || die "guest agent is not a static ELF"
+ok "built $GA_BIN"
+
+# --- 2. copy + grow the base image -------------------------------------------
+log "copying base image → $OUT_IMG (+${GROW_MIB}MiB headroom)"
+cp "$BASE" "$OUT_IMG"
+# Grow so the binary + unit always fit, then fsck/resize.
+dd if=/dev/zero bs=1M count="$GROW_MIB" >>"$OUT_IMG" 2>/dev/null
+e2fsck -fy "$OUT_IMG" >/dev/null 2>&1 || true
+resize2fs "$OUT_IMG" >/dev/null 2>&1 || die "resize2fs failed"
+
+# --- 3. mount + install ------------------------------------------------------
+MNT="$WORK/mnt"
+mkdir -p "$MNT"
+cleanup() {
+  sudo umount "$MNT" 2>/dev/null || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+log "loop-mounting"
+sudo mount -o loop "$OUT_IMG" "$MNT"
+
+# Assert the base is a systemd image — the unit we install is systemd-only.
+if [[ ! -e "$MNT/lib/systemd/systemd" && ! -e "$MNT/usr/lib/systemd/systemd" ]]; then
+  die "base image is not systemd-based (no .../systemd/systemd); the guest unit would never start"
+fi
+ok "base confirmed systemd"
+
+log "installing guest agent + unit + release stamp"
+sudo install -D -m 0755 "$GA_BIN" "$MNT/usr/local/bin/guestagent"
+sudo install -D -m 0644 "$UNIT_SRC" "$MNT/etc/systemd/system/proteos-guestagent.service"
+# Enable at boot by creating the multi-user.target.wants symlink (we can't run
+# `systemctl enable` against an offline image, so do what it would do).
+sudo mkdir -p "$MNT/etc/systemd/system/multi-user.target.wants"
+sudo ln -sf ../proteos-guestagent.service \
+  "$MNT/etc/systemd/system/multi-user.target.wants/proteos-guestagent.service"
+
+# /etc/proteos-release — provenance the guest (and humans) can read.
+BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
+PROTEOS_ROOTFS_BASE=$BASE_NAME
+PROTEOS_GUESTAGENT_VERSION=$VERSION
+PROTEOS_BUILD_AT=$BUILD_STAMP
+EOF
+
+sync
+sudo umount "$MNT"
+trap - EXIT
+rm -rf "$WORK"
+ok "image baked"
+
+# --- 4. manifest.lock --------------------------------------------------------
+SHA="$(sha256sum "$OUT_IMG" | awk '{print $1}')"
+MANIFEST="$OUT_DIR/manifest.lock"
+cat >"$MANIFEST" <<EOF
+# Generated by image/build-rootfs.sh — commit this file.
+# The control plane's PROTEOS_ROOTFS_REF / the per-machine rootfs_ref pin this image.
+image          = $(basename "$OUT_IMG")
+sha256         = $SHA
+base_rootfs    = $BASE_NAME
+guestagent     = $VERSION
+built_at       = $BUILD_STAMP
+EOF
+ok "wrote $MANIFEST"
+
+log "done. Copy $OUT_IMG into the node-agent images dir and set its name as the"
+log "machine rootfs_ref (PROTEOS_ROOTFS_REF) on the Proxmox host."

@@ -67,7 +67,7 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 
 	// After revoke, lookup finds nothing.
-	if err := q.RevokeSession(ctx, hash[:]); err != nil {
+	if _, err := q.RevokeSession(ctx, hash[:]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := q.GetSessionByTokenHash(ctx, hash[:]); err == nil {

@@ -33,9 +33,13 @@ WHERE sessions.token_hash = $1
 -- Slide the expiry forward on use (sliding-refresh sessions).
 UPDATE sessions SET expires_at = $2 WHERE id = $1;
 
--- name: RevokeSession :exec
+-- name: RevokeSession :one
+-- Revoke a live session by token hash, returning its id so the gateway can
+-- close any in-process WebSockets bound to it. No row (ErrNoRows) means the
+-- token was unknown or already revoked — a no-op.
 UPDATE sessions SET revoked_at = now()
-WHERE token_hash = $1 AND revoked_at IS NULL;
+WHERE token_hash = $1 AND revoked_at IS NULL
+RETURNING id;
 
 -- name: UpsertGitHubLink :one
 INSERT INTO github_links (user_id, metadata, secret_ref, updated_at)

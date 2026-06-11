@@ -65,6 +65,17 @@ func (s *Service) Get(ctx context.Context, userID pgtype.UUID) (store.Machine, e
 	return m, err
 }
 
+// GetByID returns the machine with the given id, or ErrNoMachine. Ownership is
+// the caller's responsibility (the gateway treats a foreign machine as
+// ErrNoMachine to avoid leaking existence).
+func (s *Service) GetByID(ctx context.Context, id pgtype.UUID) (store.Machine, error) {
+	m, err := s.q.GetMachineByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.Machine{}, ErrNoMachine
+	}
+	return m, err
+}
+
 // Create provisions a new machine for the user: insert (requested) → transition
 // to provisioning → ask the agent to ensure-running. If the agent call fails
 // the machine is moved to error (with the reason), and the errored machine is
@@ -198,6 +209,16 @@ func mapTransitionErr(err error) error {
 		return ErrInvalidState
 	}
 	return err
+}
+
+// ParseUUID parses a canonical (or hyphen-free) UUID string into a pgtype.UUID.
+// Used to resolve the gateway's ?machine=<uuid> parameter; a malformed value
+// yields !Valid (callers map that to "not found", not a 400, to avoid leaking
+// whether the id exists).
+func ParseUUID(s string) (pgtype.UUID, error) {
+	var u pgtype.UUID
+	err := u.Scan(s)
+	return u, err
 }
 
 // UUIDString renders a pgtype.UUID in canonical 8-4-4-4-12 form. An invalid

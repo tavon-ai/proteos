@@ -12,6 +12,14 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: false,
       },
+      // The terminal gateway WebSocket. ws:true upgrades the proxied connection;
+      // changeOrigin:false preserves the browser Origin (http://localhost:5173)
+      // so the gateway's Origin allowlist accepts it.
+      "/gw": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
+        ws: true,
+      },
     },
   },
 });

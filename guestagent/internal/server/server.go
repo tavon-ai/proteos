@@ -1,0 +1,217 @@
+// Package server is the guest agent's HTTP/WebSocket front end. It exposes a
+// single route, GET /terminal, that upgrades to the terminal WebSocket protocol
+// (guestwire) and bridges the connection to a term.Session.
+//
+// Trust boundary (Phase 3 decision #10): this listener is NOT browser-facing.
+// It is reached only over the per-VM private transport (vsock inside the VM /
+// a 0600 unix socket in dev), which the node-agent alone can connect to. There
+// is therefore no Origin check and no app-layer credential here this phase;
+// per-machine identity (OpenBao) is added in Phase 5. The WebSocket Origin
+// check that protects the browser leg lives in the control-plane gateway.
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/coder/websocket"
+
+	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/term"
+)
+
+// pingInterval is how often each leg sends a WebSocket ping to keep the
+// connection (and any NAT/idle timers along the tunnel) alive.
+const pingInterval = 30 * time.Second
+
+// readLimit bounds a single inbound WebSocket message. Terminal input is tiny;
+// a large bound only matters for big pastes.
+const readLimit = 1 << 20
+
+// Server bridges terminal WebSockets to PTY sessions managed by mgr.
+type Server struct {
+	mgr *term.Manager
+}
+
+// New returns a Server backed by mgr.
+func New(mgr *term.Manager) *Server {
+	return &Server{mgr: mgr}
+}
+
+// Handler builds the HTTP handler. /terminal is the only route; /healthz is a
+// trivial liveness probe usable over the transport.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /terminal", s.handleTerminal)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	return mux
+}
+
+func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
+	sessionName := r.URL.Query().Get("session")
+	if sessionName == "" {
+		sessionName = guestwire.DefaultSession
+	}
+	if !guestwire.ValidSessionName(sessionName) {
+		http.Error(w, "invalid session name", http.StatusBadRequest)
+		return
+	}
+
+	// Not browser-facing (see package doc): skip Origin verification.
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		slog.Warn("terminal: ws accept failed", "err", err)
+		return
+	}
+	c.SetReadLimit(readLimit)
+
+	if err := s.serve(r.Context(), c, sessionName); err != nil {
+		slog.Debug("terminal: session ended", "session", sessionName, "err", err)
+	}
+}
+
+// serve runs one attachment: hello → scrollback replay → live I/O until the
+// shell exits, the client disconnects, or an error occurs.
+func (s *Server) serve(ctx context.Context, c *websocket.Conn, sessionName string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sess, err := s.mgr.Get(sessionName)
+	if err != nil {
+		c.Close(websocket.StatusInternalError, "spawn failed")
+		return err
+	}
+	att, err := sess.Attach()
+	if err != nil {
+		// Shell already exited between Get and Attach; let the client retry.
+		c.Close(websocket.StatusInternalError, "session exited")
+		return err
+	}
+	defer att.Detach()
+
+	// hello, then the scrollback replay as one binary message.
+	hello := guestwire.Frame{Type: guestwire.FrameHello, Session: sessionName, ReplayBytes: len(att.Replay)}
+	if err := writeJSON(ctx, c, hello); err != nil {
+		return err
+	}
+	if len(att.Replay) > 0 {
+		if err := c.Write(ctx, websocket.MessageBinary, att.Replay); err != nil {
+			return err
+		}
+	}
+
+	go s.readPump(ctx, cancel, c, sess)
+	go pingLoop(ctx, c)
+
+	return s.writePump(ctx, c, sess, att)
+}
+
+// readPump reads client→guest messages: binary frames are PTY input, text
+// frames are JSON control messages (resize). It cancels the context when the
+// client disconnects so the write side tears down.
+func (s *Server) readPump(ctx context.Context, cancel context.CancelFunc, c *websocket.Conn, sess *term.Session) {
+	defer cancel()
+	for {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			return
+		}
+		switch typ {
+		case websocket.MessageBinary:
+			if err := sess.Write(data); err != nil {
+				return
+			}
+		case websocket.MessageText:
+			var f guestwire.Frame
+			if err := json.Unmarshal(data, &f); err != nil {
+				continue // ignore malformed control frames
+			}
+			if f.Type == guestwire.FrameResize && f.Cols > 0 && f.Rows > 0 {
+				_ = sess.Resize(f.Cols, f.Rows)
+			}
+		}
+	}
+}
+
+// writePump streams live PTY output to the client and handles shell exit. It
+// returns when the client disconnects (ctx cancelled), the attachment lags
+// (Out closed), or the shell exits (exit frame + normal close).
+func (s *Server) writePump(ctx context.Context, c *websocket.Conn, sess *term.Session, att *term.Attachment) error {
+	out := att.Out()
+	for {
+		select {
+		case <-ctx.Done():
+			c.Close(websocket.StatusNormalClosure, "")
+			return ctx.Err()
+
+		case chunk, ok := <-out:
+			if !ok {
+				// Detached for lagging: drop the connection so the client
+				// reconnects and replays from the ring.
+				c.Close(websocket.StatusInternalError, "output overflow")
+				return errors.New("attachment lagged")
+			}
+			if err := c.Write(ctx, websocket.MessageBinary, chunk); err != nil {
+				return err
+			}
+
+		case <-sess.Done():
+			// Flush any output buffered before exit, then announce the code.
+			drain(ctx, c, out)
+			code := sess.ExitCode()
+			_ = writeJSON(ctx, c, guestwire.Frame{Type: guestwire.FrameExit, ExitCode: &code})
+			c.Close(websocket.StatusNormalClosure, "")
+			return nil
+		}
+	}
+}
+
+// drain writes any output still queued on a closed/closing session, without
+// blocking once the queue is empty.
+func drain(ctx context.Context, c *websocket.Conn, out <-chan []byte) {
+	for {
+		select {
+		case chunk, ok := <-out:
+			if !ok {
+				return
+			}
+			if err := c.Write(ctx, websocket.MessageBinary, chunk); err != nil {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// pingLoop sends WebSocket pings every pingInterval until the context ends.
+func pingLoop(ctx context.Context, c *websocket.Conn) {
+	t := time.NewTicker(pingInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := c.Ping(ctx); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// writeJSON marshals f and writes it as a single text frame.
+func writeJSON(ctx context.Context, c *websocket.Conn, f guestwire.Frame) error {
+	b, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	return c.Write(ctx, websocket.MessageText, b)
+}

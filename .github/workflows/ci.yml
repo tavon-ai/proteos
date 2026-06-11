@@ -93,6 +93,34 @@ jobs:
       - name: go test -race
         run: go test -race ./...
 
+  guestagent:
+    name: guest agent (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: guestagent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: guestagent/go.mod
+          cache-dependency-path: guestagent/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # The vsock listener is behind a linux build tag; cross-build it so the
+      # production (in-VM) target is checked even though the runner is linux.
+      - name: go build (linux/amd64)
+        run: GOOS=linux GOARCH=amd64 go build ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
   # Firecracker integration tests run the real jailed VMM and need KVM, so they
   # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
   # The job is gated on the repo/org variable HAS_KVM_RUNNER so CI stays green

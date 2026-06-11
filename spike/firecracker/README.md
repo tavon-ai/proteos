@@ -32,6 +32,7 @@ Task 2.0.
 | 05   | `05-snapshot-restore.sh` | Snapshot → kill VMM → restore in a fresh process; clock/entropy observations |
 | 06   | `06-jailer.sh`           | Same boot under jailer: chroot + uid drop + cgroup, verified   |
 | 07   | `07-teardown.sh`         | Clean slate (add `--all` to remove downloaded artifacts)       |
+| 08   | `08-vsock.sh`            | virtio-vsock: guest listener on port 1024, host CONNECT/OK handshake echo; plain + jailed + across snapshot/restore (Phase 3 Task 3.0) |
 
 Each script prints `[ ok ]` lines for what it verified and `[fail]` + exit ≠ 0
 on the first thing that doesn't hold. Run them in order; 03–06 are
@@ -59,6 +60,19 @@ after 01.
 | Clock skew after restore (05)           |       | expected ≈ hibernated duration; Phase 4 must resync |
 | CRNG reseeded after restore? (05)       |       | `dmesg \| grep -i random` in the guest |
 | cgroup placement under jailer (06)      |       |       |
+
+### vsock findings (Task 3.0)
+
+Fill these in from `08-vsock.sh`'s `FINDING` lines — they gate the Phase 3
+FirecrackerDriver and feed Phase 4 (snapshot/restore of the vsock device):
+
+- [ ] Plain boot: host↔guest echo over `CONNECT 1024` works.
+- [ ] Jailed boot: uds is created **inside the chroot** at `<chroot>/root/<uds_path>`,
+      owned by the **jail uid** (not root); host echo works against that path.
+- [ ] On snapshot/restore: does `LoadSnapshot` **re-create the host uds**, or must
+      the node-agent re-create it? (record exactly — Phase 4 depends on it)
+- [ ] In-flight connections across restore: confirmed they do **not** survive (the
+      uds fd is per-VMM-process); the node-agent must redial.
 
 ### Surprises / gotchas log
 
