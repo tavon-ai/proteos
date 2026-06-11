@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +116,33 @@ type sseHarness struct {
 	svc    *machine.Service
 	poller *machine.Poller
 	agent  *sseFakeAgent
+	q      *store.Queries
 	userID pgtype.UUID
+}
+
+// eventIDs returns the machine's event ids oldest-first. Tests derive expected
+// SSE id: values from these rather than hard-coding absolute bigserial ids,
+// which are not stable across tests on the shared CI Postgres.
+func (h *sseHarness) eventIDs(t *testing.T, machineID pgtype.UUID) []int64 {
+	t.Helper()
+	evs, err := h.q.ListMachineEventsRecent(context.Background(), store.ListMachineEventsRecentParams{MachineID: machineID, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]int64, len(evs))
+	for i, e := range evs {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+// lastEventID returns the highest (most recent) event id for the machine.
+func (h *sseHarness) lastEventID(t *testing.T, machineID pgtype.UUID) int64 {
+	ids := h.eventIDs(t, machineID)
+	if len(ids) == 0 {
+		t.Fatal("no events for machine")
+	}
+	return ids[len(ids)-1]
 }
 
 func newSSEHarness(t *testing.T) *sseHarness {
@@ -157,6 +184,7 @@ func newSSEHarness(t *testing.T) *sseHarness {
 		svc:    svc,
 		poller: poller,
 		agent:  agent,
+		q:      q,
 		userID: user.ID,
 	}
 }
@@ -186,7 +214,7 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 	h := newSSEHarness(t)
 	ctx := context.Background()
 
-	// Create the machine first (writes the provisioning event, id 1).
+	// Create the machine first (writes the provisioning event).
 	m, err := h.svc.Create(ctx, h.userID)
 	if err != nil {
 		t.Fatal(err)
@@ -204,28 +232,33 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 	if !strings.Contains(snap.data, `"state":"provisioning"`) {
 		t.Fatalf("snapshot missing provisioning machine: %s", snap.data)
 	}
+	provID := h.lastEventID(t, m.ID)
 
-	// Transition 1: provisioning→running (event id 2).
+	// Transition 1: provisioning→running. The live frame's id: must equal the
+	// new event row id (which is > the provisioning id) — we read it from the DB
+	// rather than assuming an absolute value.
 	h.agent.set(idStr, agentapi.StateRunning, "172.30.0.2")
 	h.poller.AdvanceTransitional(ctx)
+	runningID := h.lastEventID(t, m.ID)
 	f1 := nextFrame(t, frames)
-	if f1.event != "machine" || f1.id != "2" {
-		t.Fatalf("frame1 event=%q id=%q, want machine/2", f1.event, f1.id)
+	if f1.event != "machine" || f1.id != strconv.FormatInt(runningID, 10) {
+		t.Fatalf("frame1 event=%q id=%q, want machine/%d", f1.event, f1.id, runningID)
 	}
-	if !strings.Contains(f1.data, `"state":"running"`) {
-		t.Fatalf("frame1 not running: %s", f1.data)
+	if runningID <= provID || !strings.Contains(f1.data, `"state":"running"`) {
+		t.Fatalf("frame1 not running or id not increasing: %s", f1.data)
 	}
 
-	// Transition 2: running→stopping (event id 3).
+	// Transition 2: running→stopping.
 	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
 		t.Fatal(err)
 	}
+	stoppingID := h.lastEventID(t, m.ID)
 	f2 := nextFrame(t, frames)
-	if f2.event != "machine" || f2.id != "3" {
-		t.Fatalf("frame2 event=%q id=%q, want machine/3", f2.event, f2.id)
+	if f2.event != "machine" || f2.id != strconv.FormatInt(stoppingID, 10) {
+		t.Fatalf("frame2 event=%q id=%q, want machine/%d", f2.event, f2.id, stoppingID)
 	}
-	if !strings.Contains(f2.data, `"state":"stopping"`) {
-		t.Fatalf("frame2 not stopping: %s", f2.data)
+	if stoppingID <= runningID || !strings.Contains(f2.data, `"state":"stopping"`) {
+		t.Fatalf("frame2 not stopping or id not increasing: %s", f2.data)
 	}
 }
 
@@ -233,30 +266,39 @@ func TestSSEReplaysFromLastEventID(t *testing.T) {
 	h := newSSEHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID) // event 1: provisioning
+	m, err := h.svc.Create(ctx, h.userID) // provisioning event
 	if err != nil {
 		t.Fatal(err)
 	}
 	idStr := machine.UUIDString(m.ID)
 	h.agent.set(idStr, agentapi.StateRunning, "172.30.0.2")
-	h.poller.AdvanceTransitional(ctx) // event 2: running
+	h.poller.AdvanceTransitional(ctx) // running event
 	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
-		t.Fatal(err) // event 3: stopping
+		t.Fatal(err) // stopping event
 	}
 
-	// Reconnect claiming we last saw event 1 ⇒ replay 2 and 3 from the DB.
-	frames, closeConn := h.connect(t, "1")
+	// The machine now has exactly three events; their ids are whatever the DB
+	// assigned (not necessarily 1,2,3 on the shared CI Postgres).
+	ids := h.eventIDs(t, m.ID)
+	if len(ids) != 3 {
+		t.Fatalf("want 3 events, got %d (%v)", len(ids), ids)
+	}
+	provID, runningID, stoppingID := ids[0], ids[1], ids[2]
+
+	// Reconnect claiming we last saw the provisioning event ⇒ replay the
+	// running + stopping events from the DB, in order, with the right ids.
+	frames, closeConn := h.connect(t, strconv.FormatInt(provID, 10))
 	defer closeConn()
 
 	// On replay the embedded machine summary is the current row (we persist
 	// events, not historical machine snapshots), so assert on the event's
 	// to_state and the id ordering — that is what makes replay lossless.
 	r1 := nextFrame(t, frames)
-	if r1.event != "machine" || r1.id != "2" || !strings.Contains(r1.data, `"to_state":"running"`) {
-		t.Fatalf("replay1=%+v, want machine/2 to_state running", r1)
+	if r1.event != "machine" || r1.id != strconv.FormatInt(runningID, 10) || !strings.Contains(r1.data, `"to_state":"running"`) {
+		t.Fatalf("replay1=%+v, want machine/%d to_state running", r1, runningID)
 	}
 	r2 := nextFrame(t, frames)
-	if r2.event != "machine" || r2.id != "3" || !strings.Contains(r2.data, `"to_state":"stopping"`) {
-		t.Fatalf("replay2=%+v, want machine/3 to_state stopping", r2)
+	if r2.event != "machine" || r2.id != strconv.FormatInt(stoppingID, 10) || !strings.Contains(r2.data, `"to_state":"stopping"`) {
+		t.Fatalf("replay2=%+v, want machine/%d to_state stopping", r2, stoppingID)
 	}
 }

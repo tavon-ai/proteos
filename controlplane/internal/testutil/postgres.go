@@ -49,7 +49,10 @@ func Postgres(t *testing.T) (*pgxpool.Pool, *store.Queries) {
 	// Isolate: wipe rows. TRUNCATE users CASCADE clears sessions, github_links,
 	// and machines (+ machine_events) via FKs — but hosts has no FK to users, so
 	// it must be truncated explicitly or seeded host rows leak across tests.
-	if _, err := pool.Exec(ctx, "TRUNCATE users, hosts CASCADE"); err != nil {
+	// RESTART IDENTITY resets owned sequences (incl. machine_events.id) so the
+	// shared CI Postgres behaves like a freshly-migrated DB for every test —
+	// without it, bigserial ids accumulate across tests on the same DB.
+	if _, err := pool.Exec(ctx, "TRUNCATE users, hosts RESTART IDENTITY CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool, store.New(pool)
