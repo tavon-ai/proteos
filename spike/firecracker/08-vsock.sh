@@ -65,6 +65,10 @@ PY
 boot_with_vsock() {
   local uds=$1 extra=${2:-}
   kill_vm
+  # Firecracker binds the host-side uds at PUT /vsock and refuses to bind over an
+  # existing socket file ("Address in use"); kill_vm does not remove it, so clear
+  # any leftover from a previous run.
+  rm -f "$uds"
   setup_network
   start_firecracker
   put_machine_config
@@ -134,10 +138,17 @@ fc_api PUT /snapshot/create "{
   \"snapshot_type\": \"Full\"
 }"
 kill_vm
-log "  VMM killed; host uds now: $( [[ -S $VSOCK_UDS ]] && echo present || echo GONE )"
+UDS_AFTER_KILL="$( [[ -S $VSOCK_UDS ]] && echo present || echo GONE )"
+log "  VMM killed; host uds now: $UDS_AFTER_KILL"
 
-# Restore in a fresh VMM. Firecracker re-creates the uds from the snapshot's
-# vsock config on LoadSnapshot — confirm by re-running the echo afterwards.
+# Restore in a fresh VMM. LoadSnapshot re-binds the host-side uds, so a leftover
+# socket file from the pre-snapshot VM makes the load fail with "Address in use"
+# — exactly the same sharp edge as a fresh boot. The host MUST remove the stale
+# uds before restore. This is the Phase 4 finding: the node-agent re-creates the
+# uds on restore (Firecracker binds a fresh one); it does not survive in place.
+log "  FINDING: stale host uds after kill = $UDS_AFTER_KILL; it must be removed"
+log "  before LoadSnapshot (the node-agent re-creates it on restore)."
+rm -f "$VSOCK_UDS"
 start_firecracker
 fc_api PUT /snapshot/load "{
   \"snapshot_path\": \"$SNAPSHOT_DIR/vmstate\",
