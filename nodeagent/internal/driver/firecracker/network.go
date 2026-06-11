@@ -111,7 +111,11 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 	//   3. allow guest → anywhere else (the internet)
 	// Rules are tagged with a comment carrying the tap name so Destroy can find
 	// and delete exactly this machine's rules.
-	tag := "proteos:" + tap
+	// nft comment values containing a ':' must be quoted strings, so the
+	// double quotes are passed literally to nft (we exec it directly, no shell).
+	// The stored value is still `proteos:<tap>`, which is what
+	// deleteRulesByComment matches against in `nft list` output.
+	tag := `"proteos:` + tap + `"`
 	rules := [][]string{
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ct", "state", "established,related", "accept", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "oifname", tap, "ct", "state", "established,related", "accept", "comment", tag},
