@@ -17,9 +17,20 @@ cd "$(dirname "$0")"
 source ./env.sh
 source ./lib.sh
 
-require curl screen ssh python3
+require curl screen ssh python3 timeout
 
 GUEST_ECHO_REMOTE="/root/vsock-echo.py"
+
+# gssh is a hardened guest SSH: a host-side timeout (so a stuck remote command
+# can never hang the whole script — it fails at a named step instead) and stdin
+# from /dev/null by default (so ssh never blocks waiting on the script's
+# terminal). Callers that need to pipe data in (the heredoc install) pass it on
+# stdin explicitly, which overrides the default redirection.
+GSSH_OPTS=(-i "$SSH_KEY"
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  -o ConnectTimeout=5 -o LogLevel=ERROR -o BatchMode=yes)
+gssh() { timeout 25 ssh "${GSSH_OPTS[@]}" "root@$GUEST_IP" "$@" </dev/null; }
+gssh_stdin() { timeout 25 ssh "${GSSH_OPTS[@]}" "root@$GUEST_IP" "$@"; }
 
 # guest_start_echo installs and launches the vsock echo server in the guest,
 # listening on $VSOCK_PORT until killed. Idempotent (kills any previous one).
@@ -31,7 +42,11 @@ GUEST_ECHO_REMOTE="/root/vsock-echo.py"
 #   - returns non-zero with the reason in the log if bind() fails (e.g. the guest
 #     kernel/python lacks AF_VSOCK).
 guest_start_echo() {
-  guest_ssh "cat > $GUEST_ECHO_REMOTE" <<PY
+  log "  guest: checking python3 + vsock support"
+  gssh "command -v python3 >/dev/null" || die "guest has no python3 (needed for the vsock echo server)"
+
+  log "  guest: installing echo server ($GUEST_ECHO_REMOTE)"
+  gssh_stdin "cat > $GUEST_ECHO_REMOTE" <<PY || die "installing guest echo server failed/timed out"
 import socket, os, sys
 LOG = "/tmp/vsock-echo.log"
 try:
@@ -59,12 +74,15 @@ while True:
         c.sendall(d)
     c.close()
 PY
-  guest_ssh "pkill -f $GUEST_ECHO_REMOTE 2>/dev/null; rm -f /tmp/vsock-echo.log; true"
+
+  log "  guest: (re)starting echo server"
+  gssh "pkill -f $GUEST_ECHO_REMOTE 2>/dev/null; rm -f /tmp/vsock-echo.log; true" || true
   # Bind happens synchronously before the daemon detaches, so a 0 exit here means
   # the listener is already up — no sleep/poll needed.
-  if ! guest_ssh "python3 $GUEST_ECHO_REMOTE"; then
-    die "guest vsock echo server failed to start: $(guest_ssh cat /tmp/vsock-echo.log 2>/dev/null) (check guest virtio-vsock: ls /dev/vsock)"
+  if ! gssh "python3 $GUEST_ECHO_REMOTE"; then
+    die "guest vsock echo server failed to start: $(gssh "cat /tmp/vsock-echo.log" 2>/dev/null) (check guest virtio-vsock: ls /dev/vsock)"
   fi
+  log "  guest: echo server running"
 }
 
 # boot_with_vsock <uds-path> [extra-boot-args] — full configure + boot with a
