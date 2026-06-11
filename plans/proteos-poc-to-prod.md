@@ -333,22 +333,50 @@ spike/firecracker/     (scaffolded 2026-06-10 — scripts exist, ready to run)
 
 ### Acceptance criteria
 
-- [ ] `machines`, `machine_events`, `hosts` (minimal) tables exist.
-- [ ] `POST /api/machine` creates a record (`provisioning`) and the node-agent boots a
-      real Firecracker microVM that reaches `running`.
-- [ ] `POST /api/machine/stop` and `/start` transition the VM and persist state.
-- [ ] Each VM gets a tap device + private IP; the control plane records `vm_handle`/host.
-- [ ] Every transition writes a `machine_events` row.
-- [ ] Dashboard reflects live machine state; `GET /api/machine/events` streams updates.
-- [ ] Node-agent ↔ control-plane channel is authenticated (not open on the network).
-- [ ] Every VMM runs under jailer (chroot, per-VM uid, seccomp, cgroup limits) from the
-      first boot.
-- [ ] Base kernel/rootfs version is pinned and recorded on the machine record.
-- [ ] VMs cannot reach the control plane, node-agent, or host services (basic
-      default-deny egress; the full per-tenant policy lands in Phase 10).
-- [ ] The node-agent's VMM access sits behind a driver interface with a non-KVM dev
+> **Verification status (2026-06-11).** Full stack run on the Proxmox VM per
+> `RUNBOOK.md`. Items marked *(live)* were demonstrated end-to-end on that run;
+> *(suite)* were verified by the Phase 2 automated tests but not re-clicked on the
+> live stack today — worth a manual pass to fully close out (see note after the list).
+
+- [x] `machines`, `machine_events`, `hosts` (minimal) tables exist. *(live)* —
+      migration `000002`, applied on the Proxmox stack via control-plane `-migrate`.
+- [x] `POST /api/machine` creates a record (`provisioning`) and the node-agent boots a
+      real Firecracker microVM that reaches `running`. *(live)* — create →
+      provisioning → running on the Proxmox VM; guest reachable on its private IP.
+- [x] `POST /api/machine/stop` and `/start` transition the VM and persist state.
+      *(suite)* — `machine.Service` + poller; lifecycle e2e in controlplane tests
+      and DevDriver; FC `Stop`/`SendCtrlAltDel`→kill + cold-boot `start` in the driver.
+- [x] Each VM gets a tap device + private IP; the control plane records `vm_handle`/host.
+      *(live)* — tap `tapNNNNNNNN`, `guest_ip` (172.30.0.2) and host recorded on the row.
+- [x] Every transition writes a `machine_events` row. *(suite)* — guarded CAS +
+      event insert in one pgx tx (`machine.Transition`); asserted on every path in 2.4.
+- [x] Dashboard reflects live machine state; `GET /api/machine/events` streams updates.
+      *(live login + create; suite for replay)* — SSE broker + EventSource;
+      `Last-Event-ID` replay test in 2.5.
+- [x] Node-agent ↔ control-plane channel is authenticated (not open on the network).
+      *(live)* — shared bearer token (constant-time compare), dialed across the LAN.
+- [x] Every VMM runs under jailer (chroot, per-VM uid, seccomp, cgroup limits) from the
+      first boot. *(suite + spike)* — driver execs jailer (`--chroot-base-dir`,
+      per-VM uid, cgroup v2); proven in spike `06-jailer.sh` and the FC integration test.
+- [x] Base kernel/rootfs version is pinned and recorded on the machine record. *(live)* —
+      `kernel_ref`/`rootfs_ref` stamped per machine; images pinned via spike `versions.lock`.
+- [x] VMs cannot reach the control plane, node-agent, or host services (basic
+      default-deny egress; the full per-tenant policy lands in Phase 10). *(live)* —
+      guest→gateway:9090 and guest→host blocked (nft `input`-hook deny), guest→RFC1918
+      dropped (forward deny), guest→internet works via NAT masquerade. Note: a
+      default-deny system `FORWARD` policy (Docker/ufw) required the driver to add tap
+      accepts into the `ip filter` FORWARD chain — see `RUNBOOK.md` gotchas.
+- [x] The node-agent's VMM access sits behind a driver interface with a non-KVM dev
       driver, so the full stack runs on a dev Mac; the Firecracker driver runs on the
-      Proxmox Linux VMs (nested KVM) and in a KVM-capable CI job.
+      Proxmox Linux VMs (nested KVM) and in a KVM-capable CI job. *(live + gated)* —
+      `Driver` interface + DevDriver (Mac); FC driver verified live on Proxmox; KVM CI
+      job present but gated on `vars.HAS_KVM_RUNNER` until the self-hosted runner exists.
+
+> **To fully close out the *(suite)* items on the live stack:** click Stop then Start
+> on the dashboard and confirm the state badge + `machine_events` rows
+> (`requested→provisioning→running→stopping→stopped→starting→running`); watch a second
+> browser tab update live over SSE; and `ps -o uid,cmd -C firecracker` on the host to
+> confirm the VMM runs under the per-VM jail uid (≥100000), not root.
 
 ---
 

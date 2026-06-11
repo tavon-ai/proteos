@@ -37,6 +37,14 @@ func (l jailLayout) socket() string {
 // writable copy of the base rootfs into it, and chowns everything to the
 // per-VM uid/gid. Returns the in-jail paths the API calls must reference.
 func prepareChroot(l jailLayout, kernelSrc, rootfsSrc string, uid, gid int) (kernelInJail, rootfsInJail string, err error) {
+	// Start from a clean jail. stop is a plain shutdown that leaves the chroot in
+	// place, so on a restart the jailer's mknod of /dev/net/tun (and /dev/kvm)
+	// would fail with EEXIST. Wiping first also realises the plan's "fresh
+	// writable rootfs copy per boot". On a first boot this is a no-op.
+	if err := removeJail(l); err != nil {
+		return "", "", fmt.Errorf("clean jail: %w", err)
+	}
+
 	root := l.root()
 	if err := os.MkdirAll(filepath.Join(root, "run"), 0o755); err != nil {
 		return "", "", fmt.Errorf("mkdir jail: %w", err)

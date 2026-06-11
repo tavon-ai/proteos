@@ -1,0 +1,6 @@
+# Written by 01-host-setup.sh — exact artifacts this spike ran against.
+firecracker=v1.16.0
+kernel=firecracker-ci/v1.15/x86_64/vmlinux-6.1.155
+rootfs=firecracker-ci/v1.15/x86_64/ubuntu-24.04.squashfs
+host=Ubuntu 24.04.4 LTS 6.8.0-124-generic
+date=2026-06-11T05:53:43Z
