@@ -63,16 +63,29 @@ after 01.
 
 ### vsock findings (Task 3.0)
 
-Fill these in from `08-vsock.sh`'s `FINDING` lines — they gate the Phase 3
-FirecrackerDriver and feed Phase 4 (snapshot/restore of the vsock device):
+From `08-vsock.sh` (run 2026-06-11) — these gate the Phase 3 FirecrackerDriver
+and feed Phase 4 (snapshot/restore of the vsock device):
 
-- [ ] Plain boot: host↔guest echo over `CONNECT 1024` works.
-- [ ] Jailed boot: uds is created **inside the chroot** at `<chroot>/root/<uds_path>`,
-      owned by the **jail uid** (not root); host echo works against that path.
-- [ ] On snapshot/restore: does `LoadSnapshot` **re-create the host uds**, or must
-      the node-agent re-create it? (record exactly — Phase 4 depends on it)
-- [ ] In-flight connections across restore: confirmed they do **not** survive (the
-      uds fd is per-VMM-process); the node-agent must redial.
+- [x] Plain boot: host↔guest echo over `CONNECT 1024` works. The host connects to
+      the device's host-side uds, sends `CONNECT 1024\n`, gets `OK <port>\n`, then
+      bytes round-trip to a guest `AF_VSOCK` listener. Guest kernel/python have
+      vsock support out of the box on the pinned CI rootfs.
+- [ ] Jailed boot: **not executed by 08 directly** — documented as a manual add to
+      `06-jailer.sh` (PUT `/vsock {uds_path:"v.sock"}` before InstanceStart). The
+      uds lands inside the chroot at `<chroot>/root/v.sock`; still to confirm on a
+      jailed run that it is owned by the jail uid (not root) and that host echo
+      round-trips against that path. **Action: run the jailed variant before the
+      3.7 acceptance pass.**
+- [x] Snapshot/restore — **the host uds does NOT vanish on its own and is NOT
+      reused in place.** After `kill_vm` the socket file is still `present` on
+      disk; `LoadSnapshot` then tries to **re-bind** it and fails with
+      "Address in use" unless it is removed first. So: the node-agent must
+      `rm` the stale uds before restore, and Firecracker creates a **fresh** one
+      on `LoadSnapshot` (post-restore echo confirmed working). Phase 4 must do
+      this rm-then-restore.
+- [x] In-flight connections across restore do **not** survive (the uds fd is
+      per-VMM-process); the node-agent must redial after a restore. This matches
+      the tunnel model (the gateway re-dials `DialGuest`).
 
 ### Surprises / gotchas log
 

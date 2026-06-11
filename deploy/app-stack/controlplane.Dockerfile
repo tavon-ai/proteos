@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 #
 # Control-plane image. The build context MUST be the repo root: the control
-# plane imports the `agentapi` wire-contract package from the nodeagent module
-# through the Go workspace (go.work), so both module trees + go.work(.sum) have
-# to be present at build time. nodeagent has no external deps (the agentapi
-# package is pure stdlib types), so this stays light.
+# plane imports wire-contract packages from sibling modules through the Go
+# workspace (go.work) — `agentapi` from nodeagent and `guestwire` from
+# guestagent (Phase 3) — so all module trees + go.work(.sum) must be present at
+# build time. go.work lists every workspace module, and `go mod download`
+# validates the whole graph, so guestagent's go.mod/go.sum must be copied too
+# even though the control plane only links its dependency-free api package.
 #
 # Migrations are embedded in the binary (controlplane/internal/store + iofs), so
 # the runtime image is just the static binary — `-migrate` applies them on boot.
@@ -17,11 +19,13 @@ ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
 COPY go.work go.work.sum ./
 COPY controlplane/go.mod controlplane/go.sum ./controlplane/
 COPY nodeagent/go.mod ./nodeagent/
+COPY guestagent/go.mod guestagent/go.sum ./guestagent/
 RUN go mod download
 
 # Sources.
 COPY controlplane/ ./controlplane/
 COPY nodeagent/ ./nodeagent/
+COPY guestagent/ ./guestagent/
 RUN go build -ldflags="-s -w" -o /out/controlplane ./controlplane/cmd/controlplane
 
 # Root (not :nonroot): the Phase-1 file-backed secrets store writes to
