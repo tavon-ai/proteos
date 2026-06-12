@@ -96,35 +96,41 @@ kill_vm
 # ==============================================================================
 # cgroup placement under jailer (06) — best-effort: --cgroup flags vary by distro
 # ==============================================================================
+# Only the cgroup string goes to stdout (it is captured by the caller); every
+# helper that chatters to stdout — wait_for's `ok`, etc. — is redirected to
+# stderr inside the group, so it stays visible as progress but never pollutes the
+# captured value. (The earlier version leaked "[ ok ] jailed API socket" into the
+# finding and the embedded newline split the TSV row.)
 measure_cgroup() {
   local jid="measure" chroot sock pid
   chroot="$JAIL_DIR/firecracker/$jid/root"
   sock="$chroot/run/firecracker.socket"
+  {
+    id -u "$FC_USER" >/dev/null 2>&1 ||
+      sudo useradd --system --no-create-home --shell /usr/sbin/nologin "$FC_USER"
+    sudo pkill -u "$FC_USER" firecracker 2>/dev/null || true
+    sudo rm -rf "$JAIL_DIR/firecracker/$jid"
+    sudo mkdir -p "$chroot/run"
+    sudo cp "$KERNEL" "$chroot/vmlinux"
+    sudo cp "$ROOTFS" "$chroot/rootfs.ext4"
+    sudo chown -R "$FC_USER:$FC_USER" "$JAIL_DIR/firecracker/$jid"
 
-  id -u "$FC_USER" >/dev/null 2>&1 ||
-    sudo useradd --system --no-create-home --shell /usr/sbin/nologin "$FC_USER"
-  sudo pkill -u "$FC_USER" firecracker 2>/dev/null || true
-  sudo rm -rf "$JAIL_DIR/firecracker/$jid"
-  sudo mkdir -p "$chroot/run"
-  sudo cp "$KERNEL" "$chroot/vmlinux"
-  sudo cp "$ROOTFS" "$chroot/rootfs.ext4"
-  sudo chown -R "$FC_USER:$FC_USER" "$JAIL_DIR/firecracker/$jid"
+    require_kvm
+    sudo "$BIN_DIR/jailer" --id "$jid" --exec-file "$BIN_DIR/firecracker" \
+      --uid "$(id -u "$FC_USER")" --gid "$(id -g "$FC_USER")" \
+      --chroot-base-dir "$JAIL_DIR" --cgroup-version 2 --cgroup "cpu.weight=512" \
+      --daemonize -- --api-sock /run/firecracker.socket || return 1
+    wait_for "jailed API socket" 10 bash -c "sudo test -S '$sock'" || return 1
 
-  require_kvm
-  sudo "$BIN_DIR/jailer" --id "$jid" --exec-file "$BIN_DIR/firecracker" \
-    --uid "$(id -u "$FC_USER")" --gid "$(id -g "$FC_USER")" \
-    --chroot-base-dir "$JAIL_DIR" --cgroup-version 2 --cgroup "cpu.weight=512" \
-    --daemonize -- --api-sock /run/firecracker.socket || return 1
-  wait_for "jailed API socket" 10 bash -c "sudo test -S '$sock'" || return 1
+    local jc=(--unix-socket "$sock" -sS -f -H 'Content-Type: application/json')
+    sudo curl "${jc[@]}" -X PUT "http://localhost/machine-config" -d '{"vcpu_count":1,"mem_size_mib":256}' || return 1
+    sudo curl "${jc[@]}" -X PUT "http://localhost/boot-source" -d '{"kernel_image_path":"/vmlinux","boot_args":"console=ttyS0 reboot=k panic=1 pci=off"}' || return 1
+    sudo curl "${jc[@]}" -X PUT "http://localhost/drives/rootfs" -d '{"drive_id":"rootfs","path_on_host":"/rootfs.ext4","is_root_device":true,"is_read_only":false}' || return 1
+    sudo curl "${jc[@]}" -X PUT "http://localhost/actions" -d '{"action_type":"InstanceStart"}' || return 1
 
-  local jc=(--unix-socket "$sock" -sS -f -H 'Content-Type: application/json')
-  sudo curl "${jc[@]}" -X PUT "http://localhost/machine-config" -d '{"vcpu_count":1,"mem_size_mib":256}' || return 1
-  sudo curl "${jc[@]}" -X PUT "http://localhost/boot-source" -d '{"kernel_image_path":"/vmlinux","boot_args":"console=ttyS0 reboot=k panic=1 pci=off"}' || return 1
-  sudo curl "${jc[@]}" -X PUT "http://localhost/drives/rootfs" -d '{"drive_id":"rootfs","path_on_host":"/rootfs.ext4","is_root_device":true,"is_read_only":false}' || return 1
-  sudo curl "${jc[@]}" -X PUT "http://localhost/actions" -d '{"action_type":"InstanceStart"}' || return 1
-
-  pid=$(pgrep -u "$FC_USER" -f firecracker | head -n1)
-  [[ -n $pid ]] || return 1
+    pid=$(pgrep -u "$FC_USER" -f firecracker | head -n1)
+    [[ -n $pid ]] || return 1
+  } >&2
   sudo cat "/proc/$pid/cgroup" | tr '\n' ';'
 }
 

@@ -237,12 +237,17 @@ finding_reset() {
   : >"$FINDINGS_TSV"
 }
 
-# finding_set <key> <value> [note] — record one measurement (tab-separated, so
-# keys/values/notes must not contain tabs or newlines).
+# finding_set <key> <value> [note] — record one measurement. Tabs/newlines/CR in
+# any field are squashed to spaces so a stray multi-line value (e.g. a captured
+# command that leaked a log line) can never split the row in the TSV.
 finding_set() {
   mkdir -p "$(dirname "$FINDINGS_TSV")"
-  printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >>"$FINDINGS_TSV"
-  ok "finding: $1 = $2"
+  local k=$1 v=$2 n=${3-}
+  k=${k//[$'\t\r\n']/ }
+  v=${v//[$'\t\r\n']/ }
+  n=${n//[$'\t\r\n']/ }
+  printf '%s\t%s\t%s\n' "$k" "$v" "$n" >>"$FINDINGS_TSV"
+  ok "finding: $k = $v"
 }
 
 # finding_finalize <json-out> <md-out> <title> — emit the artifacts from the TSV.

@@ -69,8 +69,8 @@ after 01.
 | Restore + resume time (05) | 514 ms | LoadSnapshot with resume_vm=true, mem_backend=File; tap pre-existing |
 | Clock skew after restore (05) | 16 s | ≈ the 15s hibernated; nothing resets the wall clock → node-agent PUT /resume must resync (decision #9) |
 | CRNG reseeded after restore? (05) | yes | [   12.242326] random: crng reseeded due to virtual machine fork |
-| cgroup placement under jailer (06) | [ ok ] jailed API socket |  |
-| 0::/firecracker/measure | from /proc/<vmm-pid>/cgroup; cpu.weight=512 |  |
+| cgroup placement under jailer (06) | 0::/firecracker/measure | from /proc/<vmm-pid>/cgroup; cpu.weight=512 |
+
 ### vsock findings (Task 3.0)
 
 From `08-vsock.sh` (run 2026-06-11) — these gate the Phase 3 FirecrackerDriver
