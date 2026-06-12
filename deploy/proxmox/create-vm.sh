@@ -105,7 +105,7 @@ fi
 
 # Resolve SSH keys.
 if [[ -z $VM_SSHKEYS ]]; then
-  for c in /root/.ssh/authorized_keys "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do
+  for c in /root/.ssh/authorized_keys "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ivan.pub"; do
     [[ -s $c ]] && { VM_SSHKEYS="$c"; break; }
   done
 fi
