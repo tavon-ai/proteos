@@ -54,16 +54,18 @@
     mode: "0644"
 
 # ----------------------------------------------------------------------------
-# 3. rootfs: CI squashfs -> ext4 with our own SSH key.
-#    Mirrors 01-host-setup.sh step 3. The whole block is guarded by the final
-#    artifact so re-runs are a no-op once the ext4 exists.
+# 3. base rootfs: CI squashfs -> ext4 with our own SSH key.
+#    Mirrors 01-host-setup.sh step 3. This is the BASE image; the node_agent
+#    role bakes the guest agent into it (image/build-rootfs.sh) to produce the
+#    image the agent actually boots. The block is guarded by the final artifact
+#    so re-runs are a no-op once the base ext4 exists.
 # ----------------------------------------------------------------------------
-- name: Check rootfs image
+- name: Check base rootfs image
   ansible.builtin.stat:
-    path: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+    path: "{{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}"
   register: rootfs_img
 
-- name: Build ext4 rootfs from the CI squashfs
+- name: Build base ext4 rootfs from the CI squashfs
   when: not rootfs_img.stat.exists
   block:
     - name: Download Ubuntu squashfs
@@ -96,14 +98,14 @@
         mode: "0600"
         remote_src: true
 
-    - name: Allocate the ext4 image file
+    - name: Allocate the base ext4 image file
       ansible.builtin.command:
-        cmd: "truncate -s {{ proteos_rootfs_size }} {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
-        creates: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+        cmd: "truncate -s {{ proteos_rootfs_size }} {{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}"
+        creates: "{{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}"
 
-    - name: Format ext4 rootfs from the tree
+    - name: Format base ext4 rootfs from the tree
       ansible.builtin.command:
-        cmd: "mkfs.ext4 -q -d {{ proteos_images_dir }}/squashfs-root -F {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+        cmd: "mkfs.ext4 -q -d {{ proteos_images_dir }}/squashfs-root -F {{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}"
       # mkfs has no `creates` for a pre-truncated file; safe because the whole
       # block only runs when the rootfs image did not already exist.
 

@@ -27,7 +27,7 @@ deploy/proxmox/create-vm.sh   →   deploy/ansible/site.yml
 
 ```bash
 # clone from template 9000 (preferred):
-sudo TEMPLATE=9000 ./create-vm.sh
+sudo TEMPLATE=9056 VMID=7115 VM_STORAGE=black VM_SSHKEYS=ivan-mac.pub ./create-vm.sh
 # override anything:
 sudo TEMPLATE=9000 VMID=9101 VM_NAME=fc-node-2 VM_STORAGE=local-lvm \
      VM_IPCONFIG='ip=10.0.0.21/24,gw=10.0.0.1' ./create-vm.sh

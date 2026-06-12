@@ -30,7 +30,19 @@
       - "--exclude=spike/firecracker/work"
       - "--exclude=*.ext4"
       - "--exclude=*.luks"
+      # Never ship local .env files: run-node-agent.sh sources ./.env next to
+      # itself, which would silently override the Ansible-managed env file (the
+      # systemd EnvironmentFile). The host's only env source is proteos_env_file.
+      - "--exclude=.env"
+      - "--exclude=*.env"
   register: src_sync
+
+# --delete does not remove rsync-excluded paths, so a .env from an earlier sync
+# would linger and keep overriding the managed env. Remove it explicitly.
+- name: Remove any stale checked-out .env on the host
+  ansible.builtin.file:
+    path: "{{ proteos_src_dir }}/deploy/node-agent/.env"
+    state: absent
 
 - name: Clone node-agent source from git
   when: proteos_src_git_repo | length > 0
@@ -63,6 +75,66 @@
     (src_git is defined and src_git.changed) or
     not agent_bin.stat.exists
   notify: restart node-agent
+
+# ----------------------------------------------------------------------------
+# Bake the guest rootfs: install the guest agent (+ persist/resume) and its
+# systemd unit into the plain CI base ext4 the firecracker role built. The base
+# alone has no guest agent, so guests booted from it would have no terminal or
+# persistence. image/build-rootfs.sh emits proteos-rootfs-<base>-ga<sha>.ext4
+# plus a manifest.lock we read back to learn the exact name.
+# ----------------------------------------------------------------------------
+- name: Resolve source git short SHA for the baked image name
+  ansible.builtin.command: git -C "{{ proteos_src_local }}" rev-parse --short HEAD
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  failed_when: false
+  register: src_git_short
+  when: proteos_src_git_repo | length == 0
+
+- name: Check for an existing baked rootfs manifest
+  ansible.builtin.stat:
+    path: "{{ proteos_images_dir }}/manifest.lock"
+  register: rootfs_manifest
+
+- name: Bake the guest agent into the base rootfs
+  ansible.builtin.command:
+    cmd: >-
+      {{ proteos_src_dir }}/image/build-rootfs.sh
+      --base {{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}
+      --out-dir {{ proteos_images_dir }}
+  environment:
+    PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
+    # Carries the real commit SHA into the image name on the rsync path (the
+    # synced tree has no .git). Empty on the git-clone path, where build-rootfs.sh
+    # resolves the SHA from the cloned .git itself.
+    PROTEOS_ROOTFS_GIT_SHORT: "{{ src_git_short.stdout | default('') | trim }}"
+  register: rootfs_bake
+  changed_when: rootfs_bake.rc == 0
+  when: >-
+    (src_sync is defined and src_sync.changed) or
+    (src_git is defined and src_git.changed) or
+    not rootfs_manifest.stat.exists
+  notify: restart node-agent
+
+- name: Read the baked rootfs manifest
+  ansible.builtin.slurp:
+    src: "{{ proteos_images_dir }}/manifest.lock"
+  register: rootfs_manifest_raw
+
+# manifest.lock has a line: "image          = proteos-rootfs-<base>-ga<sha>.ext4"
+- name: Pin PROTEOS_ROOTFS_REF to the baked image
+  ansible.builtin.set_fact:
+    proteos_rootfs_ref: >-
+      {{ (rootfs_manifest_raw.content | b64decode
+          | regex_search('(?m)^image\s*=\s*(\S+)', '\1') | first) }}
+
+- name: Assert the baked rootfs exists
+  ansible.builtin.stat:
+    path: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+  register: baked_rootfs
+  failed_when: not baked_rootfs.stat.exists
 
 # ----------------------------------------------------------------------------
 # Config + systemd unit.

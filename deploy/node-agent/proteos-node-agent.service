@@ -22,6 +22,10 @@ Wants=network-online.target
 Type=simple
 User=root
 EnvironmentFile=/etc/proteos/node-agent.env
+# Pin the env file run-node-agent.sh sources to this managed one. Without it the
+# script falls back to ./.env next to itself, which — if a stray .env was copied
+# into the checkout — would silently override these values (e.g. PROTEOS_ROOTFS_REF).
+Environment=PROTEOS_AGENT_ENV_FILE=/etc/proteos/node-agent.env
 ExecStart=/opt/proteos/src/deploy/node-agent/run-node-agent.sh run
 Restart=on-failure
 RestartSec=3

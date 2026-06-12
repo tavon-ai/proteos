@@ -60,7 +60,10 @@ command -v go >/dev/null || die "go toolchain required to build the guest agent"
 [[ "$(uname -s)" == "Linux" ]] || die "this script loop-mounts ext4 — run it on Linux"
 
 # --- 1. build the static guest agent ----------------------------------------
-GIT_SHORT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+# Provenance SHA for the image name. Honour an explicit override (set by the
+# Ansible bake step, whose rsynced source tree has no .git to resolve) and fall
+# back to the checkout's own HEAD.
+GIT_SHORT="${PROTEOS_ROOTFS_GIT_SHORT:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)}"
 VERSION="ga-$GIT_SHORT"
 BASE_NAME="$(basename "$BASE" .ext4)"
 OUT_IMG="$OUT_DIR/proteos-rootfs-${BASE_NAME}-ga${GIT_SHORT}.ext4"

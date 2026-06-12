@@ -31,9 +31,15 @@ proteos_env_file: "/etc/proteos/node-agent.env"
 proteos_bin_out: "/usr/local/bin/proteos-node-agent"     # built binary (BIN_OUT in run-node-agent.sh)
 proteos_go_root: "/usr/local/go"
 
-# Image filenames inside proteos_images_dir. Must match the control plane's
-# PROTEOS_KERNEL_REF / PROTEOS_ROOTFS_REF (used by the agent preflight).
+# Image filenames inside proteos_images_dir.
 proteos_kernel_ref: "vmlinux"
+
+# The PLAIN Firecracker-CI ext4 the firecracker role builds. It is only the
+# BASE: the node_agent role bakes the guest agent + persist/resume into it via
+# image/build-rootfs.sh, producing proteos-rootfs-<base>-ga<sha>.ext4. That baked
+# name is what the agent boots; it is derived at bake time and assigned to
+# proteos_rootfs_ref (the value below is just the pre-bake fallback).
+proteos_base_rootfs_ref: "ubuntu-24.04.ext4"
 proteos_rootfs_ref: "ubuntu-24.04.ext4"
 proteos_rootfs_size: "1G"
 

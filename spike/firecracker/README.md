@@ -61,15 +61,16 @@ after 01.
 > committed `.json` for the attributable numbers. The table below is the fallback
 > for a manual run.
 
-| Measurement                            | Value | Notes |
-| -------------------------------------- | ----- | ----- |
-| Boot to login prompt (02)               |       |       |
-| Snapshot create time + mem file size (05) |     | mem file ≈ RAM size = storage cost of hibernate |
-| Restore + resume time (05)              |       |       |
-| Clock skew after restore (05)           |       | expected ≈ hibernated duration; Phase 4 must resync |
-| CRNG reseeded after restore? (05)       |       | `dmesg \| grep -i random` in the guest |
-| cgroup placement under jailer (06)      |       |       |
-
+| Measurement | Value | Notes |
+| --- | --- | --- |
+| Boot to login prompt (02) | 9564 ms | InstanceStart→'login:' on serial; 2 vCPU/1024 MiB; console polled at 0.5s |
+| Snapshot create time (05) | 1006 ms | Full snapshot (memory + device state), paused VM |
+| Snapshot mem file size (05) | 1024 MiB | ≈ 1024 MiB guest RAM = the storage cost of hibernate |
+| Restore + resume time (05) | 514 ms | LoadSnapshot with resume_vm=true, mem_backend=File; tap pre-existing |
+| Clock skew after restore (05) | 16 s | ≈ the 15s hibernated; nothing resets the wall clock → node-agent PUT /resume must resync (decision #9) |
+| CRNG reseeded after restore? (05) | yes | [   12.242326] random: crng reseeded due to virtual machine fork |
+| cgroup placement under jailer (06) | [ ok ] jailed API socket |  |
+| 0::/firecracker/measure | from /proc/<vmm-pid>/cgroup; cpu.weight=512 |  |
 ### vsock findings (Task 3.0)
 
 From `08-vsock.sh` (run 2026-06-11) — these gate the Phase 3 FirecrackerDriver
