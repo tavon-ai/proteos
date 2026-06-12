@@ -5,15 +5,23 @@
 > 4.2 control-plane schema/lifecycle/key-broker, 4.3 guest-agent persist+SQLite+resume,
 > 4.5 dev-stack e2e + React. `go test ./...` green across all three modules (incl. the
 > `TestHibernateResumeE2E` dev-stack e2e: file survives stop/start, `boot:resumed`).
-> **4.4 FirecrackerDriver landed (code-complete, needs Proxmox to verify)** —
+> **4.4 FirecrackerDriver landed + verified on Proxmox** —
 > `volume.go` (LUKS2 provision/open/mount/close, sizing), `snapshot.go` (pause+create,
 > load, version guard, consume, guest `/resume` hook), the `prepareChroot` →
 > `prepareColdJail`/`prepareResumeJail` split (rootfs now lives on the encrypted
 > `/state` volume, not the jail), cold-vs-resume dispatch with FC-version-mismatch /
 > restore-error cold-boot fallback, `Destroy`/`Reattach`/`cleanupHost` volume handling.
-> Cross-builds + `go vet` clean under `-tags firecracker`; a gated
-> `TestHibernateResumeCycle` exercises the volume/snapshot lifecycle on KVM.
+> Cross-builds + `go vet` clean under `-tags firecracker`. The gated
+> `TestHibernateResumeCycle` exercises the full volume/snapshot lifecycle on KVM and now
+> also enforces the two acceptance proofs in CI: **encrypted at rest** (a plaintext probe
+> written to the open volume is absent from the raw closed `.luks`; `cryptsetup isLuks`)
+> and **resume hygiene** (the guest `/resume` outcome is surfaced as
+> `Status.ResumeHygiene`/`ResumeSkewMS`; asserted `== "ok"` when the runner sets
+> `PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT=1` against the baked rootfs).
 > `run-node-agent.sh` + `.env.example` updated (volumes dir, cryptsetup, optional TLS).
+> **Host provisioning via Ansible (`deploy/ansible/`)** — installs cryptsetup, creates the
+> `volumes` dir `0700` outside the jail tree, renders the env (volumes dir, cryptsetup,
+> optional TLS), bakes the 4.3 guest agent into the rootfs and re-pins `PROTEOS_ROOTFS_REF`.
 > **Rootfs tooling updated for Phase 4** — `image/build-rootfs.sh` bakes the 4.3
 > guest agent (persist + SQLite + `/resume`, built from source), the systemd unit
 > documents disk mode (`/dev/vdb` → `/persist`, runs as root), the build warns if the
@@ -21,9 +29,15 @@
 > `features=terminal,persist,resume`. Guest `fsck` is best-effort so a missing binary
 > degrades to a journal-replay mount rather than disabling persistence. Run the script
 > on the Proxmox/Linux host and re-pin `PROTEOS_ROOTFS_REF` to the new `ga<gitshort>`.
-> **Track B remaining (run on KVM)** — 4.0 spike `09-encrypted-disk.sh`; 4.6 acceptance
-> pass: build/re-pin the rootfs, then the file/process-survival + no-plaintext-grep +
-> clock/entropy proofs on the Proxmox VM.
+> **4.0 spike landed** — `09-encrypted-disk.sh` (encrypted hibernate/resume cycle) +
+> `10-measure-findings.sh` (boot/snapshot/restore/cgroup timings → committable
+> `findings.{json,md}`); the README findings table is populated (CRNG reseeds via VMGenID;
+> ~16 s skew ≈ hibernated dwell). **Track B remaining — one gated run + the master-plan
+> ticks**: run `go test -tags firecracker -run TestHibernateResumeCycle` (with
+> `PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT=1` against the baked rootfs) on the Proxmox VM;
+> when green, tick the two open Phase-4 acceptance boxes in `plans/proteos-poc-to-prod.md`
+> (encrypted-at-rest, resume entropy/clock). Optional: commit the `encrypted-findings.*`
+> artifact from a `09` run.
 > Prerequisites: Phase 2 (driver interface, jail layout, state store, lifecycle poller) and
 > Phase 3 (guest agent + vsock tunnel + gateway) — both landed. Phase 4 treats their
 > contracts as given and extends them; it does not rework the boot, tunnel, or gateway paths.

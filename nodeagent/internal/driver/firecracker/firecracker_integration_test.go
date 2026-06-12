@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,10 @@ import (
 //
 // The images are copied into each VM's jail, so the originals are untouched.
 
-func testDriver(t *testing.T) (*firecracker.Driver, string) {
+// testDriver returns the driver plus the volumes dir and chroot base dir, which
+// the hibernate test needs to locate the raw LUKS container and the mounted
+// /state for its at-rest-encryption assertions.
+func testDriver(t *testing.T) (d *firecracker.Driver, volumesDir, chrootBaseDir string) {
 	t.Helper()
 	if os.Geteuid() != 0 {
 		t.Skip("firecracker integration tests require root (jailer + netlink)")
@@ -60,17 +64,19 @@ func testDriver(t *testing.T) (*firecracker.Driver, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := firecracker.New(firecracker.Config{
+	chrootBaseDir = t.TempDir()
+	volumesDir = t.TempDir() // Phase 4: per-machine LUKS containers
+	d = firecracker.New(firecracker.Config{
 		FirecrackerBin: fcBin,
 		JailerBin:      jailerBin,
-		ChrootBaseDir:  t.TempDir(),
+		ChrootBaseDir:  chrootBaseDir,
 		ImagesDir:      imagesDir,
 		JailUIDStart:   100000,
 		JailUIDCount:   1000,
-		VolumesDir:     t.TempDir(), // Phase 4: per-machine LUKS containers
+		VolumesDir:     volumesDir,
 		CryptsetupBin:  envOr("PROTEOS_CRYPTSETUP_BIN", "cryptsetup"),
 	}, store)
-	return d, ""
+	return d, volumesDir, chrootBaseDir
 }
 
 func waitState(t *testing.T, d *firecracker.Driver, id, want string, timeout time.Duration) driver.Status {
@@ -96,7 +102,7 @@ func waitState(t *testing.T, d *firecracker.Driver, id, want string, timeout tim
 }
 
 func TestBootToRunning(t *testing.T) {
-	d, _ := testDriver(t)
+	d, _, _ := testDriver(t)
 	id := "aaaaaaaa-0000-0000-0000-000000000001"
 	ctx := context.Background()
 
@@ -112,7 +118,7 @@ func TestBootToRunning(t *testing.T) {
 }
 
 func TestStopGraceful(t *testing.T) {
-	d, _ := testDriver(t)
+	d, _, _ := testDriver(t)
 	id := "bbbbbbbb-0000-0000-0000-000000000002"
 	ctx := context.Background()
 
@@ -135,7 +141,7 @@ func TestStopGraceful(t *testing.T) {
 // rootfs with the 4.3 guest agent baked in); here we verify the volume +
 // snapshot lifecycle the control plane observes via Status.
 func TestHibernateResumeCycle(t *testing.T) {
-	d, _ := testDriver(t)
+	d, volumesDir, chrootBaseDir := testDriver(t)
 	id := "dddddddd-0000-0000-0000-000000000044"
 	ctx := context.Background()
 
@@ -147,6 +153,21 @@ func TestHibernateResumeCycle(t *testing.T) {
 	if st.Boot != api.BootCold {
 		t.Fatalf("first boot=%q, want cold", st.Boot)
 	}
+
+	// Drop a known plaintext marker onto the mounted (open) encrypted volume, so
+	// that after hibernate we can prove it is NOT readable in the raw container —
+	// i.e. the disk + snapshot are encrypted at rest. The volume is mounted at the
+	// jail's /state (<chrootBaseDir>/firecracker/<id>/root/state).
+	const probe = "PROTEOS-PLAINTEXT-PROBE-dddddddd-d34db33f"
+	mountPoint := filepath.Join(chrootBaseDir, "firecracker", id, "root", "state")
+	probeFile := filepath.Join(mountPoint, "plaintext-probe.txt")
+	if err := os.WriteFile(probeFile, []byte(probe+"\n"), 0o600); err != nil {
+		t.Fatalf("write plaintext probe onto mounted volume %s: %v", mountPoint, err)
+	}
+	if b, err := os.ReadFile(probeFile); err != nil || !strings.Contains(string(b), probe) {
+		t.Fatalf("probe not present in plaintext on the open volume: %v", err)
+	}
+	_ = exec.Command("sync").Run()
 
 	// Hibernate: pause + snapshot, then volume closed.
 	if err := d.Stop(ctx, id, driver.StopModeHibernate); err != nil {
@@ -164,6 +185,25 @@ func TestHibernateResumeCycle(t *testing.T) {
 		t.Fatalf("volume mapper %s still active after hibernate:\n%s", mapper, out)
 	}
 
+	// --- encrypted at rest (acceptance criterion) ---------------------------
+	volPath := filepath.Join(volumesDir, id+".luks")
+	// It must be a LUKS2 container, not a bare ext4.
+	if luksOut, err := exec.Command("cryptsetup", "isLuks", "--type", "luks2", volPath).CombinedOutput(); err != nil {
+		t.Fatalf("volume %s is not a LUKS2 container: %v: %s", volPath, err, luksOut)
+	}
+	// The plaintext probe written onto the open volume must NOT be greppable in
+	// the raw, closed container. grep exits 1 (not found) on success.
+	switch err := exec.Command("grep", "-a", "-q", probe, volPath).Run(); e := err.(type) {
+	case nil:
+		t.Fatalf("PLAINTEXT LEAK: probe %q found in raw closed container %s", probe, volPath)
+	case *exec.ExitError:
+		if e.ExitCode() != 1 {
+			t.Fatalf("grep over container %s errored unexpectedly (exit %d)", volPath, e.ExitCode())
+		}
+	default:
+		t.Fatalf("grep over container %s: %v", volPath, err)
+	}
+
 	// Resume from the snapshot.
 	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
 		t.Fatalf("resume ensure: %v", err)
@@ -175,10 +215,26 @@ func TestHibernateResumeCycle(t *testing.T) {
 	if st.Snapshot.Present {
 		t.Fatalf("snapshot should be consumed after resume")
 	}
+
+	// --- resume reseeds entropy + resyncs the clock (acceptance criterion) ---
+	// The guest /resume hook (decision #9) sets the wall clock and reseeds the
+	// CRNG; a 200 from it lands as ResumeHygiene="ok". This needs a rootfs with
+	// the 4.3 guest agent baked in (the ansible-baked image), so it is enforced
+	// only when the runner declares that via the env flag; otherwise the bare
+	// mechanics above still run.
+	if os.Getenv("PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT") != "" {
+		if st.ResumeHygiene != "ok" {
+			t.Fatalf("resume hygiene not ok — clock/entropy not corrected: hygiene=%q skew=%dms",
+				st.ResumeHygiene, st.ResumeSkewMS)
+		}
+		t.Logf("resume hygiene ok: guest corrected %dms of clock skew + reseeded entropy", st.ResumeSkewMS)
+	} else {
+		t.Log("clock/entropy assertion skipped; set PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT=1 (baked rootfs) to enforce")
+	}
 }
 
 func TestEgressDefaultDeny(t *testing.T) {
-	d, _ := testDriver(t)
+	d, _, _ := testDriver(t)
 	id := "cccccccc-0000-0000-0000-000000000003"
 	ctx := context.Background()
 

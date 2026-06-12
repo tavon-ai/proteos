@@ -71,6 +71,14 @@ type Status struct {
 	Boot     string // agentapi.BootCold | agentapi.BootResumed
 	DiskID   string
 	Snapshot Snapshot
+
+	// ResumeHygiene is the outcome of the post-resume guest /resume hook
+	// (decision #9): "ok" once the guest corrected its clock and reseeded entropy,
+	// "failed" if the best-effort hook errored, empty on cold boot. ResumeSkewMS
+	// is the skew the guest corrected (host − guest) in ms. Observability for the
+	// Phase 4 acceptance test, which asserts resume hygiene actually ran.
+	ResumeHygiene string
+	ResumeSkewMS  int64
 }
 
 // Driver is the desired-state interface the agent drives. EnsureRunning is the

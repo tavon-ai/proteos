@@ -57,6 +57,14 @@ type Record struct {
 	// cleared once the snapshot is consumed by a resume or invalidated by a cold
 	// stop. The volume key is NEVER stored here (or anywhere on the host).
 	Snapshot SnapshotRecord `json:"snapshot,omitzero"`
+
+	// ResumeHygiene / ResumeSkewMS record the outcome of the post-resume guest
+	// /resume hook (decision #9): "ok" with the corrected skew once the guest set
+	// its clock and reseeded entropy, "failed" if the best-effort hook errored.
+	// Empty/zero on cold boot. Surfaced via Status so the 4.6 acceptance test can
+	// enforce that resume hygiene actually ran.
+	ResumeHygiene string `json:"resume_hygiene,omitempty"`
+	ResumeSkewMS  int64  `json:"resume_skew_ms,omitempty"`
 }
 
 // SnapshotRecord is the persisted hibernation-snapshot metadata for a machine

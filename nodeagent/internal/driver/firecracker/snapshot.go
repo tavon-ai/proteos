@@ -99,17 +99,18 @@ func (d *Driver) installedFCVersion() string {
 // (decision #9): it sets the guest wall clock to the host's and reseeds the
 // CRNG. Best-effort — a resume whose RAM restored successfully must not be
 // aborted because the (possibly old) guest rootfs lacks the /resume route; we
-// log loudly instead. Returns the corrected skew the guest reported.
-func (d *Driver) callGuestResume(ctx context.Context, machineID string) error {
+// log loudly instead. Returns the corrected skew (host − guest, ms) the guest
+// reported.
+func (d *Driver) callGuestResume(ctx context.Context, machineID string) (int64, error) {
 	conn, err := d.DialGuest(ctx, machineID)
 	if err != nil {
-		return fmt.Errorf("dial guest for resume: %w", err)
+		return 0, fmt.Errorf("dial guest for resume: %w", err)
 	}
 	defer conn.Close()
 
 	entropy := make([]byte, 32)
 	if _, err := rand.Read(entropy); err != nil {
-		return err
+		return 0, err
 	}
 	body, _ := json.Marshal(resumeBody{
 		UnixNanos:  time.Now().UnixNano(),
@@ -118,7 +119,7 @@ func (d *Driver) callGuestResume(ctx context.Context, machineID string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://guest/resume", strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Close = true // single-shot connection
@@ -126,17 +127,24 @@ func (d *Driver) callGuestResume(ctx context.Context, machineID string) error {
 		_ = conn.SetDeadline(dl)
 	}
 	if err := req.Write(conn); err != nil {
-		return fmt.Errorf("write resume request: %w", err)
+		return 0, fmt.Errorf("write resume request: %w", err)
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
 	if err != nil {
-		return fmt.Errorf("read resume response: %w", err)
+		return 0, fmt.Errorf("read resume response: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("guest resume: HTTP %d", resp.StatusCode)
+		return 0, fmt.Errorf("guest resume: HTTP %d", resp.StatusCode)
 	}
-	return nil
+	// A 200 already proves the hook ran (clock set + entropy reseeded); the skew
+	// is telemetry, so a decode hiccup must not turn a successful resume into a
+	// failure.
+	var rr struct {
+		SkewCorrectedMS int64 `json:"skew_corrected_ms"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&rr)
+	return rr.SkewCorrectedMS, nil
 }
 
 // --- request/response bodies -------------------------------------------------

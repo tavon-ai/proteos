@@ -325,9 +325,14 @@ func (d *Driver) resume(rec state.Record, key []byte, layout jailLayout) error {
 
 	// 6. resume hygiene (decision #9): clock + entropy. Best-effort — a restored
 	// VM must not be torn down because the (possibly old) guest lacks /resume.
-	if err := d.callGuestResume(ctx, rec.MachineID); err != nil {
+	// The outcome is recorded on the Record (and surfaced via Status) so the
+	// acceptance test can enforce that it actually ran.
+	hygiene, skewMS := "failed", int64(0)
+	if s, err := d.callGuestResume(ctx, rec.MachineID); err != nil {
 		slog.Warn("guest resume hook failed (clock/entropy not corrected)",
 			"machine", rec.MachineID, "err", err)
+	} else {
+		hygiene, skewMS = "ok", s
 	}
 
 	// 7. the snapshot is consumed: stale RAM must never be restored twice.
@@ -340,6 +345,8 @@ func (d *Driver) resume(rec state.Record, key []byte, layout jailLayout) error {
 		r.Boot = api.BootResumed
 		r.Reason = ""
 		r.Snapshot = state.SnapshotRecord{} // consumed
+		r.ResumeHygiene = hygiene
+		r.ResumeSkewMS = skewMS
 	})
 	return err
 }
@@ -586,6 +593,8 @@ func statusOf(rec state.Record) driver.Status {
 			FCVersion: rec.Snapshot.FCVersion,
 			MemBytes:  rec.Snapshot.MemBytes,
 		},
+		ResumeHygiene: rec.ResumeHygiene,
+		ResumeSkewMS:  rec.ResumeSkewMS,
 	}
 }
 

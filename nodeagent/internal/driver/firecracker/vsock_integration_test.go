@@ -32,7 +32,7 @@ import (
 // itself stays dependency-free — this test hand-rolls a minimal WS client over
 // the dialed conn rather than importing a WebSocket library.
 func TestGuestVsockTerminal(t *testing.T) {
-	d, _ := testDriver(t)
+	d, _, _ := testDriver(t)
 	id := "dddddddd-0000-0000-0000-000000000004"
 	ctx := context.Background()
 
