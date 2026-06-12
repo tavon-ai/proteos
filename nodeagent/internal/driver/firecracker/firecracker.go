@@ -392,7 +392,7 @@ func (d *Driver) finishStop(rec state.Record, hibernate bool) {
 	snap := state.SnapshotRecord{}
 	if hibernate {
 		ctx, cancel := context.WithTimeout(context.Background(), stopGrace)
-		memBytes, err := pauseAndSnapshot(ctx, apiClient, layout)
+		memBytes, err := pauseAndSnapshot(ctx, apiClient, layout, d.uidFor(rec))
 		cancel()
 		if err != nil {
 			slog.Error("hibernate snapshot failed; falling back to cold poweroff",

@@ -28,9 +28,17 @@ import (
 // pauseAndSnapshot pauses the running VM and writes a Full snapshot onto the
 // encrypted volume. Returns the memory-file size in bytes (for snapshot
 // metadata). The caller has the volume mounted at the jail's /state.
-func pauseAndSnapshot(ctx context.Context, api *fcAPI, layout jailLayout) (memBytes int64, err error) {
+//
+// uid is the jail uid the VMM was dropped to: the snapshot dir is created here
+// (after the boot-time chown of /state), so Firecracker — running as that uid —
+// can only write the mem/vmstate files if the dir is owned by it. Without this
+// chown the create fails with "Permission denied (os error 13)".
+func pauseAndSnapshot(ctx context.Context, api *fcAPI, layout jailLayout, uid int) (memBytes int64, err error) {
 	if err := os.MkdirAll(layout.statePath(snapDir), 0o755); err != nil {
 		return 0, fmt.Errorf("mkdir snap dir: %w", err)
+	}
+	if err := os.Chown(layout.statePath(snapDir), uid, uid); err != nil {
+		return 0, fmt.Errorf("chown snap dir to jail uid %d: %w", uid, err)
 	}
 	if err := api.do(ctx, http.MethodPatch, "/vm", vmStateBody{State: "Paused"}); err != nil {
 		return 0, fmt.Errorf("pause vm: %w", err)
