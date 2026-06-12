@@ -1,0 +1,18 @@
+---
+# Configure a Proxmox KVM host to run the ProteOS node-agent (Firecracker
+# driver), fully reproducibly. Mirrors the manual flow in:
+#   spike/firecracker/01-host-setup.sh   (packages, fc/jailer, kernel, rootfs)
+#   spike/firecracker/prod-setup.sh       (stage artifacts into /var/lib/proteos)
+#   deploy/node-agent/setup-service.sh    (build binary + install systemd unit)
+#
+# Run:  ansible-playbook -i inventory.ini site.yml \
+#         --extra-vars "proteos_agent_token=$(openssl rand -hex 32)"
+# (better: keep the token in group_vars/all.yml via ansible-vault — see README.)
+- name: Configure ProteOS node-agent KVM host
+  hosts: proteos_kvm
+  become: true
+  roles:
+    - common       # apt packages, /dev/kvm preflight, IP forwarding, dirs
+    - go           # pinned Go toolchain (to build the node-agent binary)
+    - firecracker  # pinned firecracker + jailer binaries, kernel, ext4 rootfs
+    - node_agent   # source sync, build binary, env file, systemd service

@@ -1,0 +1,117 @@
+---
+# ----------------------------------------------------------------------------
+# 1. firecracker + jailer (pinned release tarball -> /usr/local/bin)
+#    Mirrors 01-host-setup.sh step 1 + prod-setup.sh.
+# ----------------------------------------------------------------------------
+- name: Check firecracker binary
+  ansible.builtin.stat:
+    path: "{{ proteos_firecracker_bin }}"
+  register: fc_bin
+
+- name: Install pinned firecracker + jailer
+  when: not fc_bin.stat.exists
+  block:
+    - name: Download firecracker release tarball
+      ansible.builtin.get_url:
+        url: "{{ proteos_fc_release_url }}/{{ proteos_fc_version }}/firecracker-{{ proteos_fc_version }}-{{ proteos_arch }}.tgz"
+        dest: "/tmp/firecracker-{{ proteos_fc_version }}-{{ proteos_arch }}.tgz"
+        mode: "0644"
+
+    - name: Extract firecracker release
+      ansible.builtin.unarchive:
+        src: "/tmp/firecracker-{{ proteos_fc_version }}-{{ proteos_arch }}.tgz"
+        dest: /tmp
+        remote_src: true
+
+    # The tarball unpacks to release-<ver>-<arch>/{firecracker,jailer}-<ver>-<arch>.
+    - name: Install firecracker binary
+      ansible.builtin.copy:
+        src: "/tmp/release-{{ proteos_fc_version }}-{{ proteos_arch }}/firecracker-{{ proteos_fc_version }}-{{ proteos_arch }}"
+        dest: "{{ proteos_firecracker_bin }}"
+        mode: "0755"
+        remote_src: true
+
+    - name: Install jailer binary
+      ansible.builtin.copy:
+        src: "/tmp/release-{{ proteos_fc_version }}-{{ proteos_arch }}/jailer-{{ proteos_fc_version }}-{{ proteos_arch }}"
+        dest: "{{ proteos_jailer_bin }}"
+        mode: "0755"
+        remote_src: true
+
+- name: Verify firecracker version
+  ansible.builtin.command: "{{ proteos_firecracker_bin }} --version"
+  register: fc_version_out
+  changed_when: false
+
+# ----------------------------------------------------------------------------
+# 2. guest kernel (pinned CI vmlinux key -> images/vmlinux)
+#    Mirrors 01-host-setup.sh step 2, but pinned instead of resolved.
+# ----------------------------------------------------------------------------
+- name: Download pinned guest kernel
+  ansible.builtin.get_url:
+    url: "{{ proteos_ci_bucket }}/{{ proteos_kernel_key }}"
+    dest: "{{ proteos_images_dir }}/{{ proteos_kernel_ref }}"
+    mode: "0644"
+
+# ----------------------------------------------------------------------------
+# 3. rootfs: CI squashfs -> ext4 with our own SSH key.
+#    Mirrors 01-host-setup.sh step 3. The whole block is guarded by the final
+#    artifact so re-runs are a no-op once the ext4 exists.
+# ----------------------------------------------------------------------------
+- name: Check rootfs image
+  ansible.builtin.stat:
+    path: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+  register: rootfs_img
+
+- name: Build ext4 rootfs from the CI squashfs
+  when: not rootfs_img.stat.exists
+  block:
+    - name: Download Ubuntu squashfs
+      ansible.builtin.get_url:
+        url: "{{ proteos_ci_bucket }}/firecracker-ci/{{ proteos_ci_version }}/{{ proteos_arch }}/ubuntu-{{ proteos_ubuntu_version }}.squashfs"
+        dest: "{{ proteos_images_dir }}/ubuntu.squashfs"
+        mode: "0644"
+
+    - name: Unpack squashfs
+      ansible.builtin.command:
+        cmd: "unsquashfs -f -d {{ proteos_images_dir }}/squashfs-root {{ proteos_images_dir }}/ubuntu.squashfs"
+        creates: "{{ proteos_images_dir }}/squashfs-root"
+
+    # One persistent guest SSH key per host: generated once, reused on re-runs so
+    # the rootfs is stable. The matching private key stays in the images dir.
+    - name: Generate guest SSH key
+      community.crypto.openssh_keypair:
+        path: "{{ proteos_images_dir }}/ubuntu-{{ proteos_ubuntu_version }}.id_rsa"
+        type: rsa
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install authorized_keys into the rootfs tree
+      ansible.builtin.copy:
+        src: "{{ proteos_images_dir }}/ubuntu-{{ proteos_ubuntu_version }}.id_rsa.pub"
+        dest: "{{ proteos_images_dir }}/squashfs-root/root/.ssh/authorized_keys"
+        owner: root
+        group: root
+        mode: "0600"
+        remote_src: true
+
+    - name: Allocate the ext4 image file
+      ansible.builtin.command:
+        cmd: "truncate -s {{ proteos_rootfs_size }} {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+        creates: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+
+    - name: Format ext4 rootfs from the tree
+      ansible.builtin.command:
+        cmd: "mkfs.ext4 -q -d {{ proteos_images_dir }}/squashfs-root -F {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+      # mkfs has no `creates` for a pre-truncated file; safe because the whole
+      # block only runs when the rootfs image did not already exist.
+
+  always:
+    - name: Clean up rootfs build scratch
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ proteos_images_dir }}/squashfs-root"
+        - "{{ proteos_images_dir }}/ubuntu.squashfs"

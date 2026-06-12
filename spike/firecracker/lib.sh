@@ -223,3 +223,103 @@ teardown_network() {
   sudo iptables -D FORWARD -i "$egress" -o "$TAP_DEV" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
   sudo ip link del "$TAP_DEV" 2>/dev/null || true
 }
+
+# --- findings artifacts -------------------------------------------------------
+# A measuring run appends key/value/note rows to $FINDINGS_TSV with finding_set,
+# then finding_finalize converts them to a committable findings.json (machine
+# readable, carries env metadata so a number is reproducible/attributable) plus a
+# findings.md table ready to paste under README's "Findings". Used by
+# 10-measure-findings.sh (plain path) and 09-encrypted-disk.sh (encrypted path).
+FINDINGS_TSV="${FINDINGS_TSV:-$RUN_DIR/findings.tsv}"
+
+finding_reset() {
+  mkdir -p "$(dirname "$FINDINGS_TSV")"
+  : >"$FINDINGS_TSV"
+}
+
+# finding_set <key> <value> [note] — record one measurement (tab-separated, so
+# keys/values/notes must not contain tabs or newlines).
+finding_set() {
+  mkdir -p "$(dirname "$FINDINGS_TSV")"
+  printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >>"$FINDINGS_TSV"
+  ok "finding: $1 = $2"
+}
+
+# finding_finalize <json-out> <md-out> <title> — emit the artifacts from the TSV.
+finding_finalize() {
+  require python3
+  [[ -s $FINDINGS_TSV ]] || die "no findings recorded in $FINDINGS_TSV"
+  FINDINGS_TSV="$FINDINGS_TSV" FC_VERSION="$FC_VERSION" CI_VERSION="$CI_VERSION" \
+    ARTIFACT_TITLE="$3" python3 - "$1" "$2" <<'PY'
+import os, sys, json, subprocess, platform, datetime
+rows = []
+with open(os.environ["FINDINGS_TSV"]) as f:
+    for line in f:
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        p = (line.split("\t") + ["", "", ""])[:3]
+        rows.append({"key": p[0], "value": p[1], "note": p[2]})
+def sh(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, text=True).strip()
+    except Exception:
+        return ""
+env = {
+    "title": os.environ.get("ARTIFACT_TITLE", ""),
+    "recorded_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "firecracker_version": os.environ.get("FC_VERSION", ""),
+    "ci_artifacts_version": os.environ.get("CI_VERSION", ""),
+    "host_kernel": platform.release(),
+    "host_arch": platform.machine(),
+    "cpu_model": sh("grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-").strip(),
+    "cpus": os.cpu_count(),
+    "mem_total_kib": sh("awk '/MemTotal/{print $2}' /proc/meminfo"),
+}
+json.dump({"environment": env, "findings": rows}, open(sys.argv[1], "w"), indent=2)
+open(sys.argv[1], "a").write("\n")
+with open(sys.argv[2], "w") as m:
+    m.write(f"### {env['title']}\n\n")
+    m.write(f"_Recorded {env['recorded_utc']} · firecracker {env['firecracker_version']} · "
+            f"CI {env['ci_artifacts_version']} · host kernel {env['host_kernel']} {env['host_arch']} · "
+            f"{env['cpus']} vCPU._\n\n")
+    m.write("| Measurement | Value | Notes |\n| --- | --- | --- |\n")
+    for r in rows:
+        m.write(f"| {r['key']} | {r['value']} | {r['note']} |\n")
+PY
+  ok "wrote $1 + $2"
+}
+
+# --- VMGenID / CRNG-reseed probe ----------------------------------------------
+# Firecracker bumps the guest's VM Generation ID on snapshot restore; a guest
+# kernel with CONFIG_VMGENID then calls add_vmfork_randomness(), which — if the
+# CRNG was ready — reseeds and logs, verbatim:
+#     random: crng reseeded due to virtual machine fork
+# That notice is the load-bearing signal for decision #9. The trap: the kernel
+# ring buffer is part of the snapshotted RAM, so after restore it ALSO carries
+# boot-time lines like "random: crng init done" — grepping a bare "crng" is a
+# false positive. So baseline (archive + clear) right before the snapshot, then
+# match the vmfork notice (or any fresh vmgenid line) after restore.
+VMGENID_RESEED_RE='crng reseeded due to virtual machine fork'
+
+# guest_dmesg_baseline — run in the guest just before pausing/snapshotting.
+guest_dmesg_baseline() {
+  guest_ssh "dmesg > /tmp/dmesg.pre-snapshot 2>/dev/null; dmesg -C >/dev/null 2>&1; true"
+}
+
+# guest_vmgenid_probe — run in the guest after a successful resume. Prints a
+# tab-separated "<yes|no>\t<evidence>" for finding_set; never fails the caller.
+# Distinguishes "no reseed because no VMGenID device" from "device present but no
+# reseed" using the ACPI0030 generation-id device.
+guest_vmgenid_probe() {
+  local dev reseed
+  dev=$(guest_ssh "ls -d /sys/bus/acpi/devices/ACPI0030:* 2>/dev/null | head -n1" 2>/dev/null | tr -d '\r' || true)
+  reseed=$(guest_ssh "dmesg | grep -iE '$VMGENID_RESEED_RE|vmgenid' | tail -n1" 2>/dev/null | tr '\t' ' ' | tr -d '\r' || true)
+  if [[ -n $reseed ]]; then
+    printf 'yes\t%s' "$reseed"
+  elif [[ -z $dev ]]; then
+    printf 'no\tno ACPI0030 vmgenid device in guest (CONFIG_VMGENID off or not exposed by FC)'
+  else
+    printf 'no\tACPI0030 present but no reseed notice after restore — RNDADDENTROPY on resume is load-bearing'
+  fi
+}

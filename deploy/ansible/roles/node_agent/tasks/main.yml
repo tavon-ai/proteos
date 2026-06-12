@@ -1,0 +1,137 @@
+---
+# Guard against shipping the placeholder token to a host (it must match the app
+# stack, and a real deploy with CHANGE_ME would silently 401 every agent call).
+- name: Assert a real agent token was provided
+  ansible.builtin.assert:
+    that:
+      - proteos_agent_token is defined
+      - proteos_agent_token | length > 0
+      - proteos_agent_token != "CHANGE_ME"
+    fail_msg: >-
+      proteos_agent_token is unset/placeholder. Pass a real token (must equal the
+      app stack's PROTEOS_AGENT_TOKEN), e.g.
+      --extra-vars "proteos_agent_token=$(openssl rand -hex 32)" or via ansible-vault.
+
+# ----------------------------------------------------------------------------
+# Source: rsync this checkout (default) or clone from git. The node-agent is a
+# self-contained Go module (GOWORK=off, no external deps), so only nodeagent/ and
+# deploy/node-agent/ are strictly needed — we sync the repo and let the build
+# isolate the module.
+# ----------------------------------------------------------------------------
+- name: Sync node-agent source from local checkout
+  when: proteos_src_git_repo | length == 0
+  ansible.posix.synchronize:
+    src: "{{ proteos_src_local }}/"
+    dest: "{{ proteos_src_dir }}/"
+    delete: true
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=node_modules"
+      - "--exclude=spike/firecracker/work"
+      - "--exclude=*.ext4"
+      - "--exclude=*.luks"
+  register: src_sync
+
+- name: Clone node-agent source from git
+  when: proteos_src_git_repo | length > 0
+  ansible.builtin.git:
+    repo: "{{ proteos_src_git_repo }}"
+    dest: "{{ proteos_src_dir }}"
+    version: "{{ proteos_src_git_version }}"
+    force: true
+  register: src_git
+
+# ----------------------------------------------------------------------------
+# Build the binary up-front (don't rely on the service's lazy build fallback,
+# whose PATH may lack Go). Rebuild whenever the source changed or it's missing.
+# ----------------------------------------------------------------------------
+- name: Check for existing node-agent binary
+  ansible.builtin.stat:
+    path: "{{ proteos_bin_out }}"
+  register: agent_bin
+
+- name: Build node-agent binary
+  ansible.builtin.command:
+    cmd: "{{ proteos_src_dir }}/deploy/node-agent/run-node-agent.sh build"
+  environment:
+    PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
+    BIN_OUT: "{{ proteos_bin_out }}"
+  register: build_out
+  changed_when: true
+  when: >-
+    (src_sync is defined and src_sync.changed) or
+    (src_git is defined and src_git.changed) or
+    not agent_bin.stat.exists
+  notify: restart node-agent
+
+# ----------------------------------------------------------------------------
+# Config + systemd unit.
+# ----------------------------------------------------------------------------
+- name: Render node-agent env file
+  ansible.builtin.template:
+    src: node-agent.env.j2
+    dest: "{{ proteos_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"          # holds the bearer token
+  notify: restart node-agent
+
+- name: Install systemd unit
+  ansible.builtin.copy:
+    src: "{{ proteos_src_dir }}/deploy/node-agent/proteos-node-agent.service"
+    dest: /etc/systemd/system/proteos-node-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+    remote_src: true
+  notify:
+    - reload systemd
+    - restart node-agent
+
+- name: Enable and start node-agent
+  ansible.builtin.systemd:
+    name: proteos-node-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ----------------------------------------------------------------------------
+# Optional: lock :9090 to the app VM. Separate nft table so it coexists with the
+# agent's own ruleset. Only runs when explicitly enabled.
+# ----------------------------------------------------------------------------
+- name: Restrict agent port to the app VM
+  when: proteos_restrict_agent_port | bool
+  block:
+    - name: Assert app VM IP is set when restricting the port
+      ansible.builtin.assert:
+        that:
+          - proteos_app_vm_ip | length > 0
+        fail_msg: "proteos_restrict_agent_port is true but proteos_app_vm_ip is empty."
+
+    - name: Install agent-port firewall ruleset
+      ansible.builtin.template:
+        src: proteos-agent-fw.nft.j2
+        dest: "{{ proteos_config_dir }}/agent-fw.nft"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: reload agent firewall
+
+    # A oneshot unit re-applies the standalone nft table on boot, so the
+    # restriction survives reboots without editing the host's nftables.conf.
+    - name: Install agent-firewall unit
+      ansible.builtin.template:
+        src: proteos-agent-fw.service.j2
+        dest: /etc/systemd/system/proteos-agent-fw.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - reload systemd
+        - reload agent firewall
+
+    - name: Enable agent-firewall unit
+      ansible.builtin.systemd:
+        name: proteos-agent-fw
+        enabled: true
+        daemon_reload: true

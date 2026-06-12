@@ -1,0 +1,19 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# Standalone table: lock the node-agent API port to the app VM only. Its own
+# table so it coexists with the ruleset the node-agent manages for guest taps.
+# Default-accept policy here — we only DROP :{{ proteos_agent_port }} from
+# anywhere that is not the app VM (and always allow loopback).
+
+table inet proteos_agent_fw
+delete table inet proteos_agent_fw
+
+table inet proteos_agent_fw {
+  chain input {
+    type filter hook input priority -10; policy accept;
+
+    iif "lo" accept
+    tcp dport {{ proteos_agent_port }} ip saddr {{ proteos_app_vm_ip }} accept
+    tcp dport {{ proteos_agent_port }} drop
+  }
+}

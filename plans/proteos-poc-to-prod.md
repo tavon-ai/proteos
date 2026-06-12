@@ -420,13 +420,13 @@ deliverable.
 
 ### Acceptance criteria
 
-- [ ] A persistent disk is provisioned per machine and attached at boot; survives
+- [x] A persistent disk is provisioned per machine and attached at boot; survives
       stop/start and host process restarts.
-- [ ] `stop` snapshots/hibernates the VM; `start` resumes (or cold-boots) with the disk
+- [x] `stop` snapshots/hibernates the VM; `start` resumes (or cold-boots) with the disk
       reattached and state intact.
-- [ ] Machine SQLite is initialized on the disk and used by the guest agent.
-- [ ] A file written in the terminal persists across a stop/start cycle (demoable).
-- [ ] `disk_id` and snapshot metadata are recorded in Postgres.
+- [x] Machine SQLite is initialized on the disk and used by the guest agent.
+- [x] A file written in the terminal persists across a stop/start cycle (demoable).
+- [x] `disk_id` and snapshot metadata are recorded in Postgres.
 - [ ] Disk and snapshot files are encrypted at rest; snapshots are handled as secret
       material (they contain guest RAM).
 - [ ] Resume reseeds guest entropy and resyncs the guest clock (TLS, git, and token

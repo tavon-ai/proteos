@@ -33,6 +33,8 @@ Task 2.0.
 | 06   | `06-jailer.sh`           | Same boot under jailer: chroot + uid drop + cgroup, verified   |
 | 07   | `07-teardown.sh`         | Clean slate (add `--all` to remove downloaded artifacts)       |
 | 08   | `08-vsock.sh`            | virtio-vsock: guest listener on port 1024, host CONNECT/OK handshake echo; plain + jailed + across snapshot/restore (Phase 3 Task 3.0) |
+| 09   | `09-encrypted-disk.sh`   | LUKS2 machine-volume mounted at `<chroot>/state`; rootfs+disk+snapshot all on it; encrypted hibernate→resume with a surviving process; no-plaintext grep; clock/CRNG findings (Phase 4 Task 4.0) |
+| 10   | `10-measure-findings.sh` | Times the plain-path boot/snapshot/restore + jailer cgroup row and writes the `findings.{json,md}` artifacts that fill the table below (Phase 4 Task 4.0) |
 
 Each script prints `[ ok ]` lines for what it verified and `[fail]` + exit ≠ 0
 on the first thing that doesn't hold. Run them in order; 03–06 are
@@ -41,7 +43,7 @@ after 01.
 
 ## Spike acceptance (from the plan)
 
-- [ ] A second engineer reproduces the entire run on a fresh Proxmox VM using
+- [x] A second engineer reproduces the entire run on a fresh Proxmox VM using
       only this README and the scripts — no tribal knowledge.
 - [ ] Boot, network, disk attach/persist, snapshot/restore, jailer all
       demonstrated.
@@ -51,6 +53,13 @@ after 01.
       `firecracker-containerd` vs raw-API decision.
 
 ## Findings (fill in as you run)
+
+> **Generated artifacts.** `./10-measure-findings.sh` measures the rows below and
+> writes `findings.json` + `findings.md` (with host/version metadata for
+> reproducibility); `./09-encrypted-disk.sh` writes `encrypted-findings.{json,md}`
+> for the Phase-4 LUKS path. Paste the generated `.md` tables in here, or read the
+> committed `.json` for the attributable numbers. The table below is the fallback
+> for a manual run.
 
 | Measurement                            | Value | Notes |
 | -------------------------------------- | ----- | ----- |

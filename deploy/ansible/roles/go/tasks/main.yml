@@ -1,0 +1,37 @@
+---
+# Install a pinned Go toolchain from the official tarball. nodeagent/go.mod
+# requires go 1.26.4, newer than Ubuntu 24.04's apt `golang-go`, so we can't use
+# the distro package. Idempotent: skip if the right version is already present.
+- name: Check installed Go version
+  ansible.builtin.command: "{{ proteos_go_root }}/bin/go version"
+  register: go_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install pinned Go {{ proteos_go_version }}
+  when: proteos_go_version not in (go_installed.stdout | default(''))
+  block:
+    - name: Download Go tarball
+      ansible.builtin.get_url:
+        url: "{{ proteos_go_dl_url }}/go{{ proteos_go_version }}.linux-{{ proteos_go_arch }}.tar.gz"
+        dest: "/tmp/go{{ proteos_go_version }}.linux-{{ proteos_go_arch }}.tar.gz"
+        mode: "0644"
+
+    - name: Remove any previous Go install
+      ansible.builtin.file:
+        path: "{{ proteos_go_root }}"
+        state: absent
+
+    - name: Extract Go to /usr/local
+      ansible.builtin.unarchive:
+        src: "/tmp/go{{ proteos_go_version }}.linux-{{ proteos_go_arch }}.tar.gz"
+        dest: /usr/local
+        remote_src: true
+
+# Symlink so `go` is on PATH for any root shell — including the systemd-launched
+# run-node-agent.sh, whose build fallback calls `command -v go`.
+- name: Symlink go onto PATH
+  ansible.builtin.file:
+    src: "{{ proteos_go_root }}/bin/go"
+    dest: "{{ proteos_bin_dir }}/go"
+    state: link

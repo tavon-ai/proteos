@@ -1,0 +1,7 @@
+---
+# Install with: ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix       # synchronize, sysctl
+    version: ">=1.5.0"
+  - name: community.crypto    # openssh_keypair (guest rootfs key)
+    version: ">=2.0.0"

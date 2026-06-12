@@ -1,0 +1,63 @@
+---
+# Host prerequisites: the packages the spike installs (00-proxmox-vm.md) plus
+# what the node-agent preflight needs at runtime (nftables, cryptsetup, iproute2).
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - tar
+      - squashfs-tools        # unsquashfs — build the rootfs
+      - openssh-client        # ssh-keygen — inject the rootfs key
+      - acl                   # setfacl — /dev/kvm grants
+      - e2fsprogs             # mkfs.ext4 — build the rootfs
+      - cpu-checker           # kvm-ok — verify nested virt
+      - iproute2              # ip — tap devices (agent runtime)
+      - nftables              # nft — guest NAT rules (agent runtime)
+      - cryptsetup            # per-machine LUKS volumes (Phase 4)
+      - rsync                 # source sync from the control machine
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# /dev/kvm is the whole point of this host. If it is missing, nested virt is off
+# on the Proxmox side (CPU type must be `host`) — fail loudly, like the spike.
+- name: Assert /dev/kvm is present
+  ansible.builtin.stat:
+    path: /dev/kvm
+  register: kvm_dev
+
+- name: Fail if /dev/kvm is missing
+  ansible.builtin.fail:
+    msg: >-
+      /dev/kvm is missing — nested virtualization is not enabled. On the Proxmox
+      host set the VM CPU type to `host` and enable kvm_intel/kvm_amd nested=1
+      (see spike/firecracker/00-proxmox-vm.md), then re-run.
+  when: not kvm_dev.stat.exists
+
+# The node-agent NATs guest egress through the host; without IP forwarding the
+# microVMs have no internet. Persist it so it survives reboots.
+- name: Enable IPv4 forwarding (persistent)
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Create ProteOS host directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ proteos_images_dir }}", mode: "0755" }
+    - { path: "{{ proteos_data_dir }}", mode: "0755" }
+    - { path: "{{ proteos_chroot_base_dir }}", mode: "0755" }
+    # 0700: holds encrypted per-machine disk/snapshot containers. The agent also
+    # enforces this; setting it here keeps a fresh host correct before first run.
+    - { path: "{{ proteos_volumes_dir }}", mode: "0700" }
+    - { path: "{{ proteos_config_dir }}", mode: "0755" }
+    - { path: "{{ proteos_src_dir }}", mode: "0755" }

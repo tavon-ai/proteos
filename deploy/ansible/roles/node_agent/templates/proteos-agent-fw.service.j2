@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Re-applies the standalone agent-port nft table on boot.
+[Unit]
+Description=ProteOS node-agent port firewall
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ proteos_config_dir }}/agent-fw.nft
+ExecStop=/usr/sbin/nft delete table inet proteos_agent_fw
+
+[Install]
+WantedBy=multi-user.target
