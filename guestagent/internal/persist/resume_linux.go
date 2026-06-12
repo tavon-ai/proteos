@@ -4,6 +4,7 @@ package persist
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,6 +27,14 @@ func applyResume(unixNanos int64, entropy []byte) (int64, error) {
 
 	ts := unix.NsecToTimespec(unixNanos)
 	if err := unix.ClockSettime(unix.CLOCK_REALTIME, &ts); err != nil {
+		// EPERM means the process lacks CAP_SYS_TIME — the normal case in
+		// unprivileged CI/dev runs. The guest agent runs as root in the microVM,
+		// so this never fires in production; treat it as degraded (warn and
+		// continue) rather than failing the whole resume.
+		if errors.Is(err, unix.EPERM) {
+			slog.Warn("persist: clock_settime not permitted (no CAP_SYS_TIME); skipping clock resync", "skew_ms", skewMS)
+			return 0, nil
+		}
 		return 0, fmt.Errorf("clock_settime: %w", err)
 	}
 
