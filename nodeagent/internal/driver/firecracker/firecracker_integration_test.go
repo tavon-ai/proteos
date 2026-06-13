@@ -64,8 +64,13 @@ func testDriver(t *testing.T) (d *firecracker.Driver, volumesDir, chrootBaseDir 
 	if err != nil {
 		t.Fatal(err)
 	}
-	chrootBaseDir = t.TempDir()
-	volumesDir = t.TempDir() // Phase 4: per-machine LUKS containers
+	// AF_UNIX paths cap at ~108 bytes. The jailed firecracker API socket lives at
+	// <base>/firecracker/<uuid>/root/run/firecracker.socket — ~77 bytes past the
+	// base — and t.TempDir() embeds the long test name, overflowing it so the
+	// node-agent's dial fails with "connect: invalid argument". Use a short base
+	// (production uses /srv/jailer for the same reason).
+	chrootBaseDir = shortTempDir(t)
+	volumesDir = t.TempDir() // Phase 4: per-machine LUKS containers (a path, not a socket)
 	d = firecracker.New(firecracker.Config{
 		FirecrackerBin: fcBin,
 		JailerBin:      jailerBin,
@@ -282,4 +287,17 @@ func mustSymlink(t *testing.T, oldname, newname string) {
 	if err := os.Symlink(oldname, newname); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// shortTempDir is a t.TempDir() replacement with a short path, for the chroot
+// base whose nested firecracker API socket would otherwise overflow the AF_UNIX
+// 108-byte limit. Auto-removed at test end.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "pfc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
