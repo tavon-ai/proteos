@@ -5,10 +5,12 @@ package firecracker
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tavon/proteos/nodeagent/internal/state"
 )
@@ -136,9 +138,25 @@ func (d *Driver) closeVolume(machineID string, layout jailLayout) {
 			_ = run("umount", "-l", mp)
 		}
 	}
-	if fileExists(mapperPath(machineID)) {
-		_ = d.cryptsetup(nil, "close", mapperName(machineID))
+	if !fileExists(mapperPath(machineID)) {
+		return
 	}
+	// The device-mapper / loop backing can hold its last reference for a beat
+	// after the mount detaches and the VMM's fds close, so a single luksClose can
+	// still fail with "device still in use". Retry briefly rather than leak the
+	// mapper (and its loop device) — a dangling mapper blocks the next open.
+	var lastErr error
+	for i := 0; i < 30; i++ {
+		if !fileExists(mapperPath(machineID)) {
+			return
+		}
+		if lastErr = d.cryptsetup(nil, "close", mapperName(machineID)); lastErr == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	slog.Error("luksClose failed after retries; volume mapper left open",
+		"machine", machineID, "mapper", mapperName(machineID), "err", lastErr)
 }
 
 // destroyVolume closes the mapper/mount and deletes the container file.

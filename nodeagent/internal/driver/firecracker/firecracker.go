@@ -428,9 +428,18 @@ func (d *Driver) finishStop(rec state.Record, hibernate bool) {
 		}
 	}
 
-	// Kill the VMM (paused-after-snapshot or unresponsive-after-CtrlAltDel).
+	// Kill the VMM (paused-after-snapshot or unresponsive-after-CtrlAltDel) and
+	// WAIT for it to actually exit. SIGKILL is asynchronous; while the process is
+	// alive it holds /state/rootfs.ext4, data.ext4, and snap/* open, so umounting
+	// /state would only succeed lazily and the subsequent luksClose would fail
+	// with "device still in use". Waiting for the fds to drop makes teardown
+	// deterministic.
 	if processAlive(rec.Pid) {
 		_ = syscall.Kill(rec.Pid, syscall.SIGKILL)
+		deadline := time.Now().Add(stopGrace)
+		for processAlive(rec.Pid) && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	// Close the volume: umount /state + luksClose. The snapshot (if any) is now
