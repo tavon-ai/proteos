@@ -32,6 +32,31 @@ services:
     ports:
       - 5432:5432
 
+  # OpenBao: the production secrets backend (Phase 5). Single node, file storage,
+  # persistent volume. It boots SEALED — after `docker compose up` you must run
+  # deploy/app-stack/openbao-init.sh once (init + unseal + policies) and unseal
+  # again after every restart. HA + auto-unseal are Phase 12. See RUNBOOK Part D.
+  openbao:
+    image: openbao/openbao:2.5.1
+    cap_add:
+      - IPC_LOCK
+    command: server
+    environment:
+      BAO_LOCAL_CONFIG: >-
+        {"storage": {"file": {"path": "/openbao/data"}},
+         "listener": {"tcp": {"address": "0.0.0.0:8200", "tls_disable": true}},
+         "api_addr": "http://openbao:8200", "ui": false}
+    volumes:
+      - baodata:/openbao/data
+      - baologs:/openbao/logs
+    # Published so the operator can run `bao` / openbao-init.sh against it.
+    # Restrict this port to the operator at the firewall — it is NOT
+    # browser-facing and must stay unreachable from VMs (Phase 2 egress
+    # default-deny already covers the VM side).
+    ports:
+      - "8200:8200"
+    restart: unless-stopped
+
   controlplane:
     build:
       context: ../..
@@ -39,6 +64,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      openbao:
+        condition: service_started
     environment:
       PROTEOS_ADDR: ":8080"
       DATABASE_URL: "postgres://${POSTGRES_USER:-proteos}:${POSTGRES_PASSWORD:-proteos}@postgres:5432/${POSTGRES_DB:-proteos}?sslmode=disable"
@@ -48,8 +75,17 @@ services:
       PROTEOS_BASE_URL: ${PROTEOS_BASE_URL:?set to e.g. http://APP_VM_IP:8080}
       PROTEOS_COOKIE_SECURE: ${PROTEOS_COOKIE_SECURE:-false}
 
-      # Phase-1 file-backed secrets store, persisted on the data volume below.
+      # Secrets backend. Default "file" so a fresh stack serves before OpenBao is
+      # initialized; switch to "openbao" in .env after running openbao-init.sh
+      # (which emits PROTEOS_OPENBAO_ROLE_ID + the secret_id file). RUNBOOK Part D.
+      PROTEOS_SECRETS_BACKEND: ${PROTEOS_SECRETS_BACKEND:-file}
       PROTEOS_SECRETS_FILE: /var/lib/proteos/secrets.json
+      PROTEOS_OPENBAO_ADDR: ${PROTEOS_OPENBAO_ADDR:-http://openbao:8200}
+      PROTEOS_OPENBAO_MOUNT: ${PROTEOS_OPENBAO_MOUNT:-secret}
+      PROTEOS_OPENBAO_ROLE_ID: ${PROTEOS_OPENBAO_ROLE_ID:-}
+      # The AppRole secret_id is read from a file (kept out of the env/process
+      # list). Put it at deploy/app-stack/openbao-secret-id (mounted below).
+      PROTEOS_OPENBAO_SECRET_ID_FILE: /run/secrets/openbao-secret-id
 
       # Native node-agent on the KVM host. Token must match the agent's.
       PROTEOS_NODE_AGENT_URL: ${PROTEOS_NODE_AGENT_URL:?set to http://KVM_HOST_IP:9090}
@@ -70,6 +106,10 @@ services:
       ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
     volumes:
       - cpdata:/var/lib/proteos
+      # AppRole secret_id, written by openbao-init.sh. Read-only, off the env.
+      # The file may not exist until you run the init script; with the default
+      # file backend the control plane never reads it.
+      - ./openbao-secret-id:/run/secrets/openbao-secret-id:ro
     # If you instead co-locate this stack on the SAME host as the node-agent,
     # set PROTEOS_NODE_AGENT_URL=http://host.docker.internal:9090 and uncomment:
     # extra_hosts:
@@ -89,3 +129,5 @@ services:
 volumes:
   pgdata:
   cpdata:
+  baodata:
+  baologs:

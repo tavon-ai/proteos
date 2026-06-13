@@ -248,6 +248,86 @@ Tick each row of the Phase 2 checklist in `plans/proteos-poc-to-prod.md`.
 
 ---
 
+## Part D — OpenBao secrets (Phase 5)
+
+The app stack ships an `openbao` service (file storage, persistent `baodata`
+volume). It is the production secrets backend; the dev `file` backend stays the
+default so a fresh stack serves logins immediately. OpenBao boots **sealed** and
+re-seals on every restart — manual unseal is an accepted Phase 5–11 cost (HA +
+auto-unseal are Phase 12).
+
+### D1. One-time init
+
+On the app VM, with the `bao` CLI and `jq` installed (`BAO_ADDR` = the published
+openbao port):
+
+```bash
+cd deploy/app-stack
+touch openbao-secret-id                       # the controlplane bind-mounts it
+docker compose up -d openbao                   # bring OpenBao up (it boots sealed)
+export BAO_ADDR=http://127.0.0.1:8200
+./openbao-init.sh
+```
+
+`openbao-init.sh` is idempotent. It: inits (1 key / threshold 1, saved to
+`openbao-init.json`), unseals, logs in, enables KV v2 at `secret/`, a file audit
+device (`/openbao/logs/audit.log` on the `baologs` volume), and AppRole; writes
+policy `cp-base`, the `proteos-user` token role, and the `proteos-cp` AppRole;
+then emits `PROTEOS_OPENBAO_ROLE_ID` into `.env` and the AppRole secret_id into
+`./openbao-secret-id`.
+
+> **Keep `openbao-init.json` and `openbao-secret-id` safe and uncommitted** (both
+> are gitignored). `openbao-init.json` holds the unseal key + root token.
+
+### D2. Switch the control plane to OpenBao
+
+```bash
+# in deploy/app-stack/.env
+PROTEOS_SECRETS_BACKEND=openbao
+# (PROTEOS_OPENBAO_ROLE_ID was filled in by the init script)
+
+docker compose up -d controlplane
+docker compose logs controlplane | grep 'secrets backend'   # → backend=openbao
+```
+
+### D3. Migrate an existing dev FileStore (optional)
+
+If you ran on the `file` backend and have `secrets.json` on the `cpdata` volume,
+copy it into OpenBao once:
+
+```bash
+docker compose exec controlplane \
+  /usr/local/bin/controlplane -migrate-secrets /var/lib/proteos/secrets.json
+```
+
+### D4. After a restart — unseal
+
+`docker compose restart openbao` (or a host reboot) leaves OpenBao sealed; the
+control plane's secret reads fail until you unseal:
+
+```bash
+cd deploy/app-stack
+BAO_ADDR=http://127.0.0.1:8200 \
+  bao operator unseal "$(jq -r '.unseal_keys_b64[0]' openbao-init.json)"
+```
+
+### D5. Verify + backup
+
+```bash
+# A key written via the UI lands under the user's path (operator view):
+BAO_TOKEN=$(jq -r .root_token openbao-init.json) \
+  bao kv get secret/users/<user-uuid>/providers/claude
+
+# Audit log is being written:
+docker compose exec openbao cat /openbao/logs/audit.log | tail
+```
+
+Back up the `baodata` volume (e.g. `docker run --rm -v proteos_baodata:/d -v
+"$PWD":/b alpine tar czf /b/baodata.tgz -C /d .`) alongside `openbao-init.json`;
+restoring one without the other is useless.
+
+---
+
 ## Reproducibility notes
 
 - **Pinned versions** live in `spike/firecracker/env.sh` + the committed

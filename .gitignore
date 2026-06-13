@@ -15,6 +15,11 @@ workspace/containers/
 controlplane/.data/
 controlplane/controlplane
 
+# OpenBao operator secrets (Phase 5) — never commit. openbao-init.sh writes
+# the AppRole secret_id here and the unseal/root material to openbao-init.json.
+deploy/app-stack/openbao-secret-id
+deploy/app-stack/openbao-init.json
+
 # Web build output / deps
 web/node_modules/
 web/dist/
