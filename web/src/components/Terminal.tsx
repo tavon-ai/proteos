@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import {
+  agentURL,
   connectTerminal,
   terminalURL,
   type TerminalSocket,
@@ -17,7 +18,10 @@ const RESIZE_DEBOUNCE_MS = 100;
 // viewport changes are fitted and a debounced resize control frame is sent. The
 // underlying socket reconnects with backoff and resets the terminal before each
 // scrollback replay (see terminalSocket).
-export function Terminal({ machineID }: { machineID: string }) {
+//
+// With a `provider`, it connects to that provider's agent session
+// (/gw/agent/{provider}) instead of a plain shell.
+export function Terminal({ machineID, provider }: { machineID: string; provider?: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<TerminalStatus>({ kind: "connecting" });
 
@@ -57,7 +61,8 @@ export function Terminal({ machineID }: { machineID: string }) {
       /* ignore */
     }
 
-    socket = connectTerminal(terminalURL(machineID), {
+    const url = provider ? agentURL(machineID, provider) : terminalURL(machineID);
+    socket = connectTerminal(url, {
       onData: (bytes) => term.write(bytes),
       onReset: () => term.reset(),
       onStatus: setStatus,
@@ -75,7 +80,7 @@ export function Terminal({ machineID }: { machineID: string }) {
       socket?.dispose();
       term.dispose();
     };
-  }, [machineID]);
+  }, [machineID, provider]);
 
   return (
     <div className="terminal-wrap">

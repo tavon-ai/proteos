@@ -64,6 +64,40 @@ export function useMachineMutations() {
   return { create, start, stop };
 }
 
+// providersKey is the query cache key for the provider registry + key_set view.
+const providersKey = ["providers"] as const;
+
+// useProviders loads the provider registry with the caller's key_set status.
+export function useProviders() {
+  return useQuery({
+    queryKey: providersKey,
+    queryFn: api.listProviders,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useProviderMutations exposes set/delete of a provider's write-only key. Both
+// invalidate the providers query so key_set re-renders from the server (the key
+// itself is never held client-side).
+export function useProviderMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: providersKey });
+
+  const setKey = useMutation({
+    mutationFn: ({ key, apiKey }: { key: string; apiKey: string }) =>
+      api.setProviderKey(key, apiKey),
+    onSuccess: invalidate,
+  });
+  const deleteKey = useMutation({
+    mutationFn: (key: string) => api.deleteProviderKey(key),
+    onSuccess: invalidate,
+  });
+  return { setKey, deleteKey };
+}
+
 // useMachineEvents subscribes to the SSE stream. It writes live machine state
 // into the query cache (so useMachine stays current without polling) and keeps
 // a rolling event log for display. The browser EventSource reconnects on its

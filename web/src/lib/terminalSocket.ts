@@ -88,6 +88,12 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
         case 4002:
           handlers.onStatus({ kind: "closed", reason: "Machine stopped." });
           return;
+        case 4003:
+          handlers.onStatus({
+            kind: "closed",
+            reason: "Provider unavailable — set its API key and try again.",
+          });
+          return;
       }
       attempt++;
       if (!everOpened && attempt > MAX_FAILED_OPENS) {
@@ -141,4 +147,13 @@ export function terminalURL(machineID: string, session = "main"): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const params = new URLSearchParams({ machine: machineID, session });
   return `${proto}://${window.location.host}/gw/terminal?${params.toString()}`;
+}
+
+// agentURL builds the gateway WebSocket URL for a provider's agent session
+// (/gw/agent/{provider}). The guest spawns the provider's injected launch
+// command instead of a shell (Phase 5 decision #9).
+export function agentURL(machineID: string, provider: string): string {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const params = new URLSearchParams({ machine: machineID });
+  return `${proto}://${window.location.host}/gw/agent/${encodeURIComponent(provider)}?${params.toString()}`;
 }

@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import type { Me } from "../api/client";
 import { useLogout } from "../api/hooks";
 import { MachineCard } from "../components/MachineCard";
+import { ProvidersPanel } from "../components/ProvidersPanel";
 
 export function Dashboard({ me }: { me: Me }) {
   const navigate = useNavigate();
@@ -32,6 +33,7 @@ export function Dashboard({ me }: { me: Me }) {
 
       <main className="content">
         <MachineCard initialMachine={me.machine} />
+        <ProvidersPanel />
       </main>
     </div>
   );

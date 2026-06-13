@@ -87,6 +87,15 @@ export interface MachineEventData {
   event: MachineEvent;
 }
 
+// Provider is one row of GET /api/providers. The API never returns key material;
+// key_set only reports whether the user has stored a key (Phase 5 decision #5).
+export interface Provider {
+  key: string;
+  display_name: string;
+  enabled: boolean;
+  key_set: boolean;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -132,6 +141,18 @@ export const api = {
   createMachine: () => request<MachineSummary>("/api/machine", { method: "POST" }),
   startMachine: () => request<MachineSummary>("/api/machine/start", { method: "POST" }),
   stopMachine: () => request<MachineSummary>("/api/machine/stop", { method: "POST" }),
+
+  // Providers + write-only secret keys (Phase 5). setProviderKey/deleteProviderKey
+  // return 204; the key is never echoed back.
+  listProviders: () => request<Provider[]>("/api/providers"),
+  setProviderKey: (key: string, apiKey: string) =>
+    request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  deleteProviderKey: (key: string) =>
+    request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: "DELETE" }),
 };
 
 // SSE endpoint for live machine state; consumed by useMachineEvents via the

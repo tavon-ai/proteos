@@ -332,3 +332,94 @@ body {
   background: #3b1d1d;
   color: #fca5a5;
 }
+
+/* --- Phase 5: providers panel + agent launch ------------------------------- */
+
+/* Primary action accent (Launch Claude Code) — distinguishes the agent launch
+   from the neutral terminal/stop buttons. */
+.btn-primary {
+  background: #3fb950;
+}
+
+.launch-hint {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+}
+
+.providers-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: min(560px, 100%);
+  text-align: left;
+  margin-top: 1.5rem;
+}
+
+.providers-panel h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+}
+
+.provider-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.provider-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.provider-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.provider-name {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.provider-row-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.provider-key-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.provider-key-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+/* The provider key form buttons sit inline (no top margin like the default .btn). */
+.provider-key-form .btn,
+.provider-row-actions .btn {
+  margin-top: 0;
+}
+
+.error-inline {
+  color: var(--error);
+  font-size: 0.85rem;
+}

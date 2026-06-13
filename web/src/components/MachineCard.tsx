@@ -1,6 +1,11 @@
 import { useState } from "react";
 import type { MachineState, MachineSummary } from "../api/client";
-import { useMachine, useMachineEvents, useMachineMutations } from "../api/hooks";
+import {
+  useMachine,
+  useMachineEvents,
+  useMachineMutations,
+  useProviders,
+} from "../api/hooks";
 import { TerminalPanel } from "./TerminalPanel";
 
 // Transitional states show a spinner and disable action buttons. hibernating is
@@ -25,7 +30,12 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
   const { data: machine } = useMachine(initialMachine);
   const events = useMachineEvents();
   const { create, start, stop } = useMachineMutations();
+  const { data: providers } = useProviders();
   const [terminalOpen, setTerminalOpen] = useState(false);
+  // The provider whose agent session is open (e.g. "claude"), or null.
+  const [agentProvider, setAgentProvider] = useState<string | null>(null);
+
+  const claude = providers?.find((p) => p.key === "claude");
 
   if (!machine) {
     return (
@@ -90,6 +100,11 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
             <button className="btn" onClick={() => setTerminalOpen(true)}>
               Open terminal
             </button>
+            {claude?.enabled && claude.key_set && (
+              <button className="btn btn-primary" onClick={() => setAgentProvider("claude")}>
+                Launch Claude Code
+              </button>
+            )}
             <button className="btn" onClick={() => stop.mutate()} disabled={busy}>
               Stop
             </button>
@@ -102,10 +117,25 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
         )}
       </div>
 
+      {machine.state === "running" && claude?.enabled && !claude.key_set && (
+        <p className="muted launch-hint">
+          Set a {claude.display_name} API key in <strong>AI providers</strong> below to
+          launch it here.
+        </p>
+      )}
+
       <EventLog events={events} />
 
       {terminalOpen && machine.state === "running" && (
         <TerminalPanel machineID={machine.id} onClose={() => setTerminalOpen(false)} />
+      )}
+      {agentProvider && machine.state === "running" && (
+        <TerminalPanel
+          machineID={machine.id}
+          provider={agentProvider}
+          title={claude?.display_name ?? agentProvider}
+          onClose={() => setAgentProvider(null)}
+        />
       )}
     </section>
   );
