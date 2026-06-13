@@ -32,11 +32,23 @@ type Poller struct {
 	q      *store.Queries
 	nodes  NodeClient
 	broker *Broker
+
+	// onRunning, if set, is called (non-blocking) after a machine reaches
+	// running, with the owner's and machine's canonical UUIDs. Phase 5 wires it
+	// to the secret injector so the provider keys are pushed on every start and
+	// resume. It must not block or fail the lifecycle (decision #7).
+	onRunning func(userID, machineID string)
 }
 
 // NewPoller builds a poller. broker may be nil.
 func NewPoller(pool *pgxpool.Pool, nodes NodeClient, broker *Broker) *Poller {
 	return &Poller{pool: pool, q: store.New(pool), nodes: nodes, broker: broker}
+}
+
+// SetOnRunning registers the post-running hook (Phase 5 secret injection). Pass
+// nil to disable. The callback must return promptly — do the work async.
+func (p *Poller) SetOnRunning(fn func(userID, machineID string)) {
+	p.onRunning = fn
 }
 
 // Run drives the poller until ctx is cancelled: a fast tick advances
@@ -196,6 +208,13 @@ func (p *Poller) toRunning(ctx context.Context, m store.Machine, from State, st 
 	}
 
 	p.transition(ctx, m, from, StateRunning, ActorPoller, EventTransition, bootPayload(st), nil)
+
+	// Push the user's provider secrets into the now-running guest (every start
+	// and resume). Non-blocking and best-effort: the lifecycle never waits on or
+	// fails because of injection.
+	if p.onRunning != nil {
+		p.onRunning(UUIDString(m.UserID), UUIDString(m.ID))
+	}
 }
 
 // toError moves a machine to the error state with a reason, recorded in both

@@ -33,6 +33,13 @@ type Config struct {
 	// PersistDevice (PROTEOS_GUEST_PERSIST_DEV) is the block device to mount at
 	// the persist mount point in disk mode. Default /dev/vdb.
 	PersistDevice string
+
+	// --- Phase 5: secret injection ------------------------------------------
+
+	// EnvDir (PROTEOS_GUEST_ENV_DIR) is the directory holding injected provider
+	// env files. It must be tmpfs (never the rootfs image or persistent disk);
+	// default /run/proteos/env.
+	EnvDir string
 }
 
 // Load reads and validates configuration from the environment.
@@ -43,6 +50,7 @@ func Load() (*Config, error) {
 		ScrollbackKiB: getenvInt("PROTEOS_GUEST_SCROLLBACK_KIB", 256),
 		PersistDir:    os.Getenv("PROTEOS_GUEST_PERSIST"),
 		PersistDevice: getenv("PROTEOS_GUEST_PERSIST_DEV", "/dev/vdb"),
+		EnvDir:        getenv("PROTEOS_GUEST_ENV_DIR", "/run/proteos/env"),
 	}
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)

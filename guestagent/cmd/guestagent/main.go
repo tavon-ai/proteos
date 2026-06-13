@@ -19,6 +19,7 @@ import (
 	"github.com/tavon/proteos/guestagent/internal/config"
 	"github.com/tavon/proteos/guestagent/internal/listen"
 	"github.com/tavon/proteos/guestagent/internal/persist"
+	"github.com/tavon/proteos/guestagent/internal/secrets"
 	"github.com/tavon/proteos/guestagent/internal/server"
 	"github.com/tavon/proteos/guestagent/internal/term"
 )
@@ -66,7 +67,12 @@ func run() error {
 	})
 	defer mgr.Shutdown()
 
-	srv := server.New(mgr, p)
+	sec, err := secrets.New(cfg.EnvDir)
+	if err != nil {
+		return err
+	}
+
+	srv := server.New(mgr, p, sec)
 	httpServer := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

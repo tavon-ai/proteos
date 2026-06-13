@@ -10,6 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuditLog struct {
+	ID       int64              `json:"id"`
+	Ts       pgtype.Timestamptz `json:"ts"`
+	UserID   pgtype.UUID        `json:"user_id"`
+	Actor    string             `json:"actor"`
+	Action   string             `json:"action"`
+	Target   string             `json:"target"`
+	Metadata []byte             `json:"metadata"`
+}
+
 type Disk struct {
 	ID        pgtype.UUID        `json:"id"`
 	MachineID pgtype.UUID        `json:"machine_id"`
@@ -60,6 +70,15 @@ type MachineEvent struct {
 	Actor     string             `json:"actor"`
 	Payload   []byte             `json:"payload"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Provider struct {
+	Key           string             `json:"key"`
+	DisplayName   string             `json:"display_name"`
+	LaunchCommand string             `json:"launch_command"`
+	SecretEnv     []byte             `json:"secret_env"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

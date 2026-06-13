@@ -56,10 +56,11 @@ type Frame struct {
 // WebSocket close codes the gateway sends to the browser. 1000/1011 are the
 // RFC6455 standard codes; the 4000-range is application-private.
 const (
-	CloseNormal         = 1000 // clean shutdown (shell exited, or client closed)
-	CloseSessionRevoked = 4001 // the user's session was revoked/logged out
-	CloseMachineStopped = 4002 // the machine stopped out from under the session
-	CloseInternal       = 1011 // unexpected server-side failure
+	CloseNormal              = 1000 // clean shutdown (shell exited, or client closed)
+	CloseSessionRevoked      = 4001 // the user's session was revoked/logged out
+	CloseMachineStopped      = 4002 // the machine stopped out from under the session
+	CloseProviderUnavailable = 4003 // an agent session asked for an un-injected provider
+	CloseInternal            = 1011 // unexpected server-side failure
 )
 
 // DefaultSession is the session name attached to when ?session= is absent.
@@ -75,6 +76,45 @@ const (
 	RouteResume = "PUT /resume"
 	RouteInfo   = "GET /info"
 )
+
+// Phase 5 secret injection. The control plane pushes provider definitions
+// (launch command + env) over the private transport; the guest stores them in
+// memory and as 0600 tmpfs env files. Replace-all, idempotent.
+//
+//	PUT /secrets  {SecretsRequest}  → 204
+const RouteSecrets = "PUT /secrets"
+
+// RouteSecretsPath is the path portion of RouteSecrets, used by the control
+// plane to build the PUT URL over the guest tunnel.
+const RouteSecretsPath = "/secrets"
+
+// AgentSessionPrefix marks a terminal session that should spawn a provider's
+// injected launch command instead of the login shell. The provider key is the
+// remainder, e.g. session "agent-claude" → provider "claude".
+const AgentSessionPrefix = "agent-"
+
+// ProviderDef is one provider's injected launch definition: the command to run
+// for an agent session and the environment (secret) it runs with. Env values
+// are sensitive (API keys) and must never be logged.
+type ProviderDef struct {
+	Command string            `json:"command"`
+	Env     map[string]string `json:"env"`
+}
+
+// SecretsRequest is the body of PUT /secrets: the full set of provider
+// definitions to install, replacing any previously injected set.
+type SecretsRequest struct {
+	Providers map[string]ProviderDef `json:"providers"`
+}
+
+// ProviderKeyFromSession returns the provider key for an agent session name, and
+// whether name was an agent session at all.
+func ProviderKeyFromSession(session string) (key string, ok bool) {
+	if len(session) > len(AgentSessionPrefix) && session[:len(AgentSessionPrefix)] == AgentSessionPrefix {
+		return session[len(AgentSessionPrefix):], true
+	}
+	return "", false
+}
 
 // Persistence modes reported in Info.Persist.
 const (

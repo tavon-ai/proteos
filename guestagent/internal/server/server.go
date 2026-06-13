@@ -6,8 +6,10 @@
 // It is reached only over the per-VM private transport (vsock inside the VM /
 // a 0600 unix socket in dev), which the node-agent alone can connect to. There
 // is therefore no Origin check and no app-layer credential here this phase;
-// per-machine identity (OpenBao) is added in Phase 5. The WebSocket Origin
-// check that protects the browser leg lives in the control-plane gateway.
+// per-machine identity (OpenBao) is deferred to Phase 7 (Phase 5 decision #8:
+// it authenticates guest-initiated calls, of which Phase 5 has none — its
+// secret injection is a control-plane push). The WebSocket Origin check that
+// protects the browser leg lives in the control-plane gateway.
 package server
 
 import (
@@ -17,6 +19,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -44,31 +47,69 @@ type Persister interface {
 	Info() guestwire.Info
 }
 
+// SecretStore is the provider-injection surface the server exposes over
+// PUT /secrets (Phase 5). Implemented by *secrets.Store; nil in tests/builds
+// that run without injection, in which case PUT /secrets reports 503 and agent
+// sessions close with CloseProviderUnavailable.
+type SecretStore interface {
+	// Replace installs providers as the complete injected set.
+	Replace(providers map[string]guestwire.ProviderDef) error
+	// Get returns the injected definition for a provider key.
+	Get(key string) (guestwire.ProviderDef, bool)
+	// EnvList returns a provider's environment as KEY=VALUE pairs.
+	EnvList(key string) ([]string, bool)
+}
+
 // Server bridges terminal WebSockets to PTY sessions managed by mgr, and serves
-// the Phase 4 control surface (/resume, /info) backed by persist.
+// the Phase 4 control surface (/resume, /info) backed by persist plus the Phase
+// 5 secret-injection surface (/secrets) backed by sec.
 type Server struct {
 	mgr     *term.Manager
 	persist Persister
+	sec     SecretStore
 }
 
-// New returns a Server backed by mgr and (optionally) persist. A nil persist
-// disables the /resume and /info routes (they report 503).
-func New(mgr *term.Manager, persist Persister) *Server {
-	return &Server{mgr: mgr, persist: persist}
+// New returns a Server backed by mgr and (optionally) persist + sec. A nil
+// persist disables /resume and /info (503); a nil sec disables /secrets (503)
+// and makes every agent session close with CloseProviderUnavailable.
+func New(mgr *term.Manager, persist Persister, sec SecretStore) *Server {
+	return &Server{mgr: mgr, persist: persist, sec: sec}
 }
 
 // Handler builds the HTTP handler. /terminal serves sessions; /resume + /info
-// are the Phase 4 control surface; /healthz is a trivial liveness probe.
+// are the Phase 4 control surface; /secrets is the Phase 5 injection surface;
+// /healthz is a trivial liveness probe.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /terminal", s.handleTerminal)
 	mux.HandleFunc(guestwire.RouteResume, s.handleResume)
 	mux.HandleFunc(guestwire.RouteInfo, s.handleInfo)
+	mux.HandleFunc(guestwire.RouteSecrets, s.handleSecrets)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
 	return mux
+}
+
+// handleSecrets installs the pushed provider set (replace-all). The body's
+// secret values are never logged.
+func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
+	if s.sec == nil {
+		http.Error(w, "secret injection disabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req guestwire.SecretsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := s.sec.Replace(req.Providers); err != nil {
+		slog.Error("install secrets failed", "err", err)
+		http.Error(w, "install failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleResume applies the host-provided clock + entropy after a snapshot
@@ -140,14 +181,47 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// errProviderUnavailable is returned by sessionFor when an agent session names a
+// provider that has not been injected (or has no launch command). It maps to a
+// CloseProviderUnavailable WebSocket close.
+var errProviderUnavailable = errors.New("provider unavailable")
+
+// sessionFor resolves a session name to a live Session. Plain names spawn the
+// login shell (Manager.Get); names with the agent- prefix spawn the named
+// provider's injected launch command with its secret env overlay. An agent
+// session for an un-injected provider returns errProviderUnavailable.
+func (s *Server) sessionFor(name string) (*term.Session, error) {
+	key, isAgent := guestwire.ProviderKeyFromSession(name)
+	if !isAgent {
+		return s.mgr.Get(name)
+	}
+	if s.sec == nil {
+		return nil, errProviderUnavailable
+	}
+	def, ok := s.sec.Get(key)
+	if !ok {
+		return nil, errProviderUnavailable
+	}
+	command := strings.Fields(def.Command)
+	if len(command) == 0 {
+		return nil, errProviderUnavailable
+	}
+	env, _ := s.sec.EnvList(key)
+	return s.mgr.GetAgent(name, command, env)
+}
+
 // serve runs one attachment: hello → scrollback replay → live I/O until the
 // shell exits, the client disconnects, or an error occurs.
 func (s *Server) serve(ctx context.Context, c *websocket.Conn, sessionName string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	sess, err := s.mgr.Get(sessionName)
+	sess, err := s.sessionFor(sessionName)
 	if err != nil {
+		if errors.Is(err, errProviderUnavailable) {
+			c.Close(websocket.StatusCode(guestwire.CloseProviderUnavailable), "provider unavailable")
+			return err
+		}
 		c.Close(websocket.StatusInternalError, "spawn failed")
 		return err
 	}

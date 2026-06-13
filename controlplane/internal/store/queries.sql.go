@@ -203,6 +203,24 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 	return i, err
 }
 
+const getProvider = `-- name: GetProvider :one
+SELECT key, display_name, launch_command, secret_env, enabled, created_at FROM providers WHERE key = $1
+`
+
+func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error) {
+	row := q.db.QueryRow(ctx, getProvider, key)
+	var i Provider
+	err := row.Scan(
+		&i.Key,
+		&i.DisplayName,
+		&i.LaunchCommand,
+		&i.SecretEnv,
+		&i.Enabled,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
@@ -275,6 +293,42 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.AvatarUrl,
 		&i.Status,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertAuditLog = `-- name: InsertAuditLog :one
+INSERT INTO audit_log (user_id, actor, action, target, metadata)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, ts, user_id, actor, action, target, metadata
+`
+
+type InsertAuditLogParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
+	Actor    string      `json:"actor"`
+	Action   string      `json:"action"`
+	Target   string      `json:"target"`
+	Metadata []byte      `json:"metadata"`
+}
+
+// Append one audit row. user_id may be NULL for system actors (the injector).
+func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error) {
+	row := q.db.QueryRow(ctx, insertAuditLog,
+		arg.UserID,
+		arg.Actor,
+		arg.Action,
+		arg.Target,
+		arg.Metadata,
+	)
+	var i AuditLog
+	err := row.Scan(
+		&i.ID,
+		&i.Ts,
+		&i.UserID,
+		&i.Actor,
+		&i.Action,
+		&i.Target,
+		&i.Metadata,
 	)
 	return i, err
 }
@@ -437,6 +491,38 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 			&i.UpdatedAt,
 			&i.DiskID,
 			&i.Boot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProviders = `-- name: ListProviders :many
+SELECT key, display_name, launch_command, secret_env, enabled, created_at FROM providers ORDER BY key
+`
+
+// The provider registry, ordered for stable API output.
+func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
+	rows, err := q.db.Query(ctx, listProviders)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Provider{}
+	for rows.Next() {
+		var i Provider
+		if err := rows.Scan(
+			&i.Key,
+			&i.DisplayName,
+			&i.LaunchCommand,
+			&i.SecretEnv,
+			&i.Enabled,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

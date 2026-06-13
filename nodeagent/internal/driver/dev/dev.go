@@ -82,6 +82,14 @@ func (d *DevDriver) persistDir(machineID string) string {
 	return filepath.Join(d.store.MachineDir(machineID), "persist")
 }
 
+// envDir is the per-machine directory standing in for the guest's tmpfs secret
+// env dir (/run/proteos/env in a real VM). Handed to the guest via
+// PROTEOS_GUEST_ENV_DIR; the guest prunes it on each boot so it behaves like
+// tmpfs even though it lives under the machine dir in dev.
+func (d *DevDriver) envDir(machineID string) string {
+	return filepath.Join(d.store.MachineDir(machineID), "env")
+}
+
 // EnsureRunning is idempotent: a machine already booting/running is a no-op that
 // returns its handle; a stopped/error/dead machine is (re)booted, reusing its
 // previously allocated network resources. A stopped machine that carries a
@@ -217,6 +225,7 @@ func (d *DevDriver) buildCmd(machineID string) (*exec.Cmd, error) {
 		"PROTEOS_GUEST_LISTEN=unix:"+sock,
 		"PROTEOS_GUEST_SHELL=/bin/bash",
 		"PROTEOS_GUEST_PERSIST="+persist,
+		"PROTEOS_GUEST_ENV_DIR="+d.envDir(machineID),
 	)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd, nil

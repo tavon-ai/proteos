@@ -10,13 +10,16 @@ import (
 	"os"
 	"time"
 
+	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/auth"
 	"github.com/tavon/proteos/controlplane/internal/config"
 	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
+	"github.com/tavon/proteos/controlplane/internal/injector"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -25,14 +28,54 @@ import (
 func main() {
 	migrateFlag := flag.Bool("migrate", false, "apply database migrations on startup, then serve")
 	migrateOnlyFlag := flag.Bool("migrate-only", false, "apply database migrations and exit (CI / init container)")
+	migrateSecretsFlag := flag.String("migrate-secrets", "", "one-shot: copy a dev FileStore JSON dump into the configured backend, then exit")
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	if *migrateSecretsFlag != "" {
+		if err := migrateSecrets(*migrateSecretsFlag); err != nil {
+			slog.Error("migrate-secrets failed", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if err := run(*migrateFlag, *migrateOnlyFlag); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// migrateSecrets copies a dev FileStore JSON dump into the configured backend
+// (typically openbao) and exits. The backend comes from the usual env config.
+func migrateSecrets(dumpPath string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	dst, err := openSecrets(cfg)
+	if err != nil {
+		return err
+	}
+	n, err := secrets.MigrateFromFile(dumpPath, dst)
+	if err != nil {
+		return err
+	}
+	slog.Info("migrated secrets", "paths", n, "backend", cfg.SecretsBackend)
+	return nil
+}
+
+// openSecrets builds the Store selected by config.
+func openSecrets(cfg *config.Config) (secrets.Store, error) {
+	return secrets.Open(secrets.BackendConfig{
+		Backend:      cfg.SecretsBackend,
+		File:         cfg.SecretsFile,
+		OpenBaoAddr:  cfg.OpenBaoAddr,
+		OpenBaoMount: cfg.OpenBaoMount,
+		RoleID:       cfg.OpenBaoRoleID,
+		SecretIDFile: cfg.OpenBaoSecretIDFile,
+	})
 }
 
 func run(migrate, migrateOnly bool) error {
@@ -60,10 +103,11 @@ func run(migrate, migrateOnly bool) error {
 	defer pool.Close()
 	q := store.New(pool)
 
-	sec, err := secrets.NewFileStore(cfg.SecretsFile)
+	sec, err := openSecrets(cfg)
 	if err != nil {
 		return err
 	}
+	slog.Info("secrets backend", "backend", cfg.SecretsBackend)
 
 	sessions := session.NewManager(q, cfg.SessionTTL)
 
@@ -93,6 +137,15 @@ func run(migrate, migrateOnly bool) error {
 		RootfsRef: cfg.RootfsRef,
 	})
 	poller := machine.NewPoller(pool, nodes, broker)
+
+	// Phase 5: the secret injector pushes provider keys into the guest. The
+	// poller fires it on every * → running transition (start and resume); the
+	// agent gateway route fires it again, idempotently, before a launch.
+	providerRegistry := providers.NewRegistry(q)
+	auditRec := audit.NewRecorder(q)
+	inject := injector.New(nodes, providerRegistry, sec, auditRec)
+	poller.SetOnRunning(inject.InjectAsync)
+
 	go poller.Run(ctx)
 
 	// Phase 3: the terminal gateway proxies the browser WS to each machine's
@@ -123,12 +176,16 @@ func run(migrate, migrateOnly bool) error {
 	}
 
 	srv := &httpapi.Server{
-		Sessions: sessions,
-		Auth:     authHandler,
-		Machines: machineSvc,
-		Broker:   broker,
-		Queries:  q,
-		Gateway:  gw,
+		Sessions:  sessions,
+		Auth:      authHandler,
+		Machines:  machineSvc,
+		Broker:    broker,
+		Queries:   q,
+		Gateway:   gw,
+		Providers: providerRegistry,
+		Secrets:   sec,
+		Audit:     auditRec,
+		Injector:  inject,
 	}
 
 	httpServer := &http.Server{

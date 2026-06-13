@@ -36,6 +36,13 @@ func UserGitHubPath(userID string) string {
 	return fmt.Sprintf("secret/users/%s/github", userID)
 }
 
+// UserProviderPath returns the canonical secret path for a user's API key for
+// the given provider (e.g. claude). The fields under this path are named by the
+// provider registry's secret_env mapping (e.g. {"api_key": "sk-..."}).
+func UserProviderPath(userID, providerKey string) string {
+	return fmt.Sprintf("secret/users/%s/providers/%s", userID, providerKey)
+}
+
 // MachineVolumeKeyPath returns the canonical secret path for a machine's LUKS
 // volume key (Phase 4 decision #2). The shape matches the OpenBao convention so
 // the Phase 5 backend swap touches the store, not the callers.

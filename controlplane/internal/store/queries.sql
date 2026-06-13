@@ -165,3 +165,16 @@ SELECT * FROM snapshots WHERE machine_id = $1;
 
 -- name: DeleteSnapshot :exec
 DELETE FROM snapshots WHERE machine_id = $1;
+
+-- name: ListProviders :many
+-- The provider registry, ordered for stable API output.
+SELECT * FROM providers ORDER BY key;
+
+-- name: GetProvider :one
+SELECT * FROM providers WHERE key = $1;
+
+-- name: InsertAuditLog :one
+-- Append one audit row. user_id may be NULL for system actors (the injector).
+INSERT INTO audit_log (user_id, actor, action, target, metadata)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;

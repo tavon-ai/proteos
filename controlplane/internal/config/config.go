@@ -31,8 +31,20 @@ type Config struct {
 	// cookie. Must be non-empty in any environment that runs the OAuth flow.
 	StateSigningKey []byte
 
-	// SecretsFile is the path to the dev file-backed secrets store.
+	// SecretsBackend selects the secrets.Store implementation: "file" (dev,
+	// default) or "openbao" (production). The Phase 1 interface was built for
+	// this swap — every caller moves to OpenBao by config alone.
+	SecretsBackend string
+
+	// SecretsFile is the path to the dev file-backed secrets store (file backend).
 	SecretsFile string
+
+	// OpenBao* configure the openbao backend. Mount defaults to "secret"; auth is
+	// AppRole (RoleID + a file holding the secret_id).
+	OpenBaoAddr         string
+	OpenBaoMount        string
+	OpenBaoRoleID       string
+	OpenBaoSecretIDFile string
 
 	// AllowedGitHubLogins, when non-empty, restricts sign-in to the listed
 	// GitHub logins (signup allowlist). Empty means everyone is allowed.
@@ -94,7 +106,12 @@ func Load() (*Config, error) {
 		BaseURL:             getenv("PROTEOS_BASE_URL", "http://localhost:8080"),
 		GitHubClientID:      os.Getenv("GITHUB_APP_CLIENT_ID"),
 		GitHubClientSecret:  os.Getenv("GITHUB_APP_CLIENT_SECRET"),
+		SecretsBackend:      getenv("PROTEOS_SECRETS_BACKEND", "file"),
 		SecretsFile:         getenv("PROTEOS_SECRETS_FILE", ".data/secrets.json"),
+		OpenBaoAddr:         getenv("PROTEOS_OPENBAO_ADDR", "http://127.0.0.1:8200"),
+		OpenBaoMount:        getenv("PROTEOS_OPENBAO_MOUNT", "secret"),
+		OpenBaoRoleID:       os.Getenv("PROTEOS_OPENBAO_ROLE_ID"),
+		OpenBaoSecretIDFile: os.Getenv("PROTEOS_OPENBAO_SECRET_ID_FILE"),
 		AllowedGitHubLogins: splitList(os.Getenv("ALLOWED_GITHUB_LOGINS")),
 		SessionTTL:          30 * 24 * time.Hour,
 		CookieSecure:        getenv("PROTEOS_COOKIE_SECURE", "true") == "true",

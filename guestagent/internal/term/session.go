@@ -74,9 +74,16 @@ type Config struct {
 	Shell         string // executable, run as `<shell> -l`
 	ScrollbackKiB int    // ring size in KiB
 	Env           []string
+
+	// Command, when non-empty, is the argv run instead of the login shell — used
+	// for agent sessions, which spawn a provider's injected launch command
+	// (Phase 5 decision #9) rather than `<shell> -l`. Env still applies as an
+	// overlay so the command sees its provider's secret environment.
+	Command []string
 }
 
-// newSession spawns the shell on a fresh PTY and starts the reader goroutine.
+// newSession spawns the shell (or, for agent sessions, the configured command)
+// on a fresh PTY and starts the reader goroutine.
 func newSession(cfg Config) (*Session, error) {
 	shell := cfg.Shell
 	if shell == "" {
@@ -87,7 +94,12 @@ func newSession(cfg Config) (*Session, error) {
 		scroll = 256
 	}
 
-	cmd := exec.Command(shell, "-l")
+	var cmd *exec.Cmd
+	if len(cfg.Command) > 0 {
+		cmd = exec.Command(cfg.Command[0], cfg.Command[1:]...)
+	} else {
+		cmd = exec.Command(shell, "-l")
+	}
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	if len(cfg.Env) > 0 {
 		cmd.Env = append(cmd.Env, cfg.Env...)

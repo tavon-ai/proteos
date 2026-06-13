@@ -25,6 +25,26 @@ func NewManager(defaults Config) *Manager {
 // The returned session is guaranteed live at return; if its shell exits later,
 // it is auto-removed and the following Get spawns a fresh one.
 func (m *Manager) Get(name string) (*Session, error) {
+	cfg := m.defaults
+	cfg.Name = name
+	return m.getOrCreate(name, cfg)
+}
+
+// GetAgent returns the live agent session for name, creating it if absent by
+// spawning command (argv) with env overlaid on the manager's base environment
+// instead of the login shell (Phase 5 decision #9). Like Get, the session
+// outlives connections and is auto-removed when the command exits.
+func (m *Manager) GetAgent(name string, command []string, env []string) (*Session, error) {
+	cfg := m.defaults
+	cfg.Name = name
+	cfg.Command = command
+	// Overlay the provider env on top of the base (home) env; later entries win.
+	cfg.Env = append(append([]string{}, m.defaults.Env...), env...)
+	return m.getOrCreate(name, cfg)
+}
+
+// getOrCreate returns the live session for name, creating it from cfg if absent.
+func (m *Manager) getOrCreate(name string, cfg Config) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -32,8 +52,6 @@ func (m *Manager) Get(name string) (*Session, error) {
 		return s, nil
 	}
 
-	cfg := m.defaults
-	cfg.Name = name
 	s, err := newSession(cfg)
 	if err != nil {
 		return nil, err
