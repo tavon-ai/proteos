@@ -86,7 +86,16 @@ ssh <host> 'curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:9090/h
 - **The token is the only required input.** Bumping a pinned version
   (firecracker, kernel, Go) and re-running upgrades the host in place; the
   firecracker/kernel/rootfs steps are guarded so unchanged artifacts are a no-op.
-- **Forcing a rootfs rebuild:** delete `/var/lib/proteos/images/ubuntu-24.04.ext4`
-  on the host and re-run. The guest SSH key is preserved across rebuilds.
+- **Forcing a rootfs rebuild:** delete `/var/lib/proteos/images/manifest.lock` (and,
+  to also rebuild the base, `ubuntu-24.04.ext4`) on the host and re-run. The guest
+  SSH key is preserved across rebuilds.
+- **Baking Claude Code (Phase 5):** set `proteos_claude_version` and provide the
+  pinned linux-x64 `claude` binary via `proteos_claude_binary_url` *or*
+  `proteos_claude_binary_src` (+ `proteos_claude_sha256` to pin), e.g.
+  `--extra-vars 'proteos_claude_version=2.1.89 proteos_claude_binary_src=./claude-2.1.89 proteos_claude_sha256=<hex>'`.
+  The bake then installs `/usr/local/bin/claude`; the providers `profile.d` wiring
+  is baked regardless. **Bumping the Claude version on an already-baked host needs a
+  forced rebuild** (delete `manifest.lock`), since the bake is guarded on source
+  changes, not on `proteos_claude_version`.
 - The optional port firewall uses its **own** nft table + a oneshot unit, so it
   never clobbers the ruleset the node-agent manages for guest taps.

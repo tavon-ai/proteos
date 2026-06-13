@@ -19,7 +19,17 @@
 #
 # Usage:
 #   image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4 \
-#                         [--out-dir image] [--grow-mib 256]
+#                         [--out-dir image] [--grow-mib 256] \
+#                         [--claude-binary /path/to/claude --claude-version X.Y.Z \
+#                          [--claude-sha256 <hex>]]
+#
+# Phase 5: pass --claude-binary to bake the Claude Code agent CLI into
+# /usr/local/bin/claude (pinned by version + sha256, recorded in manifest.lock).
+# Obtain the pinned native binary on a networked build box, e.g.
+#   curl -fsSL https://claude.ai/install.sh | bash -s <version>
+#   cp "$(command -v claude)" ./claude-<version>   # then sha256sum it
+# and pass that file with --claude-version/--claude-sha256. Omitting --claude-binary
+# bakes the providers profile.d wiring but no agent CLI (it warns).
 #
 # The base must be a systemd image (the unit is installed for systemd); the
 # script asserts this and fails loudly otherwise.
@@ -37,16 +47,26 @@ die() {
 BASE=""
 OUT_DIR=""
 GROW_MIB=256
+CLAUDE_BIN=""
+CLAUDE_VERSION=""
+CLAUDE_SHA256=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
     --out-dir) OUT_DIR=$2; shift 2 ;;
     --grow-mib) GROW_MIB=$2; shift 2 ;;
+    --claude-binary) CLAUDE_BIN=$2; shift 2 ;;
+    --claude-version) CLAUDE_VERSION=$2; shift 2 ;;
+    --claude-sha256) CLAUDE_SHA256=$2; shift 2 ;;
     *) die "unknown arg: $1" ;;
   esac
 done
 [[ -n $BASE ]] || die "--base <pinned firecracker-ci ext4> is required"
 [[ -f $BASE ]] || die "base rootfs not found: $BASE"
+if [[ -n $CLAUDE_BIN ]]; then
+  [[ -f $CLAUDE_BIN ]] || die "claude binary not found: $CLAUDE_BIN"
+  [[ -n $CLAUDE_VERSION ]] || die "--claude-version is required with --claude-binary (pins the manifest)"
+fi
 
 # Resolve repo paths relative to this script.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +74,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$SCRIPT_DIR}"
 UNIT_SRC="$SCRIPT_DIR/proteos-guestagent.service"
 [[ -f $UNIT_SRC ]] || die "missing unit file: $UNIT_SRC"
+PROFILE_SRC="$SCRIPT_DIR/profile.d-proteos-providers.sh"
+[[ -f $PROFILE_SRC ]] || die "missing profile.d snippet: $PROFILE_SRC"
+CLAUDE_SETTINGS_SRC="$SCRIPT_DIR/claude-managed-settings.json"
+[[ -f $CLAUDE_SETTINGS_SRC ]] || die "missing claude managed settings: $CLAUDE_SETTINGS_SRC"
 
 command -v sudo >/dev/null || die "sudo required (loop-mount)"
 command -v go >/dev/null || die "go toolchain required to build the guest agent"
@@ -122,12 +146,42 @@ sudo mkdir -p "$MNT/etc/systemd/system/multi-user.target.wants"
 sudo ln -sf ../proteos-guestagent.service \
   "$MNT/etc/systemd/system/multi-user.target.wants/proteos-guestagent.service"
 
+# Phase 5: provider-secret wiring. The profile.d snippet sources the injected
+# /run/proteos/env/*.env into login shells so provider CLIs see their keys; it is
+# baked regardless of whether an agent CLI is installed (harmless no-op otherwise).
+log "installing providers profile.d snippet"
+sudo install -D -m 0644 "$PROFILE_SRC" "$MNT/etc/profile.d/proteos-providers.sh"
+
+# Phase 5: optionally bake the pinned Claude Code agent CLI + its managed
+# settings. The key itself is injected at runtime (never baked).
+FEATURES="terminal,persist,resume,providers"
+if [[ -n $CLAUDE_BIN ]]; then
+  file "$CLAUDE_BIN" | grep -q "ELF" || die "claude binary is not an ELF executable: $CLAUDE_BIN"
+  ACTUAL_SHA="$(sha256sum "$CLAUDE_BIN" | awk '{print $1}')"
+  if [[ -n $CLAUDE_SHA256 ]]; then
+    [[ "$CLAUDE_SHA256" == "$ACTUAL_SHA" ]] || die "claude sha256 mismatch: expected $CLAUDE_SHA256, got $ACTUAL_SHA"
+    ok "claude sha256 verified ($ACTUAL_SHA)"
+  else
+    log "WARNING: --claude-sha256 not given; pinning to the binary's own sha256 ($ACTUAL_SHA)"
+  fi
+  CLAUDE_SHA256="$ACTUAL_SHA"
+  log "installing Claude Code $CLAUDE_VERSION → /usr/local/bin/claude"
+  sudo install -D -m 0755 "$CLAUDE_BIN" "$MNT/usr/local/bin/claude"
+  # Fleet defaults (pin the version: no in-VM self-update of an immutable image).
+  sudo install -D -m 0644 "$CLAUDE_SETTINGS_SRC" "$MNT/etc/claude-code/managed-settings.json"
+  FEATURES="$FEATURES,claude"
+  ok "Claude Code baked ($CLAUDE_VERSION)"
+else
+  log "WARNING: no --claude-binary; baking providers wiring but no agent CLI"
+fi
+
 # /etc/proteos-release — provenance the guest (and humans) can read.
 BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_GUESTAGENT_VERSION=$VERSION
-PROTEOS_GUESTAGENT_FEATURES=terminal,persist,resume
+PROTEOS_GUESTAGENT_FEATURES=$FEATURES
+PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
 PROTEOS_BUILD_AT=$BUILD_STAMP
 EOF
 
@@ -147,7 +201,9 @@ image          = $(basename "$OUT_IMG")
 sha256         = $SHA
 base_rootfs    = $BASE_NAME
 guestagent     = $VERSION
-features       = terminal,persist,resume
+features       = $FEATURES
+claude_version = ${CLAUDE_VERSION:-none}
+claude_sha256  = ${CLAUDE_SHA256:-none}
 built_at       = $BUILD_STAMP
 EOF
 ok "wrote $MANIFEST"

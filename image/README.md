@@ -31,8 +31,27 @@ as **root** (no `User=` in the unit) so it can mount and `clock_settime`. No ima
 change is needed beyond rebuilding from this commit — the binary is built from
 source — but the resulting image is a new `ga<gitshort>` ref, so **re-pin it**.
 
+**Phase 5 (provider secrets + Claude Code).** The build also bakes:
+
+- `/etc/profile.d/proteos-providers.sh` (`profile.d-proteos-providers.sh`) — sources
+  the runtime-injected `/run/proteos/env/*.env` (tmpfs, 0600) into login shells so
+  provider CLIs see their keys; typing `claude` in any terminal just works. Baked
+  unconditionally; a no-op when nothing is injected.
+- **Optionally** the pinned Claude Code CLI at `/usr/local/bin/claude` plus fleet
+  managed settings at `/etc/claude-code/managed-settings.json` (`claude-managed-settings.json`,
+  which disables the in-VM auto-updater so the image stays at its pinned version).
+  Pass `--claude-binary` to include it; the version + sha256 are recorded in
+  `manifest.lock` (`claude_version` / `claude_sha256`) and `/etc/proteos-release`.
+
+The Anthropic API **key is never baked** — it is injected at runtime by the
+control plane (Phase 5 decision #7). Per-user `~/.claude*` state lands in `$HOME`,
+which is bind-mounted from the persistent disk (Phase 4), so a one-time first-run
+approval persists across stop/start. Pre-answering that approval fully is verified
+on the live host (RUNBOOK Part E / Phase 5 task 5.7) — it is exactly the CLI detail
+the plan flags as drift-prone.
+
 Output: `proteos-rootfs-<base>-ga<gitshort>.ext4` and `manifest.lock` (the
-sha256 + provenance + feature set — committed).
+sha256 + provenance + feature set + Claude pin — committed).
 
 ## Building (Linux only)
 
@@ -40,19 +59,34 @@ The script loop-mounts ext4, so it needs a Linux kernel + `sudo`. Run it on the
 Proxmox host (or any Linux box):
 
 ```sh
+# Guest agent + providers wiring only:
 image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4
+
+# With the pinned Claude Code CLI (Phase 5). Obtain the pinned native binary on a
+# networked build box first, e.g.:
+#   curl -fsSL https://claude.ai/install.sh | bash -s <version>
+#   cp "$(command -v claude)" ./claude-<version>
+#   sha256sum ./claude-<version>
+image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4 \
+  --claude-binary ./claude-<version> --claude-version <version> \
+  --claude-sha256 <hex>
 ```
 
 Then copy the resulting `.ext4` into the node-agent's images dir
-(`PROTEOS_AGENT_IMAGES_DIR`) and point the machine's `rootfs_ref`
-(`PROTEOS_ROOTFS_REF` on the control plane) at its filename.
+(`PROTEOS_AGENT_IMAGES_DIR`), point the machine's `rootfs_ref`
+(`PROTEOS_ROOTFS_REF` on the control plane) at its filename, and **re-pin** —
+baking Claude Code yields a new image, so it is a new `ga<gitshort>` ref.
 
 ## Trust boundary
 
 The guest agent listens on vsock with **no app-layer credential this phase**
 (decision #10): the node-agent reaches it only through the per-VM jailed uds,
 which is readable only by host root — "authenticated, not just private" holds by
-construction. Per-machine identity (OpenBao) arrives in Phase 5.
+construction. Per-machine identity (OpenBao) is deferred to Phase 7 (Phase 5
+decision #8: it authenticates guest-initiated calls, of which Phase 5 has none —
+its secret injection is a control-plane push). Phase 5 secret injection itself
+uses that same push (the control plane PUTs `/secrets` over the tunnel), so the
+guest needs no new credential.
 
 ## Verifying on a running VM
 
@@ -61,10 +95,18 @@ After the node-agent boots a VM from this rootfs:
 ```sh
 # inside the guest (serial console):
 systemctl status proteos-guestagent     # active (running)
-cat /etc/proteos-release                 # FEATURES should list persist,resume
+cat /etc/proteos-release                 # FEATURES lists persist,resume,providers[,claude]
 findmnt /persist                         # the disk is mounted (Phase 4)
 findmnt /root                            # bind-mounted from /persist/home
 ls /persist                              # home/ workspace/ machine.db
+
+# Phase 5 (5.5 done-when):
+claude --version                         # the pinned CLI runs as root (if baked)
+ls /etc/profile.d/proteos-providers.sh   # the providers snippet is present
+# a login shell sources injected env (simulate an injected key):
+mkdir -p /run/proteos/env && printf "export ANTHROPIC_API_KEY=sk-demo\n" > /run/proteos/env/claude.env
+bash -lc 'echo $ANTHROPIC_API_KEY'       # → sk-demo (profile.d sourced it)
+rm /run/proteos/env/claude.env
 
 # from the host: DialGuest reaches it through the jailed uds — see the
 # `-tags=firecracker` integration test (nodeagent .../firecracker) and Task 3.7.

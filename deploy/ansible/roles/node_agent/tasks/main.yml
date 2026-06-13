@@ -98,12 +98,45 @@
     path: "{{ proteos_images_dir }}/manifest.lock"
   register: rootfs_manifest
 
-- name: Bake the guest agent into the base rootfs
+# Phase 5: optionally stage the pinned Claude Code binary so the bake can install
+# it into the rootfs. Skipped entirely when proteos_claude_version is empty.
+- name: Phase 5 — validate Claude Code bake inputs
+  ansible.builtin.assert:
+    that:
+      - (proteos_claude_binary_url | length > 0) or (proteos_claude_binary_src | length > 0)
+    fail_msg: >-
+      proteos_claude_version is set but neither proteos_claude_binary_url nor
+      proteos_claude_binary_src was provided — give one so the pinned `claude`
+      binary can be staged.
+  when: proteos_claude_version | length > 0
+
+- name: Phase 5 — stage the pinned Claude Code binary (URL)
+  ansible.builtin.get_url:
+    url: "{{ proteos_claude_binary_url }}"
+    dest: "{{ proteos_claude_staged }}"
+    mode: "0755"
+    checksum: "{{ ('sha256:' + proteos_claude_sha256) if (proteos_claude_sha256 | length > 0) else omit }}"
+  when:
+    - proteos_claude_version | length > 0
+    - proteos_claude_binary_url | length > 0
+
+- name: Phase 5 — stage the pinned Claude Code binary (local copy)
+  ansible.builtin.copy:
+    src: "{{ proteos_claude_binary_src }}"
+    dest: "{{ proteos_claude_staged }}"
+    mode: "0755"
+  when:
+    - proteos_claude_version | length > 0
+    - proteos_claude_binary_url | length == 0
+    - proteos_claude_binary_src | length > 0
+
+- name: Bake the guest agent (and, if configured, Claude Code) into the base rootfs
   ansible.builtin.command:
     cmd: >-
       {{ proteos_src_dir }}/image/build-rootfs.sh
       --base {{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}
       --out-dir {{ proteos_images_dir }}
+      {% if proteos_claude_version | length > 0 %}--claude-binary {{ proteos_claude_staged }} --claude-version {{ proteos_claude_version }}{% if proteos_claude_sha256 | length > 0 %} --claude-sha256 {{ proteos_claude_sha256 }}{% endif %}{% endif %}
   environment:
     PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
     # Carries the real commit SHA into the image name on the rsync path (the

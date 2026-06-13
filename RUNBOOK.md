@@ -328,6 +328,102 @@ restoring one without the other is useless.
 
 ---
 
+## Part E — Phase 5 acceptance walkthrough (secrets + Claude Code)
+
+Run this on the live Proxmox stack after Parts A–D. Tick each row of the
+master-plan Phase 5 checklist in `plans/proteos-poc-to-prod.md` as you go.
+
+### E0. Prerequisites
+
+- OpenBao deployed + initialized + unsealed, `PROTEOS_SECRETS_BACKEND=openbao`
+  (Part D), control-plane log shows `secrets backend backend=openbao`.
+- A rootfs baked with Claude Code (`image/build-rootfs.sh --claude-binary …`,
+  task 5.5), copied into `PROTEOS_AGENT_IMAGES_DIR`, and `PROTEOS_ROOTFS_REF`
+  re-pinned to it on both the control plane and the node-agent. Confirm the pin:
+  ```bash
+  grep -E 'claude_version|sha256' image/manifest.lock
+  ```
+- Have a **real Anthropic API key** ready (`sk-ant-…`).
+
+### E1. Set the key (never echoed)
+
+In the browser, open the dashboard → **AI providers** → Claude Code → **Set key**,
+paste the key, Save. The badge flips to **Key set**. Verify it never leaves:
+
+```bash
+# In OpenBao, under the USER's path (operator view). <uuid> = the user's id.
+BAO_TOKEN=$(jq -r .root_token deploy/app-stack/openbao-init.json) \
+  bao kv get secret/users/<uuid>/providers/claude        # → api_key present
+
+# NOT in Postgres:
+docker compose -f deploy/app-stack/compose.yaml exec postgres \
+  pg_dump -U proteos proteos | grep -c 'sk-ant'          # → 0
+
+# NOT in the logs (control plane + node-agent):
+docker compose -f deploy/app-stack/compose.yaml logs controlplane | grep -c 'sk-ant'   # → 0
+journalctl -u proteos-node-agent | grep -c 'sk-ant'      # → 0 (on the KVM host)
+```
+
+### E2. Launch Claude Code → write a file
+
+With the machine **running**, click **Launch Claude Code** on the machine card.
+A terminal opens running `claude` (authenticated by the injected key). Prompt it:
+
+> Create a file `~/workspace/hello-proteos.txt` containing "it works".
+
+Then confirm on the guest (serial console or a plain **Open terminal**):
+
+```bash
+cat ~/workspace/hello-proteos.txt        # → it works
+```
+
+> **First-run approval (drift-prone — verify here).** If `claude` shows a "Do you
+> want to use this API key?" prompt on first launch, accept it once. It persists
+> in `~/.claude*` on the bind-mounted persistent home, so it does not recur across
+> stop/start. If it recurs, finalize the pre-answer mechanism (managed settings /
+> `~/.claude.json`) and fold it back into `image/claude-managed-settings.json`.
+
+### E3. Injection on start AND resume
+
+Injection fires on every `* → running` transition (poller hook) and again,
+idempotently, before each launch.
+
+```bash
+# Cold path: Stop, then Start. After it reaches running, on the guest:
+ls -l /run/proteos/env/claude.env        # 0600, present again
+# Resume path (Phase 4 hibernate/resume): Stop hibernates; Start resumes.
+# Re-run the check above after the resume reaches running.
+```
+
+### E4. Audit rows (put / read / launch)
+
+```bash
+docker compose -f deploy/app-stack/compose.yaml exec postgres psql -U proteos -d proteos \
+  -c "select actor, action, target from audit_log order by id desc limit 10;"
+# Expect: secret.put (actor user:<uuid>), secret.read (actor system:injector,
+# target = the path — never the value), agent.launch (actor user:<uuid>).
+# And the openbao audit device:
+docker compose -f deploy/app-stack/compose.yaml exec openbao tail /openbao/logs/audit.log
+```
+
+### E5. Reload mid-session reattaches
+
+With a Claude session running, reload the browser tab. The agent terminal
+reattaches to the same `agent-claude` session with scrollback intact (the session
+outlives the WebSocket — Phase 3 property reused for agents).
+
+### E6. Negative paths
+
+- Remove the key (**Remove** in the panel) → the **Launch Claude Code** button is
+  replaced by the "set a key" CTA; opening `/gw/agent/claude` directly would 409.
+- Stop the machine → the launch button disappears; the agent route would 409
+  `machine_not_running`.
+
+When every row passes, tick the master-plan Phase 5 checklist in
+`plans/proteos-poc-to-prod.md`.
+
+---
+
 ## Reproducibility notes
 
 - **Pinned versions** live in `spike/firecracker/env.sh` + the committed
