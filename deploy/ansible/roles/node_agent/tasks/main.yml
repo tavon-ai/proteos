@@ -137,6 +137,46 @@
   failed_when: not baked_rootfs.stat.exists
 
 # ----------------------------------------------------------------------------
+# Acceptance gate (Phase 4): prove THIS host can actually boot a jailed microVM
+# and complete the encrypted hibernate→resume cycle (its KVM + cryptsetup + the
+# pinned kernel + the just-baked rootfs) BEFORE it is allowed to serve. Placed
+# ahead of the env/unit/start tasks so a red gate aborts the play and the node is
+# never green-lit on broken hardware/config.
+#
+# It boots real microVMs and allocates from the guest subnet, so it is meant for
+# a FRESH node: it auto-skips when the node-agent is already active, to avoid
+# IP/tap contention with live machines. Re-run on a live node by stopping the
+# service first; disable entirely with proteos_run_acceptance_test=false or
+# `--skip-tags acceptance`.
+# ----------------------------------------------------------------------------
+- name: Acceptance gate — encrypted hibernate/resume on this host
+  tags: [acceptance]
+  block:
+    - name: Check whether the node-agent is already serving
+      ansible.builtin.command: systemctl is-active --quiet proteos-node-agent
+      register: agent_active
+      changed_when: false
+      failed_when: false
+
+    - name: Run the firecracker KVM integration suite (a red gate aborts the play)
+      when:
+        - proteos_run_acceptance_test | bool
+        - agent_active.rc != 0 # skip on a node already serving machines
+      ansible.builtin.command:
+        cmd: go test -tags firecracker -count=1 -timeout 15m ./internal/driver/firecracker/
+        chdir: "{{ proteos_src_dir }}/nodeagent"
+      environment:
+        PATH: "{{ proteos_go_root }}/bin:/usr/local/sbin:/usr/sbin:/sbin:{{ ansible_env.PATH }}"
+        GOWORK: "off"
+        PROTEOS_TEST_KERNEL: "{{ proteos_images_dir }}/{{ proteos_kernel_ref }}"
+        PROTEOS_TEST_ROOTFS: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
+        PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT: "1"
+        PROTEOS_FIRECRACKER_BIN: "{{ proteos_firecracker_bin }}"
+        PROTEOS_JAILER_BIN: "{{ proteos_jailer_bin }}"
+        PROTEOS_CRYPTSETUP_BIN: "{{ proteos_cryptsetup_bin }}"
+      changed_when: false
+
+# ----------------------------------------------------------------------------
 # Config + systemd unit.
 # ----------------------------------------------------------------------------
 - name: Render node-agent env file

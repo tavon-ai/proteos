@@ -427,9 +427,9 @@ deliverable.
 - [x] Machine SQLite is initialized on the disk and used by the guest agent.
 - [x] A file written in the terminal persists across a stop/start cycle (demoable).
 - [x] `disk_id` and snapshot metadata are recorded in Postgres.
-- [ ] Disk and snapshot files are encrypted at rest; snapshots are handled as secret
+- [x] Disk and snapshot files are encrypted at rest; snapshots are handled as secret
       material (they contain guest RAM).
-- [ ] Resume reseeds guest entropy and resyncs the guest clock (TLS, git, and token
+- [x] Resume reseeds guest entropy and resyncs the guest clock (TLS, git, and token
       expiry break otherwise).
 
 ---

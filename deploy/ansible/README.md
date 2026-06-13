@@ -15,7 +15,14 @@ web) — that runs on a separate VM, see `deploy/app-stack/`.
 | `common`      | apt packages, assert `/dev/kvm`, persistent `net.ipv4.ip_forward=1`, create `/var/lib/proteos/{images,agent,volumes}` + `/srv/jailer` + `/etc/proteos` |
 | `go`          | install pinned Go (`go.mod` needs 1.26.4) from the official tarball |
 | `firecracker` | install pinned firecracker + jailer to `/usr/local/bin`, download the pinned CI kernel, build the ext4 rootfs with a generated SSH key |
-| `node_agent`  | sync source to `/opt/proteos/src`, build the binary, render `/etc/proteos/node-agent.env`, install + enable the systemd unit, optional port firewall |
+| `node_agent`  | sync source to `/opt/proteos/src`, build the binary, bake the guest-agent rootfs, **run the KVM acceptance gate**, render `/etc/proteos/node-agent.env`, install + enable the systemd unit, optional port firewall |
+
+The **acceptance gate** runs the firecracker integration suite (encrypted
+hibernate/resume + boot/stop/egress/vsock) against the just-baked rootfs before
+the service starts, so a node is never green-lit unless it can actually run
+encrypted microVMs. It boots real VMs (~2 min) and auto-skips a node that is
+already serving machines. Skip with `--skip-tags acceptance` or
+`proteos_run_acceptance_test=false`; run it on its own with `--tags acceptance`.
 
 Everything is pinned in `group_vars/all.yml` to match
 `spike/firecracker/versions.lock`, so every host gets byte-identical artifacts.
@@ -63,6 +70,7 @@ Useful flags: `--check --diff` (dry run), `--tags`/`--start-at-task`,
 | `proteos_agent_subnet` | `172.30.0.0/24` | per-host guest subnet |
 | `proteos_src_git_repo` | `""` | set to clone from git instead of rsync-ing this checkout |
 | `proteos_restrict_agent_port` | `false` | set with `proteos_app_vm_ip` to lock `:9090` to the app VM |
+| `proteos_run_acceptance_test` | `true` | run the KVM integration suite as a green-light gate before the service starts; auto-skips a node already serving machines |
 | `proteos_agent_tls_cert`/`_key` | `""` | set both to serve the agent channel over TLS |
 
 ## Verify

@@ -32,12 +32,17 @@
 > **4.0 spike landed** — `09-encrypted-disk.sh` (encrypted hibernate/resume cycle) +
 > `10-measure-findings.sh` (boot/snapshot/restore/cgroup timings → committable
 > `findings.{json,md}`); the README findings table is populated (CRNG reseeds via VMGenID;
-> ~16 s skew ≈ hibernated dwell). **Track B remaining — one gated run + the master-plan
-> ticks**: run `go test -tags firecracker -run TestHibernateResumeCycle` (with
-> `PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT=1` against the baked rootfs) on the Proxmox VM;
-> when green, tick the two open Phase-4 acceptance boxes in `plans/proteos-poc-to-prod.md`
-> (encrypted-at-rest, resume entropy/clock). Optional: commit the `encrypted-findings.*`
-> artifact from a `09` run.
+> ~16 s skew ≈ hibernated dwell).
+> **Track B complete — `TestHibernateResumeCycle` green on the Proxmox KVM box**
+> (`PROTEOS_TEST_ROOTFS_HAS_GUEST_AGENT=1` against the baked rootfs): full cold-boot →
+> hibernate → resume, with the two acceptance proofs enforced — encrypted-at-rest (probe
+> absent from the raw closed `.luks`; `isLuks`) and resume hygiene (`ResumeHygiene="ok"`,
+> guest corrected ~6 s skew + reseeded entropy). The KVM shakeout fixed two real bugs:
+> the test's chroot base overflowed the AF_UNIX 108-byte socket path (short base dir), and
+> `finishStop` raced the VMM's death so `luksClose` hit "device still in use" (wait for
+> SIGKILL'd VMM to exit before umount + retry `luksClose`). **Both master-plan Phase-4
+> acceptance boxes are now ticked.** Optional follow-up: commit `encrypted-findings.*` from
+> a `09` run for a stored artifact.
 > Prerequisites: Phase 2 (driver interface, jail layout, state store, lifecycle poller) and
 > Phase 3 (guest agent + vsock tunnel + gateway) — both landed. Phase 4 treats their
 > contracts as given and extends them; it does not rework the boot, tunnel, or gateway paths.

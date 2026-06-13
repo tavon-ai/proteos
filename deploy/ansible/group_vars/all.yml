@@ -58,6 +58,14 @@ proteos_cryptsetup_bin: "/usr/sbin/cryptsetup"
 proteos_agent_tls_cert: ""
 proteos_agent_tls_key: ""
 
+# Acceptance gate: before a node is allowed to serve, run the firecracker KVM
+# integration suite (encrypted hibernate/resume + boot/stop/egress/vsock) against
+# the just-baked rootfs. A red gate aborts the play, so a node is never green-lit
+# on hardware/config that can't actually run encrypted microVMs. It boots real
+# VMs and auto-skips a node already serving machines (IP/tap contention); set
+# false (or `--skip-tags acceptance`) to skip on a live node.
+proteos_run_acceptance_test: true
+
 # ============================================================================
 # REQUIRED: shared bearer token. MUST equal the app stack's PROTEOS_AGENT_TOKEN.
 # Do NOT commit a real value here — override via ansible-vault or --extra-vars.
