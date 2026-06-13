@@ -129,28 +129,28 @@ func TestInjectorPushesComposedSecrets(t *testing.T) {
 		t.Fatalf("env mapping wrong: %v", def.Env)
 	}
 
-	// An audit secret.read row exists with the path (not the value) as target.
-	rows, err := pool.Query(ctx, "SELECT actor, action, target FROM audit_log")
-	if err != nil {
+	// A secret.read row exists for this user's claude path, with the injector as
+	// actor and the path (never the value) as target. Scoped by actor+action+
+	// target so a shared CI DB with leaked rows from other tests can't confuse it.
+	var reads int
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM audit_log WHERE actor=$1 AND action=$2 AND target=$3",
+		audit.ActorSystemInjector, audit.ActionSecretRead, secrets.UserProviderPath(uid, "claude"),
+	).Scan(&reads); err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	var sawRead bool
-	for rows.Next() {
-		var actor, action, target string
-		_ = rows.Scan(&actor, &action, &target)
-		if action == audit.ActionSecretRead {
-			sawRead = true
-			if actor != audit.ActorSystemInjector {
-				t.Fatalf("read actor = %q, want %q", actor, audit.ActorSystemInjector)
-			}
-			if target != secrets.UserProviderPath(uid, "claude") {
-				t.Fatalf("read target = %q, want the path", target)
-			}
-		}
+	if reads == 0 {
+		t.Fatal("no secret.read audit row for this user's claude path")
 	}
-	if !sawRead {
-		t.Fatal("no secret.read audit row")
+	// And no audit row ever carries the secret value in its target.
+	var leaks int
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM audit_log WHERE target LIKE '%sk-inject-42%'",
+	).Scan(&leaks); err != nil {
+		t.Fatal(err)
+	}
+	if leaks != 0 {
+		t.Fatalf("audit target leaked the key value (%d rows)", leaks)
 	}
 }
 
