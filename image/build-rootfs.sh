@@ -245,6 +245,19 @@ sudo ln -sf ../proteos-guestagent.service \
 log "installing providers profile.d snippet"
 sudo install -D -m 0644 "$PROFILE_SRC" "$MNT/etc/profile.d/proteos-providers.sh"
 
+# The guest gets its IP from the kernel `ip=` cmdline (see firecracker.go), which
+# sets the address/gateway but NO DNS resolver, and there is no DHCP or
+# systemd-resolved managing the static NIC. Without a resolver every lookup fails
+# ("Could not resolve host") and agent CLIs can't reach their APIs. Bake a static
+# /etc/resolv.conf, replacing the CI image's symlink-to-stub so it actually holds
+# nameservers. Egress is NATed to the internet by the node-agent's nft rules.
+log "installing static resolv.conf (kernel ip= sets no DNS)"
+sudo rm -f "$MNT/etc/resolv.conf"
+sudo tee "$MNT/etc/resolv.conf" >/dev/null <<'EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+
 # Phase 5: optionally bake the pinned Claude Code agent CLI + its managed
 # settings. The key itself is injected at runtime (never baked).
 FEATURES="terminal,persist,resume,providers"

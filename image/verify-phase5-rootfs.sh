@@ -6,6 +6,7 @@
 # really in it (task 5.5 done-when), WITHOUT needing the app stack or booting a VM:
 #
 #   - /etc/profile.d/proteos-providers.sh is installed,
+#   - /etc/resolv.conf carries a static nameserver (the kernel ip= sets no DNS),
 #   - a login shell actually sources an injected /run/proteos/env/*.env,
 #   - (if Claude was baked) /usr/local/bin/claude exists + `claude --version` runs,
 #     and /etc/claude-code/managed-settings.json + the manifest pin are present,
@@ -73,6 +74,21 @@ if [[ -f $SNIPPET ]]; then
   pass "profile.d snippet installed (/etc/profile.d/proteos-providers.sh)"
 else
   fail "profile.d snippet MISSING (/etc/profile.d/proteos-providers.sh)"
+fi
+
+# --- static DNS resolver (kernel ip= cmdline sets no nameserver) -------------
+# The guest boots with a static IP and no DHCP/systemd-resolved, so the rootfs
+# must ship a real /etc/resolv.conf or every lookup fails ("Could not resolve
+# host"). It must be a regular file (not the CI image's dangling symlink-to-stub)
+# holding at least one nameserver.
+RESOLV="$MNT/etc/resolv.conf"
+if [[ -f $RESOLV && ! -L $RESOLV ]] && grep -Eq '^[[:space:]]*nameserver[[:space:]]+[0-9a-fA-F.:]+' "$RESOLV"; then
+  ns="$(awk '/^[[:space:]]*nameserver/{print $2; exit}' "$RESOLV")"
+  pass "static resolv.conf baked with a nameserver ($ns)"
+elif [[ -L $RESOLV ]]; then
+  fail "/etc/resolv.conf is a symlink (CI stub) — bake a static file instead"
+else
+  fail "/etc/resolv.conf missing or has no nameserver (guest will fail DNS)"
 fi
 
 # A login shell must source an injected env file. Simulate one runtime injection.
