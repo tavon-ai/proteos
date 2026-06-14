@@ -3,8 +3,9 @@
 #
 # This is a placeholder: run image/build-rootfs.sh on the Proxmox host (or any
 # Linux box with the pinned Firecracker-CI base ext4) to overwrite it with the
-# real sha256 and provenance. Pass --claude-binary/--claude-version (Phase 5) to
-# bake the pinned Claude Code CLI; claude_version/claude_sha256 record the pin.
+# real sha256 and provenance. Pass --claude-bootstrap (fetch from Anthropic's
+# release endpoint) or --claude-binary (air-gapped) to bake the pinned Claude
+# Code CLI; claude_version/claude_sha256 then record the exact pin.
 image          = (not yet built)
 sha256         = (not yet built)
 base_rootfs    = (pin the Firecracker-CI ubuntu-24.04 ext4)

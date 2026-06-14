@@ -62,11 +62,16 @@ Proxmox host (or any Linux box):
 # Guest agent + providers wiring only:
 image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4
 
-# With the pinned Claude Code CLI (Phase 5). Obtain the pinned native binary on a
-# networked build box first, e.g.:
-#   curl -fsSL https://claude.ai/install.sh | bash -s <version>
-#   cp "$(command -v claude)" ./claude-<version>
-#   sha256sum ./claude-<version>
+# With Claude Code, fetched from Anthropic's official release endpoint and
+# verified against the published manifest checksum (needs network on the build
+# host; --claude-version pins the channel/version, default "stable"):
+image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4 \
+  --claude-bootstrap --claude-version stable
+
+# Air-gapped alternative: bake a pre-fetched pinned binary. Obtain it on any
+# networked box via Anthropic's installer, e.g.:
+#   curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh | bash -s <version>
+#   cp "$(command -v claude)" ./claude-<version> && sha256sum ./claude-<version>
 image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4 \
   --claude-binary ./claude-<version> --claude-version <version> \
   --claude-sha256 <hex>

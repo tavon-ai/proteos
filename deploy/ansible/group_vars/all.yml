@@ -44,23 +44,30 @@ proteos_rootfs_ref: "ubuntu-24.04.ext4"
 proteos_rootfs_size: "1G"
 
 # ----------------------------------------------------------------------------
-# Phase 5: bake the pinned Claude Code agent CLI into the rootfs. Leave
-# proteos_claude_version EMPTY to skip it (the providers profile.d wiring is
-# still baked unconditionally). To bake it, set the version AND provide the
-# pinned linux-x64 `claude` binary by exactly one of:
-#   - proteos_claude_binary_url  : a direct download URL, or
-#   - proteos_claude_binary_src  : a path to the binary on the ANSIBLE CONTROLLER.
-# Obtain the pinned binary on any networked box, e.g.:
-#   curl -fsSL https://claude.ai/install.sh | bash -s <version>
-#   cp "$(command -v claude)" ./claude-<version> && sha256sum ./claude-<version>
-# Bumping the version on an already-baked host requires a forced rebuild: delete
-# {{ proteos_images_dir }}/manifest.lock (see deploy/ansible/README.md).
+# Phase 5: bake the Claude Code agent CLI into the rootfs. The providers
+# profile.d wiring is baked regardless; this controls the `claude` binary.
+#
+# proteos_claude_install:
+#   "bootstrap" (default) — build-rootfs.sh fetches the official native binary
+#       from Anthropic's release endpoint (downloads.claude.ai) and verifies it
+#       against the published manifest checksum. proteos_claude_version pins the
+#       channel/version ("stable" default, or "latest"/"X.Y.Z"). Needs network on
+#       the BAKE HOST (the KVM host); the runtime image stays pinned/offline.
+#   "binary" — bake a pre-fetched pinned binary (air-gapped). Provide exactly one
+#       of proteos_claude_binary_url / proteos_claude_binary_src, plus
+#       proteos_claude_version and (recommended) proteos_claude_sha256.
+#   "none" — skip Claude Code (only the providers wiring is baked).
+#
+# Bumping the version/channel on an already-baked host needs a FORCED rebuild
+# (delete {{ proteos_images_dir }}/manifest.lock — see deploy/ansible/README.md),
+# since the bake is guarded on source changes, not on these vars.
 # ----------------------------------------------------------------------------
-proteos_claude_version: ""        # e.g. "2.1.89"; empty = do not bake Claude Code
-proteos_claude_sha256: ""         # strongly recommended sha256 pin of the binary
-proteos_claude_binary_url: ""     # direct URL to the pinned linux-x64 `claude`
-proteos_claude_binary_src: ""     # OR a local file on the ansible controller
-proteos_claude_staged: "{{ proteos_images_dir }}/claude-{{ proteos_claude_version }}"  # host staging path
+proteos_claude_install: "bootstrap"   # bootstrap | binary | none
+proteos_claude_version: ""            # bootstrap: channel/version (empty ⇒ stable); binary: required
+proteos_claude_sha256: ""             # binary mode: recommended sha256 pin
+proteos_claude_binary_url: ""         # binary mode: direct URL to the pinned linux-x64 `claude`
+proteos_claude_binary_src: ""         # binary mode: OR a local file on the ansible controller
+proteos_claude_staged: "{{ proteos_images_dir }}/claude-staged"  # host staging path (binary mode)
 
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.

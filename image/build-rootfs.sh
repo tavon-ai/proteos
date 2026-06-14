@@ -20,16 +20,25 @@
 # Usage:
 #   image/build-rootfs.sh --base /path/to/firecracker-ci-ubuntu-24.04.ext4 \
 #                         [--out-dir image] [--grow-mib 256] \
-#                         [--claude-binary /path/to/claude --claude-version X.Y.Z \
-#                          [--claude-sha256 <hex>]]
+#                         [ --claude-bootstrap [--claude-version stable|latest|X.Y.Z]
+#                         | --claude-binary /path/to/claude --claude-version X.Y.Z
+#                           [--claude-sha256 <hex>] ]
 #
-# Phase 5: pass --claude-binary to bake the Claude Code agent CLI into
-# /usr/local/bin/claude (pinned by version + sha256, recorded in manifest.lock).
-# Obtain the pinned native binary on a networked build box, e.g.
-#   curl -fsSL https://claude.ai/install.sh | bash -s <version>
-#   cp "$(command -v claude)" ./claude-<version>   # then sha256sum it
-# and pass that file with --claude-version/--claude-sha256. Omitting --claude-binary
-# bakes the providers profile.d wiring but no agent CLI (it warns).
+# Phase 5: bake the Claude Code agent CLI into /usr/local/bin/claude (pinned by
+# version + sha256, recorded in manifest.lock). Two ways to supply it:
+#
+#   --claude-bootstrap : fetch the official native binary from Anthropic's release
+#       endpoint (downloads.claude.ai) and verify it against the published
+#       manifest.json checksum — the same artifact + integrity check the upstream
+#       bootstrap.sh uses, minus its per-$HOME `claude install` launcher step
+#       (wrong here: Phase 4 bind-mounts the persistent home over /root at runtime,
+#       so a $HOME launcher would be shadowed — we install to the system path).
+#       --claude-version pins the channel/version (default: stable). Needs network
+#       on the build host.
+#   --claude-binary    : bake a pre-fetched pinned binary (fully offline / air-gap).
+#       Requires --claude-version; --claude-sha256 verifies it.
+#
+# Omitting both bakes the providers profile.d wiring but no agent CLI (it warns).
 #
 # The base must be a systemd image (the unit is installed for systemd); the
 # script asserts this and fails loudly otherwise.
@@ -43,6 +52,64 @@ die() {
   exit 1
 }
 
+# dl URL [OUTFILE] — fetch over curl or wget (whichever is present).
+dl() {
+  if command -v curl >/dev/null 2>&1; then
+    if [[ -n ${2:-} ]]; then curl -fsSL -o "$2" "$1"; else curl -fsSL "$1"; fi
+  elif command -v wget >/dev/null 2>&1; then
+    if [[ -n ${2:-} ]]; then wget -qO "$2" "$1"; else wget -qO - "$1"; fi
+  else
+    die "need curl or wget for --claude-bootstrap"
+  fi
+}
+
+# fetch_claude_official TARGET DEST — download the pinned Claude Code native
+# binary from Anthropic's release endpoint and verify it against the published
+# manifest.json checksum (the same artifact + integrity check bootstrap.sh uses).
+# TARGET is "stable", "latest", or an exact X.Y.Z. Sets CLAUDE_VERSION/CLAUDE_SHA256.
+fetch_claude_official() {
+  local target="$1" dest="$2"
+  local base="https://downloads.claude.ai/claude-code-releases"
+
+  local arch platform
+  case "$(uname -m)" in
+    x86_64 | amd64) arch="x64" ;;
+    arm64 | aarch64) arch="arm64" ;;
+    *) die "unsupported arch for Claude Code: $(uname -m)" ;;
+  esac
+  platform="${CLAUDE_PLATFORM:-linux-$arch}"  # base is glibc; pass --claude-platform for musl
+
+  # Resolve a channel to a concrete version; accept an explicit X.Y.Z as-is.
+  local version
+  if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    version="$target"
+  else
+    version="$(dl "$base/$target")" || die "resolve Claude channel '$target'"
+  fi
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "bad Claude version resolved from '$target': $version"
+
+  local manifest checksum
+  manifest="$(dl "$base/$version/manifest.json")" || die "fetch Claude manifest for $version"
+  if command -v jq >/dev/null 2>&1; then
+    checksum="$(printf '%s' "$manifest" | jq -r ".platforms[\"$platform\"].checksum // empty")"
+  else
+    # bash fallback: collapse whitespace, then regex the platform's checksum.
+    checksum="$(printf '%s' "$manifest" | tr -d '\n\r\t' \
+      | grep -oE "\"$platform\"[^}]*\"checksum\"[[:space:]]*:[[:space:]]*\"[a-f0-9]{64}\"" \
+      | grep -oE '[a-f0-9]{64}' | head -1)"
+  fi
+  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || die "no checksum for platform '$platform' in Claude manifest $version"
+
+  dl "$base/$version/$platform/claude" "$dest" || die "download Claude binary $version/$platform"
+  local actual
+  actual="$(sha256sum "$dest" | awk '{print $1}')"
+  [[ "$actual" == "$checksum" ]] || die "Claude checksum mismatch: manifest $checksum, got $actual"
+  chmod +x "$dest"
+  CLAUDE_VERSION="$version"
+  CLAUDE_SHA256="$checksum"
+  ok "fetched Claude Code $version ($platform), sha256 verified against manifest"
+}
+
 # --- args -------------------------------------------------------------------
 BASE=""
 OUT_DIR=""
@@ -50,6 +117,8 @@ GROW_MIB=256
 CLAUDE_BIN=""
 CLAUDE_VERSION=""
 CLAUDE_SHA256=""
+CLAUDE_BOOTSTRAP=0
+CLAUDE_PLATFORM=""   # override the auto-detected downloads.claude.ai platform (e.g. linux-x64-musl)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
@@ -58,12 +127,15 @@ while [[ $# -gt 0 ]]; do
     --claude-binary) CLAUDE_BIN=$2; shift 2 ;;
     --claude-version) CLAUDE_VERSION=$2; shift 2 ;;
     --claude-sha256) CLAUDE_SHA256=$2; shift 2 ;;
+    --claude-bootstrap) CLAUDE_BOOTSTRAP=1; shift ;;
+    --claude-platform) CLAUDE_PLATFORM=$2; shift 2 ;;
     *) die "unknown arg: $1" ;;
   esac
 done
 [[ -n $BASE ]] || die "--base <pinned firecracker-ci ext4> is required"
 [[ -f $BASE ]] || die "base rootfs not found: $BASE"
 if [[ -n $CLAUDE_BIN ]]; then
+  [[ $CLAUDE_BOOTSTRAP -eq 0 ]] || die "use either --claude-binary or --claude-bootstrap, not both"
   [[ -f $CLAUDE_BIN ]] || die "claude binary not found: $CLAUDE_BIN"
   [[ -n $CLAUDE_VERSION ]] || die "--claude-version is required with --claude-binary (pins the manifest)"
 fi
@@ -93,6 +165,7 @@ BASE_NAME="$(basename "$BASE" .ext4)"
 OUT_IMG="$OUT_DIR/proteos-rootfs-${BASE_NAME}-ga${GIT_SHORT}.ext4"
 
 WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT  # replaced by the full cleanup once the image is mounted
 GA_BIN="$WORK/guestagent"
 log "building static guest agent ($VERSION)"
 ( cd "$REPO_ROOT/guestagent" &&
@@ -101,7 +174,27 @@ log "building static guest agent ($VERSION)"
 file "$GA_BIN" | grep -q "statically linked\|ELF" || die "guest agent is not a static ELF"
 ok "built $GA_BIN"
 
+# Phase 5: in --claude-bootstrap mode, fetch + verify the official native binary
+# now (before the loop-mount), so a network/checksum failure aborts cleanly.
+if [[ $CLAUDE_BOOTSTRAP -eq 1 ]]; then
+  CLAUDE_TARGET="${CLAUDE_VERSION:-stable}"
+  log "fetching Claude Code via Anthropic release endpoint (target: $CLAUDE_TARGET)"
+  CLAUDE_BIN="$WORK/claude"
+  fetch_claude_official "$CLAUDE_TARGET" "$CLAUDE_BIN"
+fi
+
 # --- 2. copy + grow the base image -------------------------------------------
+# The Claude Code native binary is large (~240 MiB) and the default headroom is
+# sized for the guest agent alone, so when baking Claude grow enough to fit it
+# plus margin (unless the caller already asked for more).
+if [[ -n $CLAUDE_BIN ]]; then
+  CLAUDE_MIB="$(du -m "$CLAUDE_BIN" | awk '{print $1}')"
+  NEED_MIB=$((CLAUDE_MIB + 128))
+  if [[ $GROW_MIB -lt $NEED_MIB ]]; then
+    log "claude binary is ${CLAUDE_MIB}MiB — bumping grow ${GROW_MIB}→${NEED_MIB}MiB"
+    GROW_MIB=$NEED_MIB
+  fi
+fi
 log "copying base image → $OUT_IMG (+${GROW_MIB}MiB headroom)"
 cp "$BASE" "$OUT_IMG"
 # Grow so the binary + unit always fit, then fsck/resize.

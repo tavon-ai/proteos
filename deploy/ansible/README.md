@@ -89,13 +89,21 @@ ssh <host> 'curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:9090/h
 - **Forcing a rootfs rebuild:** delete `/var/lib/proteos/images/manifest.lock` (and,
   to also rebuild the base, `ubuntu-24.04.ext4`) on the host and re-run. The guest
   SSH key is preserved across rebuilds.
-- **Baking Claude Code (Phase 5):** set `proteos_claude_version` and provide the
-  pinned linux-x64 `claude` binary via `proteos_claude_binary_url` *or*
-  `proteos_claude_binary_src` (+ `proteos_claude_sha256` to pin), e.g.
-  `--extra-vars 'proteos_claude_version=2.1.89 proteos_claude_binary_src=./claude-2.1.89 proteos_claude_sha256=<hex>'`.
-  The bake then installs `/usr/local/bin/claude`; the providers `profile.d` wiring
-  is baked regardless. **Bumping the Claude version on an already-baked host needs a
-  forced rebuild** (delete `manifest.lock`), since the bake is guarded on source
-  changes, not on `proteos_claude_version`.
+- **Baking Claude Code (Phase 5):** controlled by `proteos_claude_install`:
+  - `bootstrap` (**default**) — the bake fetches the official `claude` native
+    binary from Anthropic's release endpoint and verifies it against the published
+    manifest checksum. Pin the channel/version with `proteos_claude_version`
+    (`stable` default, or `latest`/`X.Y.Z`). Needs network on the **bake host**;
+    the runtime image stays pinned/offline. The resolved version + sha256 are
+    recorded in `manifest.lock`.
+  - `binary` — air-gapped: provide a pre-fetched pinned binary via
+    `proteos_claude_binary_url` *or* `proteos_claude_binary_src` (+ `proteos_claude_version`,
+    and `proteos_claude_sha256` to pin), e.g.
+    `--extra-vars 'proteos_claude_install=binary proteos_claude_version=2.1.89 proteos_claude_binary_src=./claude-2.1.89 proteos_claude_sha256=<hex>'`.
+  - `none` — skip Claude Code (the providers `profile.d` wiring is still baked).
+
+  **Bumping the version/channel on an already-baked host needs a forced rebuild**
+  (delete `manifest.lock`), since the bake is guarded on source changes, not on
+  these vars.
 - The optional port firewall uses its **own** nft table + a oneshot unit, so it
   never clobbers the ruleset the node-agent manages for guest taps.
