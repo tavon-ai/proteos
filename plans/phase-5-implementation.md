@@ -11,6 +11,8 @@
 > `secrets.Store` swap. Migration numbering below assumes Phase 4 takes `000003`; use the
 > next free number if order flips.
 
+Phase 5 closed.
+
 ## Context
 
 Phase 1 deliberately shipped secrets behind a `Store` interface

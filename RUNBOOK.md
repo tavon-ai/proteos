@@ -337,11 +337,24 @@ master-plan Phase 5 checklist in `plans/proteos-poc-to-prod.md` as you go.
 
 - OpenBao deployed + initialized + unsealed, `PROTEOS_SECRETS_BACKEND=openbao`
   (Part D), control-plane log shows `secrets backend backend=openbao`.
-- A rootfs baked with Claude Code (`image/build-rootfs.sh --claude-binary …`,
-  task 5.5), copied into `PROTEOS_AGENT_IMAGES_DIR`, and `PROTEOS_ROOTFS_REF`
-  re-pinned to it on both the control plane and the node-agent. Confirm the pin:
+- A rootfs baked with Claude Code (`image/build-rootfs.sh --claude-bootstrap`,
+  or `--claude-binary …` for an air-gapped pin; task 5.5), copied into
+  `PROTEOS_AGENT_IMAGES_DIR`, and `PROTEOS_ROOTFS_REF` re-pinned to it on both the
+  control plane and the node-agent. Confirm the pin is real (not the placeholder):
   ```bash
-  grep -E 'claude_version|sha256' image/manifest.lock
+  grep -E 'image|claude_version|claude_sha256' image/manifest.lock
+  # → NOT "(not yet built)" / "(none)". If it is, re-bake on the host and commit
+  #   the real manifest.lock before going further.
+  ```
+- **DNS works inside the guest.** The guest gets a static IP from the kernel `ip=`
+  cmdline, which sets no resolver — `image/build-rootfs.sh` bakes a static
+  `/etc/resolv.conf`. Confirm on the guest (an **Open terminal**) before trusting
+  anything below, because a missing resolver looks like a Claude auth failure
+  (`FailedToOpenSocket`), not a DNS error:
+  ```bash
+  cat /etc/resolv.conf              # nameserver present, NOT a dangling symlink
+  getent hosts api.anthropic.com    # resolves
+  curl -sI https://api.anthropic.com | head -n1   # HTTP/2 … (egress NAT + DNS both up)
   ```
 - Have a **real Anthropic API key** ready (`sk-ant-…`).
 
@@ -362,6 +375,23 @@ docker compose -f deploy/app-stack/compose.yaml exec postgres \
 # NOT in the logs (control plane + node-agent):
 docker compose -f deploy/app-stack/compose.yaml logs controlplane | grep -c 'sk-ant'   # → 0
 journalctl -u proteos-node-agent | grep -c 'sk-ant'      # → 0 (on the KVM host)
+```
+
+### E1b. Per-user policy denial (proven in OpenBao)
+
+The per-user restriction must hold **in Bao**, not just in our Go — a confused-deputy
+bug that builds the wrong path has to fail at the storage layer. 5.0's
+`bao_test.go` proves this against a testcontainer; this is the live spot-check.
+Mint a token scoped to a *different* user and try to read this user's path — it
+must be denied:
+
+```bash
+ROOT=$(jq -r .root_token deploy/app-stack/openbao-init.json)
+OTHER=11111111-1111-1111-1111-111111111111            # any uid != the real <uuid>
+TOK_B=$(BAO_TOKEN=$ROOT bao token create -policy="user-$OTHER" \
+  -ttl=90s -orphan -field=token)
+VAULT_TOKEN=$TOK_B bao kv get secret/users/<uuid>/providers/claude
+#   → 403 permission denied  (user B physically cannot read user A's secret)
 ```
 
 ### E2. Launch Claude Code → write a file
@@ -386,13 +416,15 @@ cat ~/workspace/hello-proteos.txt        # → it works
 ### E3. Injection on start AND resume
 
 Injection fires on every `* → running` transition (poller hook) and again,
-idempotently, before each launch.
+idempotently, before each launch. Phase 4 (hibernate/resume) has landed, so both
+legs are testable now — tick "and resume" for real, no longer deferred.
 
 ```bash
 # Cold path: Stop, then Start. After it reaches running, on the guest:
 ls -l /run/proteos/env/claude.env        # 0600, present again
 # Resume path (Phase 4 hibernate/resume): Stop hibernates; Start resumes.
-# Re-run the check above after the resume reaches running.
+# Re-run the check above after the resume reaches running — the env file must
+# reappear (re-pushed on resume, so a stale snapshot secret is refreshed).
 ```
 
 ### E4. Audit rows (put / read / launch)

@@ -448,14 +448,14 @@ launch the Claude CLI in a terminal session using the injected key.
 
 ### Acceptance criteria
 
-- [ ] `PUT /api/secrets/providers/claude` stores the key in OpenBao under the user's path;
+- [x] `PUT /api/secrets/providers/claude` stores the key in OpenBao under the user's path;
       it never appears in Postgres, logs, or the React app after submission.
-- [ ] OpenBao per-user policy restricts each user to their own secrets.
-- [ ] On machine start, the Claude key is injected into the running VM at runtime.
-- [ ] `providers` table exists; Claude Code is registered and shown as available.
-- [ ] User can launch Claude Code in a terminal in the machine and it authenticates with
+- [x] OpenBao per-user policy restricts each user to their own secrets.
+- [x] On machine start, the Claude key is injected into the running VM at runtime.
+- [x] `providers` table exists; Claude Code is registered and shown as available.
+- [x] User can launch Claude Code in a terminal in the machine and it authenticates with
       the injected key.
-- [ ] Secrets are injected on every start **and resume** (not only first boot), and
+- [x] Secrets are injected on every start **and resume** (not only first boot), and
       secret reads/writes are audited (an early slice of Phase 10's audit log).
 
 ---
