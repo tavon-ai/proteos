@@ -96,17 +96,29 @@ func TestProvidersListAndKeySet(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&views); err != nil {
 		t.Fatal(err)
 	}
-	// Phase 6 seeds four providers, ordered by key: claude, gemini, openai, pi.
-	if len(views) != 4 || views[0]["key"] != "claude" {
-		t.Fatalf("expected four seeded providers starting with claude, got %v", views)
+	// Assert the four Phase 6 seeds are present (by key, not by exact count: the
+	// shared CI providers table may transiently hold rows from other tests).
+	byKey := func(vs []map[string]any) map[string]map[string]any {
+		m := map[string]map[string]any{}
+		for _, v := range vs {
+			m[v["key"].(string)] = v
+		}
+		return m
 	}
-	if views[0]["key_set"] != false || views[0]["enabled"] != true {
-		t.Fatalf("claude should be enabled, key unset: %v", views[0])
+	bk := byKey(views)
+	for _, k := range []string{"claude", "gemini", "openai", "pi"} {
+		if _, ok := bk[k]; !ok {
+			t.Fatalf("seeded provider %q missing from %v", k, views)
+		}
+	}
+	claude := bk["claude"]
+	if claude["key_set"] != false || claude["enabled"] != true {
+		t.Fatalf("claude should be enabled, key unset: %v", claude)
 	}
 	// The view carries field metadata so the UI can render a form from data.
-	fields, ok := views[0]["secret_fields"].([]any)
+	fields, ok := claude["secret_fields"].([]any)
 	if !ok || len(fields) != 1 {
-		t.Fatalf("claude secret_fields = %v", views[0]["secret_fields"])
+		t.Fatalf("claude secret_fields = %v", claude["secret_fields"])
 	}
 	f0 := fields[0].(map[string]any)
 	if f0["name"] != "api_key" || f0["env"] != "ANTHROPIC_API_KEY" || f0["label"] == "" {
@@ -122,8 +134,8 @@ func TestProvidersListAndKeySet(t *testing.T) {
 	r3 := fx.do(t, http.MethodGet, "/api/providers", "", false)
 	defer r3.Body.Close()
 	_ = json.NewDecoder(r3.Body).Decode(&views)
-	if views[0]["key_set"] != true {
-		t.Fatalf("key_set should be true after put: %v", views[0])
+	if byKey(views)["claude"]["key_set"] != true {
+		t.Fatalf("key_set should be true after put: %v", byKey(views)["claude"])
 	}
 
 	stored, err := fx.sec.Get(secrets.UserProviderPath(fx.uid(), "claude"))

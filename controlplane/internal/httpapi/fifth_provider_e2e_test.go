@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/auth"
@@ -148,6 +149,7 @@ type fifthFixture struct {
 	url       string
 	token     string
 	machineID string
+	pool      *pgxpool.Pool
 	rawExec   func(ctx context.Context, sql string, args ...any)
 }
 
@@ -207,7 +209,7 @@ func setupFifthCP(t *testing.T, nodes *nodeclient.Client) fifthFixture {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	fx := fifthFixture{url: ts.URL, token: token, machineID: machine.UUIDString(m.ID)}
+	fx := fifthFixture{url: ts.URL, token: token, machineID: machine.UUIDString(m.ID), pool: pool}
 	fx.rawExec = func(ctx context.Context, sql string, args ...any) {
 		if _, err := pool.Exec(ctx, sql, args...); err != nil {
 			t.Fatalf("exec %q: %v", sql, err)
@@ -228,10 +230,18 @@ func insertProvider(t *testing.T, fx fifthFixture, row providerRow) {
 	if row.setup != "" {
 		setup = row.setup
 	}
+	// Upsert (so a leftover row from an earlier interrupted run can't dup-error)
+	// and delete on cleanup, restoring the shared providers table — testutil does
+	// not truncate it (see its doc).
 	fx.rawExec(context.Background(),
 		`INSERT INTO providers (key, display_name, launch_command, setup_command, secret_fields, enabled)
-		 VALUES ($1, $1, $2, $3, $4::jsonb, true)`,
+		 VALUES ($1, $1, $2, $3, $4::jsonb, true)
+		 ON CONFLICT (key) DO UPDATE SET launch_command=EXCLUDED.launch_command,
+		   setup_command=EXCLUDED.setup_command, secret_fields=EXCLUDED.secret_fields, enabled=true`,
 		row.key, row.command, setup, row.fields)
+	t.Cleanup(func() {
+		_, _ = fx.pool.Exec(context.Background(), "DELETE FROM providers WHERE key=$1", row.key)
+	})
 }
 
 // setProviderKey sets a provider's secret fields through the public write-only

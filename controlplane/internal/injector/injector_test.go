@@ -163,16 +163,21 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 	pool, q := testutil.Postgres(t)
 
 	// Insert a custom provider row directly — onboarding a provider is data only.
+	// Upsert + cleanup so the shared (CI) providers table is restored afterwards
+	// (testutil.Postgres does not truncate providers — see its doc).
 	const setup = "printenv OPENAI_API_KEY | codex login --with-api-key"
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO providers (key, display_name, launch_command, setup_command, secret_fields, enabled)
-		 VALUES ('stub','Stub','stub',$1,$2::jsonb,true)`,
+		 VALUES ('injstub','Inj Stub','stub',$1,$2::jsonb,true)
+		 ON CONFLICT (key) DO UPDATE SET launch_command=EXCLUDED.launch_command,
+		   setup_command=EXCLUDED.setup_command, secret_fields=EXCLUDED.secret_fields, enabled=true`,
 		setup,
 		`[{"name":"client_id","label":"Client ID","env":"STUB_CLIENT_ID"},
 		  {"name":"client_secret","label":"Client secret","env":"STUB_CLIENT_SECRET"}]`,
 	); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), "DELETE FROM providers WHERE key='injstub'") })
 
 	user, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 101, Login: "multi"})
 	if err != nil {
@@ -181,7 +186,7 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 	uid := machine.UUIDString(user.ID)
 
 	sec := secrets.NewMemStore()
-	if err := sec.Put(secrets.UserProviderPath(uid, "stub"), map[string]string{
+	if err := sec.Put(secrets.UserProviderPath(uid, "injstub"), map[string]string{
 		"client_id":     "id-42",
 		"client_secret": "shh-99",
 	}); err != nil {
@@ -196,9 +201,9 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 
 	guest.mu.Lock()
 	defer guest.mu.Unlock()
-	def, ok := guest.last.Providers["stub"]
+	def, ok := guest.last.Providers["injstub"]
 	if !ok {
-		t.Fatalf("stub not pushed: %v", guest.last.Providers)
+		t.Fatalf("injstub not pushed: %v", guest.last.Providers)
 	}
 	if def.Command != "stub" {
 		t.Fatalf("command = %q, want stub", def.Command)

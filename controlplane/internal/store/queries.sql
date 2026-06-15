@@ -173,6 +173,12 @@ SELECT * FROM providers ORDER BY key;
 -- name: GetProvider :one
 SELECT * FROM providers WHERE key = $1;
 
+-- name: SetProvidersEnabled :exec
+-- Reconcile the enabled flag (Phase 6): enable exactly the given provider keys
+-- and disable every other registered provider, so the registry matches the CLIs
+-- actually baked into the rootfs.
+UPDATE providers SET enabled = (key = ANY(@keys::text[]));
+
 -- name: InsertAuditLog :one
 -- Append one audit row. user_id may be NULL for system actors (the injector).
 INSERT INTO audit_log (user_id, actor, action, target, metadata)

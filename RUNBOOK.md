@@ -456,37 +456,52 @@ When every row passes, tick the master-plan Phase 5 checklist in
 
 ## Part F — Phase 6 acceptance walkthrough (Gemini, Codex, pi.dev)
 
-Phase 6 adds three providers as **data + rootfs**, no control-plane code. Run
-this after Part E on the live stack.
+Phase 6 adds three providers as **data + rootfs**, no control-plane code. The
+extra CLIs are **opt-in**: you bake the ones you want and tell the control plane
+which it may offer. Run this after Part E on the live stack.
 
-### F0. Bake + restage the bigger image
+### F0. Bake the providers you want into the image
 
-The Phase 6 image bundles a pinned Node LTS + the three CLIs alongside Claude.
-Pin exact versions/sha256 in `image/PROVIDERS.md` first (run its verification
-recipe in an Ubuntu 24.04 x86_64 container), then bake:
+Providers install the **latest** version by default (pin with `proteos_<p>_version`
+in Ansible / `--<name>-version` on the script). The bake records the resolved
+versions in `manifest.lock`. Via Ansible (preferred — see
+`deploy/ansible/README.md`):
 
 ```bash
-image/build-rootfs.sh --base <firecracker-ci-ubuntu-24.04.ext4> \
-  --claude-bootstrap \
-  --node-version vX.Y.Z \
-  --gemini-version A.B.C --pi-version D.E.F \
-  --codex-binary ./codex --codex-version G.H.I --codex-sha256 <hex>
+ansible-playbook -i inventory.ini site.yml \
+  --extra-vars "proteos_agent_token=$(openssl rand -hex 32) \
+                proteos_gemini_install=latest proteos_codex_install=latest proteos_pi_install=latest"
 ```
 
-- This image grows **materially** over the claude-only Phase 5 image (Node alone
+or directly: `image/build-rootfs.sh --base <ci.ext4> --claude-bootstrap --gemini --codex --pi`.
+
+- The image grows **materially** over the claude-only Phase 5 image (Node alone
   is ~120 MiB unpacked); the script reserves +512 MiB headroom when any provider
-  CLI is baked. Record the final size + build time in `image/PROVIDERS.md`.
-- Copy the emitted `.ext4` into `PROTEOS_AGENT_IMAGES_DIR` and re-pin
-  `PROTEOS_ROOTFS_REF` on both the control plane and node-agent. Confirm the new
-  pins are real:
+  CLI is baked. Capture the final size + build time with `image/bake-report.sh`
+  (writes them into `image/PROVIDERS.md`).
+- Ansible re-pins `PROTEOS_ROOTFS_REF` automatically; for a manual bake, copy the
+  emitted `.ext4` into `PROTEOS_AGENT_IMAGES_DIR` and re-pin it. Confirm the pins:
   ```bash
-  grep -E 'node_version|gemini_version|codex_version|pi_version|features' image/manifest.lock
-  # → real versions, and features include node,gemini,codex,pi
+  grep -E 'node_version|gemini_version|codex_version|pi_version|features' /var/lib/proteos/images/manifest.lock
   ```
-- On a guest **Open terminal**, confirm each CLI is present:
-  ```bash
-  claude --version && gemini --version && codex --version && pi --version
-  ```
+- On a guest **Open terminal**, confirm the CLIs you baked are present (e.g.
+  `claude --version && codex --version && pi --version`).
+
+### F0b. Tell the control plane which providers to offer
+
+The registry seeds all four providers, but the UI must only offer the ones
+actually baked. Set `PROTEOS_PROVIDERS_ENABLED` (app-stack env) to **match your
+bake flags** — CSV of provider keys; the control plane enables exactly these and
+disables the rest on startup:
+
+```bash
+# matches a bake of claude + codex + pi (no gemini):
+PROTEOS_PROVIDERS_ENABLED=claude,openai,pi
+```
+
+(`gemini` registry key = `--gemini` bake flag; `openai` = `--codex`. Default if
+unset in compose is `claude` only.) Restart the control plane; its log shows
+`provider enablement reconciled`. The dashboard now offers only the baked set.
 
 ### F1. Set keys + launch each provider
 

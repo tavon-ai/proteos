@@ -146,6 +146,21 @@ func run(migrate, migrateOnly bool) error {
 	inject := injector.New(nodes, providerRegistry, sec, auditRec)
 	poller.SetOnRunning(inject.InjectAsync)
 
+	// Phase 6: align the registry's enabled flags with the providers actually
+	// baked into the rootfs (PROTEOS_PROVIDERS_ENABLED), so the UI never offers a
+	// provider whose CLI is missing from the image. Absent ⇒ leave the seeds.
+	if cfg.ProvidersEnabledSet {
+		unknown, err := providerRegistry.SetEnabled(ctx, cfg.ProvidersEnabled)
+		if err != nil {
+			slog.Error("reconcile provider enablement", "err", err)
+			os.Exit(1)
+		}
+		if len(unknown) > 0 {
+			slog.Warn("PROTEOS_PROVIDERS_ENABLED lists unknown providers (ignored)", "keys", unknown)
+		}
+		slog.Info("provider enablement reconciled", "enabled", cfg.ProvidersEnabled)
+	}
+
 	go poller.Run(ctx)
 
 	// Phase 3: the terminal gateway proxies the browser WS to each machine's

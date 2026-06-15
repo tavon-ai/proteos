@@ -94,6 +94,16 @@ type Config struct {
 	// Origin header (PROTEOS_ALLOWED_WS_ORIGINS, CSV). Defaults to the BaseURL
 	// origin; in dev the Vite origin (http://localhost:5173) is also added.
 	AllowedWSOrigins []string
+
+	// --- Phase 6: provider enablement --------------------------------------
+
+	// ProvidersEnabled aligns the registry's enabled flag with the providers
+	// actually baked into the rootfs (PROTEOS_PROVIDERS_ENABLED, CSV of provider
+	// keys). When set, startup enables exactly these keys and disables all others,
+	// so the UI never offers a provider whose CLI is not in the image. When the
+	// var is absent the registry is left as seeded (ProvidersEnabledSet is false).
+	ProvidersEnabled    []string
+	ProvidersEnabledSet bool
 }
 
 // Load reads configuration from the environment and validates it. The
@@ -129,6 +139,13 @@ func Load() (*Config, error) {
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {
 		c.StateSigningKey = []byte(key)
+	}
+
+	// Provider enablement: presence of the var (even empty) triggers reconcile;
+	// an empty value disables every provider, a CSV enables exactly those keys.
+	if v, ok := os.LookupEnv("PROTEOS_PROVIDERS_ENABLED"); ok {
+		c.ProvidersEnabledSet = true
+		c.ProvidersEnabled = splitList(v)
 	}
 
 	// Allowed WebSocket origins: explicit CSV wins; otherwise default to the

@@ -99,6 +99,13 @@ services:
       PROTEOS_MACHINE_VCPUS: ${PROTEOS_MACHINE_VCPUS:-2}
       PROTEOS_MACHINE_MEM_MIB: ${PROTEOS_MACHINE_MEM_MIB:-2048}
 
+      # Phase 6: which provider CLIs the UI may offer — set this to match the
+      # providers you baked into the rootfs (the Ansible proteos_<p>_install flags).
+      # CSV of provider keys; unset ⇒ leave the registry seeds as-is. Default keeps
+      # only Claude (the always-baked Phase 5 CLI); add openai/gemini/pi as you bake
+      # them, e.g. PROTEOS_PROVIDERS_ENABLED=claude,openai,pi.
+      PROTEOS_PROVIDERS_ENABLED: ${PROTEOS_PROVIDERS_ENABLED:-claude}
+
       # GitHub OAuth (Phase 1 auth).
       GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:?}
       GITHUB_APP_CLIENT_SECRET: ${GITHUB_APP_CLIENT_SECRET:?}

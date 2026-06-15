@@ -663,6 +663,18 @@ func (q *Queries) SetMachineRuntime(ctx context.Context, arg SetMachineRuntimePa
 	return i, err
 }
 
+const setProvidersEnabled = `-- name: SetProvidersEnabled :exec
+UPDATE providers SET enabled = (key = ANY($1::text[]))
+`
+
+// Reconcile the enabled flag (Phase 6): enable exactly the given provider keys
+// and disable every other registered provider, so the registry matches the CLIs
+// actually baked into the rootfs.
+func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error {
+	_, err := q.db.Exec(ctx, setProvidersEnabled, keys)
+	return err
+}
+
 const touchSession = `-- name: TouchSession :exec
 UPDATE sessions SET expires_at = $2 WHERE id = $1
 `

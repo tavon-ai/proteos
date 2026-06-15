@@ -118,6 +118,32 @@ func (r *Registry) Get(ctx context.Context, key string) (Provider, error) {
 	return fromRow(row)
 }
 
+// SetEnabled enables exactly the given provider keys and disables every other
+// registered provider (Phase 6), aligning the registry with the CLIs actually
+// baked into the rootfs so the UI never offers an unavailable provider. It
+// returns the keys that were requested but are not registered (typos / providers
+// dropped from the seeds), so the caller can warn — they are simply ignored.
+func (r *Registry) SetEnabled(ctx context.Context, keys []string) ([]string, error) {
+	known := map[string]struct{}{}
+	all, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range all {
+		known[p.Key] = struct{}{}
+	}
+	var unknown []string
+	for _, k := range keys {
+		if _, ok := known[k]; !ok {
+			unknown = append(unknown, k)
+		}
+	}
+	if err := r.q.SetProvidersEnabled(ctx, keys); err != nil {
+		return unknown, err
+	}
+	return unknown, nil
+}
+
 func fromRow(row store.Provider) (Provider, error) {
 	var fields []SecretField
 	if len(row.SecretFields) > 0 {
