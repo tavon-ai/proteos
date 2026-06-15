@@ -283,6 +283,84 @@ install_git() {
   ok "git installed (${GIT_VERSION})"
 }
 
+# lay_down_cache MNT — extract every .deb currently in the image's apt archive
+# cache with `dpkg-deb -x` (no maintainer scripts), skipping core packages that
+# any bootable base already ships (reinstalling those is what breaks Phase 4
+# resume — see install_git). Same extract-only discipline; factored out so the
+# user-provisioning step can reuse it without perturbing install_git.
+lay_down_cache() {
+  local mnt="$1" cache="$1/var/cache/apt/archives" laid=0
+  for deb in "$cache"/*.deb; do
+    [[ -e $deb ]] || continue
+    case "$(basename "$deb")" in
+      libc6_* | libc-bin_* | libcrypt1_* | libgcc-s1_* | gcc-*-base_* | \
+        perl_* | perl-base_* | perl-modules-* | debconf_* | dpkg_* | tar_*)
+        continue
+        ;;
+    esac
+    local probe
+    probe="$(dpkg-deb -c "$deb" | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1 || true)"
+    probe="${probe#.}"
+    if [[ -n $probe && -e "$mnt$probe" ]]; then
+      continue
+    fi
+    sudo dpkg-deb -x "$deb" "$mnt"
+    laid=$((laid + 1))
+  done
+  sudo rm -f "$cache"/*.deb
+  echo "$laid"
+}
+
+# provision_user MNT USER UID — create the unprivileged login the guest runs its
+# shells + agent CLIs as (Phase 8). The guest agent stays root, but every PTY it
+# spawns drops to this user, so a rogue agent command is non-root and tools (npm,
+# git, installers) behave the way they do on a real workstation. Grants
+# passwordless sudo (the microVM is the real isolation boundary; the non-root
+# default is realism + a speed-bump). Idempotent: skips the user if it exists and
+# only installs sudo if missing. Needs the chroot binds (apt). Sets USER_NAME.
+provision_user() {
+  local mnt="$1" user="$2" uid="$3"
+  command -v dpkg-deb >/dev/null || die "dpkg-deb required on the build host to lay down sudo"
+  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    sh -c 'command -v useradd && command -v groupadd' >/dev/null 2>&1 \
+    || die "base image lacks useradd/groupadd (the 'passwd' package); cannot create the '$user' user (pass --no-user to skip)"
+
+  # sudo, extract-only (apt would reinstall the base closure in the slimmed image
+  # and break resume — same reasoning as install_git).
+  if sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v sudo' >/dev/null 2>&1; then
+    ok "sudo already present in base"
+  else
+    log "installing sudo (apt download + extract-only)"
+    local apt_opts='-o APT::Sandbox::User=root -o Acquire::Retries=3'
+    sudo chroot "$mnt" /usr/bin/env \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
+      sh -c "mkdir -p /tmp /var/log /var/log/apt /var/cache/apt/archives/partial /var/lib/apt/lists/partial && \
+        apt-get $apt_opts update -qq && apt-get $apt_opts -d install -y --no-install-recommends sudo" \
+      || die "apt-get download of sudo failed (base needs working apt sources + network; pass --no-user to skip)"
+    local laid
+    laid="$(lay_down_cache "$mnt")"
+    log "sudo: laid down $laid package(s) missing from the base"
+    sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v sudo' >/dev/null 2>&1 \
+      || die "sudo extract-only install failed: sudo not runnable in the image"
+  fi
+
+  # Create the group + user idempotently. -m seeds /home/$user from /etc/skel.
+  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    sh -c "getent group $user >/dev/null 2>&1 || groupadd -g $uid $user" \
+    || die "groupadd $user failed"
+  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    sh -c "id -u $user >/dev/null 2>&1 || useradd -m -u $uid -g $uid -s /bin/bash $user" \
+    || die "useradd $user failed"
+
+  # Passwordless sudo for the user (0440, root-owned, as visudo requires).
+  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" | sudo tee "$mnt/etc/sudoers.d/$user" >/dev/null
+  sudo chmod 0440 "$mnt/etc/sudoers.d/$user"
+  sudo chown 0:0 "$mnt/etc/sudoers.d/$user"
+
+  USER_NAME="$user"
+  ok "provisioned unprivileged user '$user' (uid $uid) with passwordless sudo"
+}
+
 # npm_spec PKG VERSION — "pkg@version" if pinned, else "pkg" (npm resolves latest).
 npm_spec() {
   local pkg="$1" ver="$2"
@@ -322,11 +400,21 @@ PI_VERSION=""
 # already ships git, or an air-gapped build with no apt).
 GIT_INSTALL=1
 GIT_VERSION=""
+# Phase 8: provision an unprivileged 'dev' user (uid 1000) the guest runs its
+# shells + agent CLIs as, with passwordless sudo. --no-user opts out (sessions
+# then run as root, the legacy behavior — the guest agent falls back to root when
+# the user is absent).
+USER_PROVISION=1
+USER_NAME=""
+RUN_AS_USER="dev"
+RUN_AS_UID=1000
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
     --git) GIT_INSTALL=1; shift ;;
     --no-git) GIT_INSTALL=0; shift ;;
+    --user) USER_PROVISION=1; shift ;;
+    --no-user) USER_PROVISION=0; shift ;;
     --out-dir) OUT_DIR=$2; shift 2 ;;
     --grow-mib) GROW_MIB=$2; shift 2 ;;
     --claude-binary) CLAUDE_BIN=$2; shift 2 ;;
@@ -547,6 +635,15 @@ if [[ $GIT_INSTALL -eq 1 ]]; then
   FEATURES="$FEATURES,git"
 fi
 
+# Phase 8: provision the unprivileged 'dev' user (+ sudo). Needs the chroot binds
+# for apt (sudo) and useradd, so bracket it the same way.
+if [[ $USER_PROVISION -eq 1 ]]; then
+  bind_chroot
+  provision_user "$MNT" "$RUN_AS_USER" "$RUN_AS_UID"
+  unbind_chroot
+  FEATURES="$FEATURES,user"
+fi
+
 if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
   FEATURES="$FEATURES,node"
@@ -581,6 +678,7 @@ PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_GUESTAGENT_VERSION=$VERSION
 PROTEOS_GUESTAGENT_FEATURES=$FEATURES
 PROTEOS_GIT_VERSION=${GIT_VERSION:-none}
+PROTEOS_RUN_AS_USER=${USER_NAME:-root}
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
 PROTEOS_NODE_VERSION=${NODE_VERSION:-none}
 PROTEOS_GEMINI_VERSION=${GEMINI_VERSION:-none}

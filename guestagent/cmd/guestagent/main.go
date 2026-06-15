@@ -22,6 +22,7 @@ import (
 	"github.com/tavon/proteos/guestagent/internal/listen"
 	"github.com/tavon/proteos/guestagent/internal/localsock"
 	"github.com/tavon/proteos/guestagent/internal/persist"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 	"github.com/tavon/proteos/guestagent/internal/secrets"
 	"github.com/tavon/proteos/guestagent/internal/server"
 	"github.com/tavon/proteos/guestagent/internal/term"
@@ -60,27 +61,45 @@ func run() error {
 	}
 	defer ln.Close()
 
+	// Resolve the unprivileged user that PTY sessions run as (Phase 8). The agent
+	// stays root; sessions drop to this user. Falls back to root if it is absent
+	// (older rootfs / dev on a Mac), preserving the legacy all-root behavior.
+	id := runas.Resolve(cfg.RunAsUser)
+	slog.Info("guest: session run-as identity", "user", id.Name, "uid", id.UID, "home", id.Home, "root", id.IsRoot)
+
 	// Persistence runs first, before any shell spawns, so $HOME and the
 	// workspace are on the disk (decision #7). A degraded handle (no disk) still
 	// serves terminals — ephemerally.
 	p, err := persist.Setup(persist.Config{
-		Dir:     cfg.PersistDir,
-		Device:  cfg.PersistDevice,
-		Version: version,
+		Dir:       cfg.PersistDir,
+		Device:    cfg.PersistDevice,
+		Version:   version,
+		RunAsHome: id.Home,
+		RunAsUID:  id.UID,
+		RunAsGID:  id.GID,
+		RunAsUser: id.Name,
 	})
 	if err != nil {
 		return err
 	}
 	defer p.Close()
 
+	// Sessions drop to the unprivileged user and start in its $HOME (which it can
+	// write); the credential is nil for the root identity.
+	sessDir := ""
+	if !id.IsRoot {
+		sessDir = id.Home
+	}
 	mgr := term.NewManager(term.Config{
 		Shell:         cfg.Shell,
 		ScrollbackKiB: cfg.ScrollbackKiB,
 		Env:           p.ShellEnv(),
+		Credential:    id.Credential(),
+		Dir:           sessDir,
 	})
 	defer mgr.Shutdown()
 
-	sec, err := secrets.New(cfg.EnvDir)
+	sec, err := secrets.New(cfg.EnvDir, id)
 	if err != nil {
 		return err
 	}
@@ -91,8 +110,8 @@ func run() error {
 	// Phase 7: the control channel (CP-dialed GET /control) and the local
 	// credential-helper socket. The manager holds the single live channel and
 	// resolves git credentials for the helper over it.
-	control := ctlchan.New(p.ShellEnv())
-	helperSock := localsock.New(guestwire.AgentSockPath, control)
+	control := ctlchan.New(p.ShellEnv(), id)
+	helperSock := localsock.New(guestwire.AgentSockPath, control, id)
 	go func() {
 		if err := helperSock.Serve(ctx); err != nil {
 			slog.Error("credential helper socket", "err", err)

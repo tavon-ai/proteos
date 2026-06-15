@@ -32,6 +32,7 @@ import (
 	"time"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
 // setupTimeout bounds a single setup_command run. A login step that hangs past
@@ -53,6 +54,7 @@ type providerState struct {
 // for concurrent use.
 type Store struct {
 	envDir string
+	owner  runas.Identity // session user that login shells source env files as
 
 	mu        sync.RWMutex
 	providers map[string]providerState
@@ -73,13 +75,20 @@ type Store struct {
 }
 
 // New creates a Store backed by envDir (created 0700 if absent). In production
-// envDir is /run/proteos/env (tmpfs); tests pass a temp dir.
-func New(envDir string) (*Store, error) {
+// envDir is /run/proteos/env (tmpfs); tests pass a temp dir. owner is the
+// unprivileged session user whose login shells source the env files; the dir
+// and each env file are chowned to it so it can read them (root, which runs the
+// agent, still bypasses these perms). For the root identity this is a no-op.
+func New(envDir string, owner runas.Identity) (*Store, error) {
 	if err := os.MkdirAll(envDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create env dir: %w", err)
 	}
+	if err := owner.Chown(envDir); err != nil {
+		slog.Warn("secrets: chown env dir failed", "dir", envDir, "err", err)
+	}
 	s := &Store{
 		envDir:    envDir,
+		owner:     owner,
 		providers: make(map[string]providerState),
 	}
 	s.runSetup = s.runSetupCommand
@@ -260,6 +269,9 @@ func (s *Store) writeEnvFile(key string, env map[string]string) error {
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("rename env file: %w", err)
+	}
+	if err := s.owner.Chown(path); err != nil {
+		slog.Warn("secrets: chown env file failed", "path", path, "err", err)
 	}
 	return nil
 }

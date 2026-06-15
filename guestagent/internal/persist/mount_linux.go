@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -39,21 +40,112 @@ func mountDisk(device, mountpoint string, wait time.Duration) error {
 }
 
 // setupDiskBinds ensures home/ + workspace/ on the mounted disk and bind-mounts
-// them over /root and /workspace so the root shell's $HOME and the workspace
-// live on the disk (decision #7).
-func setupDiskBinds(mount string) error {
+// them over homeTarget (the session user's $HOME, e.g. /home/dev — or /root in
+// the legacy root case) and /workspace so $HOME and the workspace live on the
+// disk (decision #7). When uid != 0 the persisted home + workspace are chowned
+// to the unprivileged session user so its shells can write them, and a fresh
+// (empty) home is seeded from /etc/skel for a sane first login.
+func setupDiskBinds(mount, homeTarget string, uid, gid int) error {
 	homeSrc := filepath.Join(mount, "home")
 	workSrc := filepath.Join(mount, "workspace")
-	if err := ensureDirs(homeSrc, workSrc, "/root", "/workspace"); err != nil {
+	if err := ensureDirs(homeSrc, workSrc, homeTarget, "/workspace"); err != nil {
 		return err
 	}
-	if err := bindMount(homeSrc, "/root"); err != nil {
+	if uid != 0 {
+		seedHome(homeSrc)
+		// Chown the disk dirs (the bind sources) so the unprivileged user owns its
+		// home + workspace. Covers first creation and migration from an older
+		// root-owned disk. Skipped when the dir already belongs to the user, so a
+		// steady-state boot does not re-walk a large workspace (cloned repos,
+		// node_modules) every time.
+		if err := chownTreeIfNeeded(homeSrc, uid, gid); err != nil {
+			slog.Warn("persist: chown home failed; unprivileged user may not be able to write it", "err", err)
+		}
+		if err := chownTreeIfNeeded(workSrc, uid, gid); err != nil {
+			slog.Warn("persist: chown workspace failed", "err", err)
+		}
+	}
+	if err := bindMount(homeSrc, homeTarget); err != nil {
 		return fmt.Errorf("bind home: %w", err)
 	}
 	if err := bindMount(workSrc, "/workspace"); err != nil {
 		return fmt.Errorf("bind workspace: %w", err)
 	}
 	return nil
+}
+
+// chownTreeIfNeeded recursively chowns root to uid:gid, but returns early when
+// root already belongs to uid — the common steady-state case, where re-walking
+// a large tree would only waste boot time. The top-dir owner is a reliable proxy
+// because the tree is only ever chowned as a whole.
+func chownTreeIfNeeded(root string, uid, gid int) error {
+	if fi, err := os.Stat(root); err == nil {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == uid {
+			return nil
+		}
+	}
+	return filepath.Walk(root, func(p string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, uid, gid)
+	})
+}
+
+// seedHome populates an empty home from /etc/skel (best-effort) so a brand-new
+// disk gives the unprivileged user the usual .bashrc/.profile on first login.
+// Does nothing if the home already has contents or /etc/skel is absent.
+func seedHome(home string) {
+	entries, err := os.ReadDir(home)
+	if err != nil || len(entries) > 0 {
+		return // unreadable or already populated — leave it alone
+	}
+	skel, err := os.ReadDir("/etc/skel")
+	if err != nil {
+		return
+	}
+	for _, e := range skel {
+		if err := copyTree(filepath.Join("/etc/skel", e.Name()), filepath.Join(home, e.Name())); err != nil {
+			slog.Warn("persist: seed skel entry failed", "entry", e.Name(), "err", err)
+		}
+	}
+}
+
+// copyTree copies src (file, dir, or symlink) to dst, recursively, preserving
+// mode. Ownership is fixed up afterward by the chownTree pass in setupDiskBinds.
+func copyTree(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(target, dst)
+	case info.IsDir():
+		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, info.Mode().Perm())
+	}
 }
 
 func bindMount(src, dst string) error {

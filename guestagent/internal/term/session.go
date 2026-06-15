@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"github.com/creack/pty"
 )
@@ -80,6 +81,16 @@ type Config struct {
 	// (Phase 5 decision #9) rather than `<shell> -l`. Env still applies as an
 	// overlay so the command sees its provider's secret environment.
 	Command []string
+
+	// Credential, when non-nil, runs the session process under this uid/gid (the
+	// unprivileged `dev` user) instead of inheriting the agent's root identity
+	// (Phase 8). Nil ⇒ run as the agent (root).
+	Credential *syscall.Credential
+
+	// Dir, when non-empty, is the working directory the session starts in. Used
+	// to drop the unprivileged session into its own $HOME (which it can write)
+	// rather than the agent's cwd.
+	Dir string
 }
 
 // newSession spawns the shell (or, for agent sessions, the configured command)
@@ -103,6 +114,15 @@ func newSession(cfg Config) (*Session, error) {
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	if len(cfg.Env) > 0 {
 		cmd.Env = append(cmd.Env, cfg.Env...)
+	}
+	if cfg.Dir != "" {
+		cmd.Dir = cfg.Dir
+	}
+	// Drop to the unprivileged session user when configured. pty.Start fills in
+	// Setsid/Setctty on this same SysProcAttr, so pre-setting Credential here is
+	// compatible with PTY allocation.
+	if cfg.Credential != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cfg.Credential}
 	}
 
 	ptmx, err := pty.Start(cmd)

@@ -49,6 +49,18 @@ type Config struct {
 	// WaitTimeout bounds how long disk mode waits for the device. Zero ⇒
 	// deviceWaitTimeout. Tests set a short value to avoid blocking.
 	WaitTimeout time.Duration
+
+	// --- Phase 8: unprivileged sessions -------------------------------------
+	// When the guest runs PTY sessions as an unprivileged user, these locate and
+	// own that user's $HOME. RunAsHome is the disk-mode bind target for the
+	// persisted home (empty ⇒ /root, the legacy root-shell location). RunAsUID/
+	// RunAsGID, when non-zero, own the persisted home + workspace so the user can
+	// write them. RunAsUser names the user for the shell env (USER/LOGNAME). All
+	// zero/empty ⇒ legacy root behavior, unchanged.
+	RunAsHome string
+	RunAsUID  int
+	RunAsGID  int
+	RunAsUser string
 }
 
 // Persist is the live persistence handle: a mode, a root directory, the home /
@@ -59,6 +71,7 @@ type Persist struct {
 	root    string // persist root (mount point or dir)
 	home    string // resolved $HOME (on disk)
 	work    string // workspace dir (on disk)
+	user    string // unprivileged session user (USER/LOGNAME); empty ⇒ root
 	version string
 
 	mu sync.Mutex
@@ -88,6 +101,7 @@ func Setup(cfg Config) (*Persist, error) {
 		p.root = cfg.Dir
 		p.home = filepath.Join(cfg.Dir, "home")
 		p.work = filepath.Join(cfg.Dir, "workspace")
+		p.user = cfg.RunAsUser
 		if err := ensureDirs(p.home, p.work); err != nil {
 			slog.Error("persist: dir mode setup failed; degrading to ephemeral", "err", err)
 			return degraded(cfg.Version), nil
@@ -99,11 +113,16 @@ func Setup(cfg Config) (*Persist, error) {
 				"device", cfg.Device, "err", err)
 			return degraded(cfg.Version), nil
 		}
+		home := cfg.RunAsHome
+		if home == "" {
+			home = "/root"
+		}
 		p.mode = guestwire.PersistDisk
 		p.root = mount
-		p.home = "/root"
+		p.home = home
 		p.work = "/workspace"
-		if err := setupDiskBinds(mount); err != nil {
+		p.user = cfg.RunAsUser
+		if err := setupDiskBinds(mount, home, cfg.RunAsUID, cfg.RunAsGID); err != nil {
 			slog.Error("persist: bind setup failed; degrading to ephemeral", "err", err)
 			return degraded(cfg.Version), nil
 		}
@@ -137,10 +156,16 @@ func (p *Persist) ShellEnv() []string {
 	if p.home == "" {
 		return nil
 	}
-	return []string{
+	env := []string{
 		"HOME=" + p.home,
 		"PROTEOS_WORKSPACE=" + p.work,
 	}
+	// When sessions run as an unprivileged user, advertise it so the shell, git,
+	// and tools see the right identity (and the prompt isn't "I have no name!").
+	if p.user != "" && p.user != "root" {
+		env = append(env, "USER="+p.user, "LOGNAME="+p.user)
+	}
+	return env
 }
 
 // Resume applies the host-provided wall clock and entropy after a snapshot

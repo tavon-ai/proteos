@@ -15,7 +15,7 @@ func mountDisk(device, mountpoint string, wait time.Duration) error {
 	return errors.New("disk mode is Linux-only; set PROTEOS_GUEST_PERSIST for dir mode")
 }
 
-func setupDiskBinds(mount string) error {
+func setupDiskBinds(mount, homeTarget string, uid, gid int) error {
 	return errors.New("bind mounts are Linux-only")
 }
 

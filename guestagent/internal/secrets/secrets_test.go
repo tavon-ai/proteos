@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
 func TestReplaceWritesEnvFile(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(dir)
+	s, err := New(dir, runas.Root())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestReplaceWritesEnvFile(t *testing.T) {
 
 func TestReplaceIsReplaceAll(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(dir)
+	s, err := New(dir, runas.Root())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestReplaceIsReplaceAll(t *testing.T) {
 
 func TestSingleQuoteEscaping(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := New(dir)
+	s, _ := New(dir, runas.Root())
 	if err := s.Replace(map[string]guestwire.ProviderDef{
 		"x": {Command: "x", Env: map[string]string{"K": "a'b"}},
 	}); err != nil {
@@ -97,7 +98,7 @@ func TestSingleQuoteEscaping(t *testing.T) {
 // clean run leaves the provider un-degraded (Phase 6 decision #3).
 func TestSetupCommandRunsAfterEnvFile(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(dir)
+	s, err := New(dir, runas.Root())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestSetupCommandRunsAfterEnvFile(t *testing.T) {
 // provider's degraded flag.
 func TestSetupFailureMarksDegraded(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := New(dir)
+	s, _ := New(dir, runas.Root())
 	if err := s.Replace(map[string]guestwire.ProviderDef{
 		"openai": {Command: "codex", SetupCommand: "exit 7", Env: map[string]string{"OPENAI_API_KEY": "sk"}},
 	}); err != nil {
@@ -146,7 +147,7 @@ func TestSetupFailureMarksDegraded(t *testing.T) {
 // clears a previously degraded provider (key rotation re-login).
 func TestSuccessfulRepushClearsDegraded(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := New(dir)
+	s, _ := New(dir, runas.Root())
 
 	if err := s.Replace(map[string]guestwire.ProviderDef{
 		"openai": {Command: "codex", SetupCommand: "exit 1", Env: map[string]string{"OPENAI_API_KEY": "bad"}},
@@ -173,7 +174,7 @@ func TestSuccessfulRepushClearsDegraded(t *testing.T) {
 // plain (no setup_command) providers untouched.
 func TestProvidersWithoutSetupAreNeverDegraded(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := New(dir)
+	s, _ := New(dir, runas.Root())
 	if err := s.Replace(map[string]guestwire.ProviderDef{
 		"claude": {Command: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "sk"}},
 	}); err != nil {

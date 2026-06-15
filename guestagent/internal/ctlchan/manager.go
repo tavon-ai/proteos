@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
 // credCacheTTL bounds how long a fetched credential is held in memory. A single
@@ -33,6 +35,7 @@ const cloneTimeout = 10 * time.Minute
 type Manager struct {
 	homeDir string
 	workDir string
+	owner   runas.Identity // unprivileged user that clones run as / owns ~/.gitconfig
 
 	mu     sync.Mutex
 	active *conn
@@ -49,7 +52,7 @@ type credEntry struct {
 // New builds a Manager. env is the guest shell environment (persist.ShellEnv):
 // HOME=... and PROTEOS_WORKSPACE=... determine where ~/.gitconfig is written and
 // where clones land. Sensible defaults apply when either is absent.
-func New(env []string) *Manager {
+func New(env []string, owner runas.Identity) *Manager {
 	home, work := "/root", "/workspace"
 	for _, kv := range env {
 		k, v, ok := strings.Cut(kv, "=")
@@ -63,7 +66,7 @@ func New(env []string) *Manager {
 			work = v
 		}
 	}
-	return &Manager{homeDir: home, workDir: work, cache: map[string]credEntry{}}
+	return &Manager{homeDir: home, workDir: work, owner: owner, cache: map[string]credEntry{}}
 }
 
 // HandleControl upgrades GET /control and serves the control channel until the
@@ -155,7 +158,15 @@ func (m *Manager) writeGitConfig(p guestwire.GitConfigurePayload) error {
 	if err := os.MkdirAll(m.homeDir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(m.homeDir, ".gitconfig"), []byte(b.String()), 0o644)
+	path := filepath.Join(m.homeDir, ".gitconfig")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+	// The agent writes this as root; hand it to the session user that reads it.
+	if err := m.owner.Chown(path); err != nil {
+		slog.Warn("control: chown .gitconfig failed", "path", path, "err", err)
+	}
+	return nil
 }
 
 // validateDest ensures the clone destination stays within the workspace tree.
@@ -184,6 +195,13 @@ func (m *Manager) runClone(p guestwire.GitClonePayload) {
 	cmd := exec.CommandContext(ctx, "git", "clone", p.URL, p.Dest)
 	cmd.Dir = m.workDir
 	cmd.Env = append(os.Environ(), "HOME="+m.homeDir, "GIT_TERMINAL_PROMPT=0")
+	// Clone as the unprivileged session user so the checked-out tree is owned by
+	// it (the agent itself is root) — otherwise the user could not edit the repo
+	// it is meant to work in. The credential helper git spawns then also runs as
+	// that user and reaches the (user-owned) agent socket.
+	if cred := m.owner.Credential(); cred != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Warn("control: clone failed", "op_id", p.OpID, "err", err)

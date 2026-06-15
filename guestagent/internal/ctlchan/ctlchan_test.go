@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
 func TestWriteGitConfig_NoSecretAndIdempotent(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
-	m := New([]string{"HOME=" + home, "PROTEOS_WORKSPACE=" + work})
+	m := New([]string{"HOME=" + home, "PROTEOS_WORKSPACE=" + work}, runas.Root())
 
 	p := guestwire.GitConfigurePayload{Name: "Ivan Pedrazas", Email: "ivan@example.com", Helper: guestwire.HelperBinPath}
 	if err := m.writeGitConfig(p); err != nil {
@@ -48,7 +49,7 @@ func TestWriteGitConfig_NoSecretAndIdempotent(t *testing.T) {
 
 func TestValidateDest(t *testing.T) {
 	work := "/workspace"
-	m := New([]string{"PROTEOS_WORKSPACE=" + work})
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root())
 	cases := []struct {
 		dest string
 		ok   bool

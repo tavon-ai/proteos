@@ -40,6 +40,14 @@ type Config struct {
 	// env files. It must be tmpfs (never the rootfs image or persistent disk);
 	// default /run/proteos/env.
 	EnvDir string
+
+	// --- Phase 8: unprivileged sessions -------------------------------------
+
+	// RunAsUser (PROTEOS_GUEST_RUN_AS_USER) is the unprivileged OS user that PTY
+	// sessions (shells + agent CLIs) run as; default "dev". The guest agent
+	// itself stays root. Set to "root" (or "") to keep the legacy all-root
+	// behavior. If the named user does not exist, sessions fall back to root.
+	RunAsUser string
 }
 
 // Load reads and validates configuration from the environment.
@@ -51,6 +59,7 @@ func Load() (*Config, error) {
 		PersistDir:    os.Getenv("PROTEOS_GUEST_PERSIST"),
 		PersistDevice: getenv("PROTEOS_GUEST_PERSIST_DEV", "/dev/vdb"),
 		EnvDir:        getenv("PROTEOS_GUEST_ENV_DIR", "/run/proteos/env"),
+		RunAsUser:     getenv("PROTEOS_GUEST_RUN_AS_USER", "dev"),
 	}
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)

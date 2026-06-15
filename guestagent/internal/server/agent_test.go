@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 	"github.com/tavon/proteos/guestagent/internal/secrets"
 	"github.com/tavon/proteos/guestagent/internal/term"
 )
@@ -29,7 +30,7 @@ func newAgentServer(t *testing.T, key string) (*httptest.Server, *secrets.Store)
 		t.Fatal(err)
 	}
 
-	sec, err := secrets.New(filepath.Join(dir, "env"))
+	sec, err := secrets.New(filepath.Join(dir, "env"), runas.Root())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestPlainShellSessionUntouched(t *testing.T) {
 // distinct from the not-injected case (Phase 6 decision #3).
 func TestAgentSessionDegradedClosesSetupFailed(t *testing.T) {
 	dir := t.TempDir()
-	sec, err := secrets.New(filepath.Join(dir, "env"))
+	sec, err := secrets.New(filepath.Join(dir, "env"), runas.Root())
 	if err != nil {
 		t.Fatal(err)
 	}

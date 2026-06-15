@@ -18,6 +18,7 @@ import (
 	"time"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
 // Request is the helper → agent credential lookup (one JSON object per conn).
@@ -44,19 +45,31 @@ type Resolver interface {
 type Server struct {
 	path     string
 	resolver Resolver
+	owner    runas.Identity
 }
 
-// New builds a Server bound to path (typically guestwire.AgentSockPath).
-func New(path string, r Resolver) *Server {
-	return &Server{path: path, resolver: r}
+// New builds a Server bound to path (typically guestwire.AgentSockPath). owner
+// is the unprivileged session user that git (and thus the credential helper)
+// runs as; the socket and its directory are chowned to it so that user can
+// connect. For the root identity this is a no-op.
+func New(path string, r Resolver, owner runas.Identity) *Server {
+	return &Server{path: path, resolver: r, owner: owner}
 }
 
-// Serve listens on the unix socket until ctx is cancelled. The socket directory
-// is created 0700 and the socket itself 0600 — only the in-VM root user (which
-// runs both git and the agent) can reach it.
+// Serve listens on the unix socket until ctx is cancelled. The parent dir stays
+// root-owned but world-traversable (0711) so the unprivileged session user can
+// reach — but not unlink or replace — the socket. The socket itself is 0600 and
+// chowned to that user, so its helper (spawned by git) can connect while nothing
+// else can; root, which runs the agent, bypasses these perms regardless.
 func (s *Server) Serve(ctx context.Context) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o711); err != nil {
 		return err
+	}
+	// MkdirAll is a no-op (no chmod) if the dir already exists from a prior boot
+	// or the secrets store, so set the mode explicitly.
+	if err := os.Chmod(dir, 0o711); err != nil {
+		slog.Warn("credential socket: chmod dir failed", "dir", dir, "err", err)
 	}
 	_ = os.Remove(s.path) // clear a stale socket from a prior boot
 	ln, err := net.Listen("unix", s.path)
@@ -66,6 +79,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := os.Chmod(s.path, 0o600); err != nil {
 		_ = ln.Close()
 		return err
+	}
+	if err := s.owner.Chown(s.path); err != nil {
+		slog.Warn("credential socket: chown socket failed", "path", s.path, "err", err)
 	}
 	go func() {
 		<-ctx.Done()

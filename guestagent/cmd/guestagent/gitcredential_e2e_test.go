@@ -15,6 +15,7 @@ import (
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
 	"github.com/tavon/proteos/guestagent/internal/localsock"
+	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
 // stubResolver stands in for the control channel: it returns a fixed credential,
@@ -169,7 +170,7 @@ func startLocalSock(t *testing.T, path string, r localsock.Resolver) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	srv := localsock.New(path, r)
+	srv := localsock.New(path, r, runas.Root())
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ctx) }()
 	// Wait for the socket to appear so git doesn't race the listener.
