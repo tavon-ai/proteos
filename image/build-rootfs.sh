@@ -462,9 +462,10 @@ if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
     FEATURES="$FEATURES,codex"
   fi
   if [[ $PI -eq 1 ]]; then
-    # Confirm the package name at bake (PROVIDERS.md); @pi/agent is the assumption.
-    npm_global "$MNT" "$(npm_spec @pi/agent "$PI_VERSION")"
-    PI_VERSION="$(npm_resolved "$MNT" @pi/agent)"
+    # The pi.dev coding agent: its bin is `pi` (matches the registry launch
+    # command). NOT @oh-my-pi/pi-coding-agent, which ships an `omp` binary.
+    npm_global "$MNT" "$(npm_spec @earendil-works/pi-coding-agent "$PI_VERSION")"
+    PI_VERSION="$(npm_resolved "$MNT" @earendil-works/pi-coding-agent)"
     FEATURES="$FEATURES,pi"
   fi
   unbind_chroot

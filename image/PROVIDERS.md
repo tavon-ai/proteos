@@ -87,8 +87,8 @@ Each row records: how the CLI is installed into the rootfs, how it authenticates
 
 | field | value |
 |---|---|
-| package | the pi.dev coding agent (npm, global) — confirm the exact package name at bake (`@pi/agent` assumed; `build-rootfs.sh` and the table must match) |
-| install | `npm i -g <pkg>` via chroot (latest); `--pi-version X.Y.Z` to pin |
+| package | `@earendil-works/pi-coding-agent` (npm, global) — its `bin` is `pi`, matching the registry launch command. (Not `@oh-my-pi/pi-coding-agent`, which ships an `omp` binary.) |
+| install | `npm i -g @earendil-works/pi-coding-agent` via chroot (latest); `--pi-version X.Y.Z` to pin |
 | version | latest by default (resolved version recorded in `manifest.lock`) |
 | auth | **borrowed model-provider key** — pi has no key of its own; it reads `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` / `GEMINI_API_KEY`) from env, or `~/.pi/agent/auth.json`. We inject **only** the Anthropic key, stored under **pi's own** secret path (never read from claude's — Phase 6 decision #2) |
 | setup_command | none |
@@ -107,9 +107,10 @@ provider CLI is baked.
 
 For each CLI, in a container matching the rootfs base:
 
-1. **Confirm the package/channel** (only needed when changing a pin or the pi.dev
-   package name): `npm view @google/gemini-cli version`, `npm view @openai/codex
-   version`, `npm view <pi-pkg> version`; Node via `nodejs.org/dist/latest-lts`.
+1. **Confirm the package/channel** (only needed when changing a pin):
+   `npm view @google/gemini-cli version`, `npm view @openai/codex version`,
+   `npm view @earendil-works/pi-coding-agent version`; Node via the
+   `nodejs.org/dist/index.json` latest-LTS entry.
 2. **Prove auth-from-env** with a dummy key — the call should fail *inside the
    CLI* (bad key), proving the env path is wired, not a config prompt:
    - `ANTHROPIC_API_KEY=sk-dummy claude -p hello` (and `GEMINI_API_KEY`/gemini, `ANTHROPIC_API_KEY`/pi)
