@@ -256,9 +256,11 @@ install_git() {
         ;;
     esac
     # For the rest, probe a binary/library the package ships; if it already
-    # exists in the base the package is effectively present, so skip it.
+    # exists in the base the package is effectively present, so skip it. The
+    # trailing `|| true` keeps `set -o pipefail` from aborting when grep finds no
+    # lib/bin file (doc-only packages) or head closes the pipe early (SIGPIPE).
     local probe
-    probe="$(dpkg-deb -c "$deb" | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1)"
+    probe="$(dpkg-deb -c "$deb" | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1 || true)"
     probe="${probe#.}"
     if [[ -n $probe && -e "$mnt$probe" ]]; then
       continue
@@ -276,7 +278,7 @@ install_git() {
       update-ca-certificates >/dev/null 2>&1 || true
   fi
 
-  GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}')"
+  GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}' || true)"
   [[ -n $GIT_VERSION ]] || die "git extract-only install failed: git not runnable in the image (try a base that ships git, or proteos_git_install=false)"
   ok "git installed (${GIT_VERSION})"
 }
