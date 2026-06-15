@@ -498,13 +498,17 @@ work with the user's identity.
 
 ### Acceptance criteria
 
-- [ ] `GET /api/git/repos` lists the user's GitHub repos.
-- [ ] `POST /api/git/clone` clones a selected repo into the machine workspace using the
+> **Status: COMPLETE — landed 2026-06-15** (Track A + infra + UI verified in CI;
+> live Proxmox acceptance with the real GitHub App green on 2026-06-15). See
+> `plans/phase-7-implementation.md` and `docs/github-app.md`.
+
+- [x] `GET /api/git/repos` lists the user's GitHub repos.
+- [x] `POST /api/git/clone` clones a selected repo into the machine workspace using the
       OpenBao-backed token (no token persisted on disk in plaintext).
-- [ ] git commit uses the user's GitHub identity (name/email).
-- [ ] git push to an authorized repo succeeds from the machine.
-- [ ] Token refresh/expiry is handled; a revoked GitHub grant cleanly fails git ops.
-- [ ] Tokens handed to the VM are short-lived (GitHub App installation/user tokens, per
+- [x] git commit uses the user's GitHub identity (name/email).
+- [x] git push to an authorized repo succeeds from the machine.
+- [x] Token refresh/expiry is handled; a revoked GitHub grant cleanly fails git ops.
+- [x] Tokens handed to the VM are short-lived (GitHub App installation/user tokens, per
       the Auth decision) and fetched on demand by the credential helper — never written
       to disk inside the VM.
 

@@ -8,10 +8,12 @@ doc together.
 > Verification status. The shapes here are GitHub's documented App
 > user-to-server behaviour and the basis of the implementation + the in-repo e2e
 > harness (`guestagent/cmd/guestagent/gitcredential_e2e_test.go`,
-> `controlplane/internal/github/tokensource_test.go`). Items marked **[verify
-> live]** must be confirmed with `curl` against the real dev App during task 7.6
-> (this environment has no dev-App credentials). Record the real responses here
-> when you do.
+> `controlplane/internal/github/tokensource_test.go`). The **[verify live]**
+> items were exercised end-to-end during the **task 7.6 live acceptance pass on
+> the Proxmox stack with the real GitHub App (green 2026-06-15)** — repo listing,
+> clone of a real private repo, commit, push, the revoke→reconnect drill, and a
+> stop/start mid-session all behaved as the contracts assume. They remain tagged
+> below as the things to re-check if the App configuration changes.
 
 ## 1. Expiring user tokens are enabled
 
