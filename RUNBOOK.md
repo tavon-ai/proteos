@@ -615,13 +615,34 @@ Walk the master-plan Phase 8 checklist:
 Tick the boxes in `plans/proteos-poc-to-prod.md` (the "edits persist" box notes
 the Phase 4 gating if the disk has not landed).
 
-### G5. Gotcha — the wildcard `server_name` block
+### G5. Gotchas
 
-Without the Phase 8 nginx block, every `m-<uuid>.…` request matches the catch-all
-`server_name _` and returns the SPA's `index.html` with **200** — the exact
-silent-failure class the `/gw/` WebSocket gotcha already bit us with. The block
-is in `deploy/app-stack/nginx.conf`; if editors return the dashboard HTML, that
-block (or the NPMplus WebSocket toggle) is missing.
+- **Wildcard `server_name` block.** Without the Phase 8 nginx block, every
+  `m-<uuid>.…` request matches the catch-all `server_name _` and returns the
+  SPA's `index.html` with **200** — the exact silent-failure class the `/gw/`
+  WebSocket gotcha already bit us with. The block is in
+  `deploy/app-stack/nginx.conf`; if editors return the dashboard HTML, that block
+  (or the NPMplus WebSocket toggle) is missing.
+- **`X-Forwarded-Proto` at the proxy.** TLS terminates at NPMplus, which proxies
+  to the app-stack nginx over HTTP; the app nginx forwards the *inbound*
+  `X-Forwarded-Proto` (not `$scheme`), so the control plane mints `https://`
+  editor URLs. If "Open editor" yields a `http://…` URL (mixed-content blocked),
+  that header passthrough is wrong.
+- **`X-Frame-Options` on the editor host.** The editor is embedded cross-origin
+  in the dashboard; framing is governed by the control plane's
+  `Content-Security-Policy: frame-ancestors <dashboard origin>`. A stray
+  `X-Frame-Options: SAMEORIGIN` (NPMplus adds one per proxy host by default, and
+  the control plane strips any that code-server emits) **overrides** the CSP and
+  blocks the iframe ("Refused to display … in a frame"). Set **X-Frame-Options →
+  none** on the `*.<machine-domain>` NPMplus proxy host. Also enable that host's
+  **Websockets Support** (code-server's terminal/extensions need it).
+- **Editor 401 / cookie dropped.** The `proteos_machine` cookie is
+  `SameSite=None; Partitioned`, which browsers only accept when also `Secure` —
+  so the editor only works over HTTPS (it is, behind NPMplus). The control plane
+  always marks this cookie `Secure`; if a request to `m-<uuid>.…/` 401s right
+  after the auth redirect, check DevTools → the auth response's `Set-Cookie` and
+  whether `/` carries the cookie back (a browser with third-party cookies hard-
+  blocked and no CHIPS support falls back to the "Open in new tab" button).
 
 ---
 

@@ -120,7 +120,13 @@ func NewMachineWeb(cfg MachineWebConfig) *MachineWeb {
 			r.Header.Set("X-Forwarded-Proto", forwardedProto(r))
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			// Only the configured SPA origins may frame the editor (decision #3).
+			// Framing policy is expressed ONLY via CSP frame-ancestors (decision
+			// #3): the main SPA origin may embed the editor. A legacy
+			// X-Frame-Options header (code-server can emit one) is all-or-nothing
+			// and would override the CSP to block the iframe, so strip it and let
+			// frame-ancestors govern. (A proxy layer that re-adds X-Frame-Options
+			// — e.g. NPMplus — must be configured to drop it; see RUNBOOK Part G.)
+			resp.Header.Del("X-Frame-Options")
 			if fa := strings.Join(cfg.FrameAncestors, " "); fa != "" {
 				resp.Header.Set("Content-Security-Policy", "frame-ancestors "+fa)
 			}
@@ -195,13 +201,20 @@ func (mw *MachineWeb) handleAuth(w http.ResponseWriter, r *http.Request, machine
 		Exp:       time.Now().Add(machineCookieTTL).Unix(),
 	})
 	http.SetCookie(w, &http.Cookie{
-		Name:        MachineCookieName,
-		Value:       cookieVal,
-		Path:        "/",
-		HttpOnly:    true,
-		Secure:      mw.cfg.CookieSecure,
-		SameSite:    http.SameSiteNoneMode, // cross-origin iframe needs SameSite=None
-		Partitioned: true,                  // CHIPS: partitioned per top-level site
+		Name:     MachineCookieName,
+		Value:    cookieVal,
+		Path:     "/",
+		HttpOnly: true,
+		// SameSite=None + Partitioned (CHIPS) is what lets the embedded
+		// cross-origin editor iframe carry this cookie — and BOTH mandate Secure:
+		// browsers SILENTLY DROP a SameSite=None or Partitioned cookie that isn't
+		// Secure, which then 401s every editor request. The editor is always
+		// reached over HTTPS (TLS terminates at the proxy), so Secure is
+		// unconditional here, independent of cfg.CookieSecure (which governs the
+		// main host-only Lax session cookie, where Secure is optional).
+		Secure:      true,
+		SameSite:    http.SameSiteNoneMode,
+		Partitioned: true,
 		Expires:     time.Now().Add(machineCookieTTL),
 	})
 	http.Redirect(w, r, "/", http.StatusFound)
