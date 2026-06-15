@@ -105,6 +105,16 @@ type Config struct {
 	// origin; in dev the Vite origin (http://localhost:5173) is also added.
 	AllowedWSOrigins []string
 
+	// --- Phase 8: machine-web (code-server) --------------------------------
+
+	// MachineDomain (PROTEOS_MACHINE_DOMAIN) is the parent domain for per-machine
+	// editor subdomains: a machine is served at m-<uuid>.<MachineDomain> (decision
+	// #1). Empty ⇒ machine-web routing is disabled entirely (the default; non-web
+	// deployments are unaffected). Dev/e2e use "localhost" (RFC 6761 loopback —
+	// m-<uuid>.localhost needs no DNS). The token + subdomain cookie are signed
+	// with StateSigningKey (reused, per decision #2).
+	MachineDomain string
+
 	// --- Phase 6: provider enablement --------------------------------------
 
 	// ProvidersEnabled aligns the registry's enabled flag with the providers
@@ -138,15 +148,17 @@ func Load() (*Config, error) {
 		SessionTTL:          30 * 24 * time.Hour,
 		CookieSecure:        getenv("PROTEOS_COOKIE_SECURE", "true") == "true",
 
-		HostName:      getenv("PROTEOS_HOST_NAME", "local"),
-		NodeAgentURL:  getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
-		AgentToken:    os.Getenv("PROTEOS_AGENT_TOKEN"),
-		NodeCAFile:    os.Getenv("PROTEOS_NODE_CA_FILE"),
+		HostName:       getenv("PROTEOS_HOST_NAME", "local"),
+		NodeAgentURL:   getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
+		AgentToken:     os.Getenv("PROTEOS_AGENT_TOKEN"),
+		NodeCAFile:     os.Getenv("PROTEOS_NODE_CA_FILE"),
 		MachineVcpus:   getenvInt("PROTEOS_MACHINE_VCPUS", 2),
 		MachineMemMiB:  getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
 		MachineDiskMiB: getenvInt("PROTEOS_MACHINE_DISK_MIB", 10240),
 		KernelRef:      getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
 		RootfsRef:      getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
+
+		MachineDomain: os.Getenv("PROTEOS_MACHINE_DOMAIN"),
 	}
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {

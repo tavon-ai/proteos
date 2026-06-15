@@ -28,12 +28,32 @@ const (
 
 	// RouteGuest opens an opaque byte tunnel to the machine's in-guest agent
 	// (Phase 3). The control plane sends an HTTP Upgrade with UpgradeGuestProto;
-	// on 101 the connection becomes a raw bidirectional stream bridged to the
-	// VM's vsock port 1024 (dev: the machine's guest.sock). The node-agent never
-	// parses what flows through — the gateway and guest speak WebSocket to each
-	// other across it.
+	// on 101 the connection becomes a raw bidirectional stream bridged to a guest
+	// vsock port (dev: a per-machine unix socket). The target port is selected by
+	// the ?port= query (GuestPortParam); absent ⇒ GuestTerminalPort. The
+	// node-agent never parses what flows through — the gateway and guest speak
+	// WebSocket (terminal) or HTTP (code-server) to each other across it.
 	RouteGuest = "GET /v1/machines/{id}/guest"
 )
+
+// Guest vsock ports the tunnel can reach. The node-agent allowlists exactly
+// these (an unknown port is 400 before any dial), so the tunnel can never be
+// pointed at an arbitrary in-VM port. GuestTerminalPort is the Phase 3 agent
+// (terminals + the /resume,/info,/secrets,/control surface); GuestWebPort is
+// the Phase 8 code-server forward (decision #4).
+const (
+	GuestTerminalPort uint32 = 1024
+	GuestWebPort      uint32 = 1025
+)
+
+// GuestPortParam is the RouteGuest query parameter selecting the guest port to
+// tunnel to. Absent ⇒ GuestTerminalPort (back-compat with Phase 3 callers).
+const GuestPortParam = "port"
+
+// ValidGuestPort reports whether p is a tunnel-reachable guest port.
+func ValidGuestPort(p uint32) bool {
+	return p == GuestTerminalPort || p == GuestWebPort
+}
 
 // UpgradeGuestProto is the token in the Connection/Upgrade headers of the guest
 // tunnel handshake. It is deliberately not "websocket": the node-agent does not

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,9 +128,11 @@ func (c *Client) Health(ctx context.Context) error {
 // the node-agent, performs the HTTP Upgrade handshake manually (net/http's
 // client refuses non-WebSocket upgrades), and on 101 returns the hijacked
 // connection — any bytes the agent buffered after the response headers are
-// preserved. The control-plane gateway then speaks WebSocket to the guest over
-// this conn. The returned conn is the caller's to close.
-func (c *Client) DialGuest(ctx context.Context, machineID string) (net.Conn, error) {
+// preserved. The control-plane gateway then speaks WebSocket (terminal) or HTTP
+// (code-server) to the guest over this conn. port selects the guest vsock port
+// (agentapi.GuestTerminalPort / GuestWebPort); the node-agent allowlists it. The
+// returned conn is the caller's to close.
+func (c *Client) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse node-agent url: %w", err)
@@ -145,7 +148,11 @@ func (c *Client) DialGuest(ctx context.Context, machineID string) (net.Conn, err
 		_ = conn.SetDeadline(dl)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/machines/"+machineID+"/guest", nil)
+	guestURL := c.baseURL + "/v1/machines/" + machineID + "/guest"
+	if port != 0 {
+		guestURL += "?" + agentapi.GuestPortParam + "=" + strconv.FormatUint(uint64(port), 10)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, guestURL, nil)
 	if err != nil {
 		conn.Close()
 		return nil, err

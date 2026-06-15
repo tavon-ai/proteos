@@ -48,6 +48,31 @@ type Config struct {
 	// itself stays root. Set to "root" (or "") to keep the legacy all-root
 	// behavior. If the named user does not exist, sessions fall back to root.
 	RunAsUser string
+
+	// --- Phase 8: code-server web forward -----------------------------------
+
+	// WebListen (PROTEOS_GUEST_WEB_LISTEN) is the listener spec for the code-server
+	// web forward (decision #4): "vsock:1025" in production, "unix:<path>" in dev.
+	// Empty ⇒ the web forward is disabled (terminal-only). The forward raw-copies
+	// bytes between this listener and WebBackend; the node-agent tunnel reaches it
+	// on agentapi.GuestWebPort.
+	WebListen string
+
+	// WebBackend (PROTEOS_GUEST_WEB_BACKEND) is the loopback address code-server
+	// binds and the forward dials. Default 127.0.0.1:13337 (decision #5).
+	WebBackend string
+
+	// CodeServerBin (PROTEOS_CODESERVER_BIN), when set, makes the web forward
+	// lazily start and supervise code-server at WebBackend (decision #5): first
+	// web connection starts it, the forward health-gates it, and a crash restarts
+	// it with backoff. Empty ⇒ the forward assumes WebBackend is already up (dev/
+	// e2e: a stub server), so the supervisor is bypassed.
+	CodeServerBin string
+
+	// CodeServerArgs (PROTEOS_CODESERVER_ARGS) overrides the baked code-server
+	// flags (space-split). Empty ⇒ the decision #5 defaults built from WebBackend
+	// and the persist-backed user-data/extensions dirs.
+	CodeServerArgs string
 }
 
 // Load reads and validates configuration from the environment.
@@ -60,6 +85,11 @@ func Load() (*Config, error) {
 		PersistDevice: getenv("PROTEOS_GUEST_PERSIST_DEV", "/dev/vdb"),
 		EnvDir:        getenv("PROTEOS_GUEST_ENV_DIR", "/run/proteos/env"),
 		RunAsUser:     getenv("PROTEOS_GUEST_RUN_AS_USER", "dev"),
+
+		WebListen:      os.Getenv("PROTEOS_GUEST_WEB_LISTEN"),
+		WebBackend:     getenv("PROTEOS_GUEST_WEB_BACKEND", "127.0.0.1:13337"),
+		CodeServerBin:  os.Getenv("PROTEOS_CODESERVER_BIN"),
+		CodeServerArgs: os.Getenv("PROTEOS_CODESERVER_ARGS"),
 	}
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)

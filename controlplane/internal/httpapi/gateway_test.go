@@ -41,7 +41,7 @@ func (stubNodeClient) Status(context.Context, string) (agentapi.MachineStatus, e
 // authz tests, where every case errors before the tunnel dial).
 type failDialer struct{ t *testing.T }
 
-func (d failDialer) DialGuest(context.Context, string) (net.Conn, error) {
+func (d failDialer) DialGuest(context.Context, string, uint32) (net.Conn, error) {
 	d.t.Error("DialGuest reached during a pre-upgrade authz check")
 	return nil, errors.New("should not dial")
 }
@@ -100,7 +100,23 @@ func setupCP(t *testing.T, dialer gateway.GuestDialer, origins []string) cpFixtu
 	gw := gateway.NewProxy(origins, dialer, registry)
 
 	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
-	srv := &httpapi.Server{Sessions: sessions, Machines: svc, Broker: machine.NewBroker(), Queries: q, Gateway: gw}
+
+	// Phase 8: wire the machine-web editor origin onto the same fixture (Domain
+	// "localhost" so m-<uuid>.localhost requests host-route to it; main-host
+	// requests like 127.0.0.1:port fall through to the API mux untouched). It
+	// shares the dialer + registry with the terminal gateway.
+	sessRes, machRes := httpapi.MachineWebResolvers(sessions, svc)
+	machineWeb := gateway.NewMachineWeb(gateway.MachineWebConfig{
+		Domain:         "localhost",
+		SigningKey:     []byte("e2e-machine-web-signing-key-32by"),
+		CookieSecure:   false,
+		FrameAncestors: origins,
+		Guests:         dialer,
+		Registry:       registry,
+		Sessions:       sessRes,
+		Machines:       machRes,
+	})
+	srv := &httpapi.Server{Sessions: sessions, Machines: svc, Broker: machine.NewBroker(), Queries: q, Gateway: gw, MachineWeb: machineWeb}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 

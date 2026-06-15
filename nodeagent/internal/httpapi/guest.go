@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	api "github.com/tavon/proteos/nodeagent/api"
@@ -28,6 +29,15 @@ func (s *Server) handleGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase 8: ?port= selects the guest port to tunnel to. Absent ⇒ the terminal
+	// port (Phase 3 back-compat). Only allowlisted ports are dialable — the
+	// tunnel can never be pointed at an arbitrary in-VM port.
+	port, ok := parseGuestPort(r.URL.Query().Get(api.GuestPortParam))
+	if !ok {
+		writeError(w, http.StatusBadRequest, api.ErrBadRequest)
+		return
+	}
+
 	// Machine must exist (404) and be running (409) before we dial.
 	st, err := s.drv.Status(r.Context(), id)
 	if err != nil {
@@ -44,7 +54,7 @@ func (s *Server) handleGuest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, api.ErrGuestUnreachable)
 		return
 	}
-	guestConn, err := dialer.DialGuest(r.Context(), id)
+	guestConn, err := dialer.DialGuest(r.Context(), id, port)
 	if err != nil {
 		if errors.Is(err, driver.ErrUnknownMachine) {
 			writeError(w, http.StatusNotFound, api.ErrUnknownMachine)
@@ -96,6 +106,25 @@ func bridge(clientConn net.Conn, clientRead io.Reader, guestConn net.Conn) {
 	_ = clientConn.Close()
 	_ = guestConn.Close()
 	<-done
+}
+
+// parseGuestPort resolves the ?port= value to an allowlisted guest port. An
+// empty value defaults to the terminal port (Phase 3 callers send no port). A
+// non-empty value must parse and be tunnel-reachable (api.ValidGuestPort), else
+// ok is false and the caller answers 400.
+func parseGuestPort(raw string) (port uint32, ok bool) {
+	if raw == "" {
+		return api.GuestTerminalPort, true
+	}
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	p := uint32(n)
+	if !api.ValidGuestPort(p) {
+		return 0, false
+	}
+	return p, true
 }
 
 // headerHasToken reports whether a comma-separated header (e.g. Connection)

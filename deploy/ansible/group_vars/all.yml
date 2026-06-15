@@ -105,6 +105,23 @@ proteos_pi_version: ""                 # empty ⇒ latest; set to pin
 # node_agent role also runs image/verify-phase7-rootfs.sh as a post-bake gate.
 proteos_git_install: true
 
+# ----------------------------------------------------------------------------
+# Phase 8: bake the code-server editor into the guest rootfs. The browser editor
+# (per-machine subdomain) is served by code-server, which the guest agent lazily
+# starts on its web-forward port (vsock:1025). The standalone release bundles its
+# own Node, so the bake just fetches + unpacks it (network on the BAKE HOST). On
+# by default; set false for air-gapped builds (the web forward then has nothing
+# to start). proteos_codeserver_version pins a release (empty ⇒ latest GitHub
+# release); proteos_codeserver_sha256 verifies the tarball. When true, the
+# node_agent role runs image/verify-phase8-rootfs.sh as a post-bake gate.
+#
+# Bumping the version on an already-baked host needs a FORCED rebuild (delete
+# {{ proteos_images_dir }}/manifest.lock — see README.md): the bake is guarded on
+# source changes, not on these vars. The image grows ~400 MiB when enabled.
+proteos_codeserver_install: true
+proteos_codeserver_version: ""        # empty ⇒ latest GitHub release; set to pin (e.g. 4.99.3)
+proteos_codeserver_sha256: ""         # optional sha256 pin for the release tarball
+
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.
 # ============================================================================

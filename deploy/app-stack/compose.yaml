@@ -99,6 +99,14 @@ services:
       PROTEOS_MACHINE_VCPUS: ${PROTEOS_MACHINE_VCPUS:-2}
       PROTEOS_MACHINE_MEM_MIB: ${PROTEOS_MACHINE_MEM_MIB:-2048}
 
+      # Phase 8: per-machine code-server editor subdomains. Set to the parent
+      # domain you point a wildcard DNS record + TLS cert at (e.g.
+      # machines.proteos.example); a machine is then served at
+      # m-<uuid>.<domain>. UNSET ⇒ the editor + its routes are disabled (the
+      # dashboard's "Open editor" still mints but the route 404s). See
+      # DEPLOYMENT.md "Wildcard DNS/TLS for the editor".
+      PROTEOS_MACHINE_DOMAIN: ${PROTEOS_MACHINE_DOMAIN:-}
+
       # Phase 6: which provider CLIs the UI may offer — set this to match the
       # providers you baked into the rootfs (the Ansible proteos_<p>_install flags).
       # CSV of provider keys; unset ⇒ leave the registry seeds as-is. Default keeps

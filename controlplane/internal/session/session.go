@@ -100,6 +100,25 @@ func (m *Manager) Authenticate(ctx context.Context, token string) (store.User, s
 	return row.User, row.Session, nil
 }
 
+// AliveByID returns the owning user for a live (unexpired, unrevoked) session
+// id, or ErrInvalidSession. Unlike Authenticate it takes the session id (not the
+// token), so the Phase 8 machine-web path can re-check a parent session whose
+// token never reaches the subdomain (fact #1). It does NOT slide the expiry —
+// the parent session's own requests own that.
+func (m *Manager) AliveByID(ctx context.Context, id pgtype.UUID) (store.User, error) {
+	if !id.Valid {
+		return store.User{}, ErrInvalidSession
+	}
+	row, err := m.q.GetSessionByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.User{}, ErrInvalidSession
+		}
+		return store.User{}, fmt.Errorf("lookup session by id: %w", err)
+	}
+	return row.User, nil
+}
+
 // Revoke marks the session for the given token as revoked and notifies the
 // revocation listener (if any) with the revoked session id. Revoking an unknown
 // or already-revoked token is a no-op (no error, no notification).

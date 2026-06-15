@@ -26,20 +26,24 @@ var _ driver.GuestDialer = (*Driver)(nil)
 
 // DialGuest opens a byte stream to the machine's in-guest agent over the jailed
 // virtio-vsock uds, performing Firecracker's hybrid CONNECT/OK handshake to
-// reach the guest port. The returned conn carries the raw guest stream; the
-// node-agent's HTTP layer bridges it to the control-plane gateway. The HTTP
-// layer checks the machine is running before calling this; here we only verify
-// the driver tracks it.
-func (d *Driver) DialGuest(ctx context.Context, machineID string) (net.Conn, error) {
+// reach the requested guest port. The returned conn carries the raw guest
+// stream; the node-agent's HTTP layer bridges it to the control-plane gateway.
+// The HTTP layer checks the machine is running (and that port is allowlisted)
+// before calling this; here we only verify the driver tracks it. A zero port
+// means the configured terminal port (decision #4: a non-zero port reaches the
+// code-server forward without touching the terminal mux).
+func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	if _, ok, err := d.store.Load(machineID); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, driver.ErrUnknownMachine
 	}
 
-	port := d.cfg.GuestVsockPort
 	if port == 0 {
-		port = defaultGuestPort
+		port = d.cfg.GuestVsockPort
+		if port == 0 {
+			port = defaultGuestPort
+		}
 	}
 
 	layout := jailLayout{chrootBaseDir: d.cfg.ChrootBaseDir, id: machineID}

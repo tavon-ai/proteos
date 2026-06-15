@@ -132,6 +132,14 @@ export interface CloneStarted {
   op_id: string;
 }
 
+// WebSession is the 200 body of POST /api/machine/web-session (Phase 8): a
+// one-shot, ≤60s URL on the machine's editor subdomain. The SPA navigates the
+// editor iframe (or a new tab) to it; the machine origin validates the token and
+// sets its partitioned cookie, then 302s to the editor root.
+export interface WebSession {
+  url: string;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -177,6 +185,11 @@ export const api = {
   createMachine: () => request<MachineSummary>("/api/machine", { method: "POST" }),
   startMachine: () => request<MachineSummary>("/api/machine/start", { method: "POST" }),
   stopMachine: () => request<MachineSummary>("/api/machine/stop", { method: "POST" }),
+
+  // Mint a one-shot editor URL for the running machine (Phase 8). 409
+  // machine_not_running / 404 no_machine surface as ApiError. Only available when
+  // the control plane has PROTEOS_MACHINE_DOMAIN set; otherwise the route 404s.
+  webSession: () => request<WebSession>("/api/machine/web-session", { method: "POST" }),
 
   // Providers + write-only secret keys. setProviderKey/deleteProviderKey return
   // 204; values are never echoed back. fields maps each declared secret field

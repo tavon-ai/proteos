@@ -35,6 +35,12 @@ type Server struct {
 	// agent (Phase 3). Nil disables the /gw/terminal route.
 	Gateway *gateway.Proxy
 
+	// MachineWeb serves the per-machine code-server editor origin
+	// (m-<uuid>.<domain>) and mints its web-session tokens (Phase 8). Nil
+	// (PROTEOS_MACHINE_DOMAIN unset) disables host-first routing and the
+	// /api/machine/web-session route entirely.
+	MachineWeb *gateway.MachineWeb
+
 	// Phase 5: the provider registry, the user secrets store, and the audit
 	// recorder back the providers/secrets API. Nil disables those routes.
 	Providers *providers.Registry
@@ -86,6 +92,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machine/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
 
+	// Machine-web session mint (Phase 8): the main-origin endpoint that issues the
+	// short-lived editor URL. Enabled only when machine-web is configured.
+	if s.MachineWeb != nil {
+		mux.Handle("POST /api/machine/web-session", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleWebSession))))
+	}
+
 	// Providers + secrets API (Phase 5). Reads are auth-only; the write-only key
 	// mutations also require the CSRF header. No read route for key material
 	// exists — the API shape makes leakage impossible, not merely avoided.
@@ -114,6 +126,27 @@ func (s *Server) Handler() http.Handler {
 		}
 	}
 
+	// Host-first routing (Phase 8 decision #1): a machine-web host
+	// (m-<uuid>.<domain>) is served ONLY by the machine-web handler — never the
+	// API/SPA mux — and the main host never reaches the machine-web handler. This
+	// makes the origin split structural, not just conventional.
+	var root http.Handler = mux
+	if s.MachineWeb != nil {
+		root = s.hostRouter(mux)
+	}
+
 	// Wrap everything in request logging.
-	return requestLogger(mux)
+	return requestLogger(root)
+}
+
+// hostRouter dispatches a request to the machine-web handler when its Host is a
+// machine subdomain, else to the main mux.
+func (s *Server) hostRouter(mainMux http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.MachineWeb.Matches(r.Host) {
+			s.MachineWeb.ServeHTTP(w, r)
+			return
+		}
+		mainMux.ServeHTTP(w, r)
+	})
 }

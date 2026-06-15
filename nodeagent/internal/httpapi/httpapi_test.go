@@ -28,7 +28,7 @@ func newServer(t *testing.T) (*httptest.Server, *state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drv := dev.New(store, fastBoot, "", "")
+	drv := dev.New(store, fastBoot, "", "", "")
 	ts := httptest.NewServer(httpapi.New(testToken, drv).Handler())
 	t.Cleanup(ts.Close)
 	return ts, store
@@ -231,7 +231,7 @@ func TestReattachAfterRestart(t *testing.T) {
 	}
 	id := "cccccccc-0000-0000-0000-000000000003"
 
-	drv1 := dev.New(store, fastBoot, "", "")
+	drv1 := dev.New(store, fastBoot, "", "", "")
 	srv1 := httptest.NewServer(httpapi.New(testToken, drv1).Handler())
 	resp := do(t, srv1, http.MethodPut, "/v1/machines/"+id, api.EnsureRequest{Vcpus: 1, MemMiB: 512, KernelRef: "k", RootfsRef: "r"})
 	resp.Body.Close()
@@ -243,7 +243,7 @@ func TestReattachAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drv2 := dev.New(store2, fastBoot, "", "")
+	drv2 := dev.New(store2, fastBoot, "", "", "")
 	if err := drv2.Reattach(context.Background()); err != nil {
 		t.Fatalf("reattach: %v", err)
 	}

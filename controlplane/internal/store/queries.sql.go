@@ -222,6 +222,47 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 	return i, err
 }
 
+const getSessionByID = `-- name: GetSessionByID :one
+SELECT
+    sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at
+FROM sessions
+JOIN users ON users.id = sessions.user_id
+WHERE sessions.id = $1
+  AND sessions.revoked_at IS NULL
+  AND sessions.expires_at > now()
+`
+
+type GetSessionByIDRow struct {
+	Session Session `json:"session"`
+	User    User    `json:"user"`
+}
+
+// Look up a live (unexpired, unrevoked) session by its id, returning the session
+// with the owning user. Used by the Phase 8 machine-web cookie path, which binds
+// the subdomain cookie to the parent session id (never the session token), so a
+// logout/revoke of the parent immediately invalidates the editor.
+func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessionByIDRow, error) {
+	row := q.db.QueryRow(ctx, getSessionByID, id)
+	var i GetSessionByIDRow
+	err := row.Scan(
+		&i.Session.ID,
+		&i.Session.UserID,
+		&i.Session.TokenHash,
+		&i.Session.CreatedAt,
+		&i.Session.ExpiresAt,
+		&i.Session.RevokedAt,
+		&i.User.ID,
+		&i.User.GithubUserID,
+		&i.User.Login,
+		&i.User.Email,
+		&i.User.AvatarUrl,
+		&i.User.Status,
+		&i.User.CreatedAt,
+	)
+	return i, err
+}
+
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,

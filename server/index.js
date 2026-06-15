@@ -202,95 +202,11 @@ app.get('/api/containers/:id/stats', async (req, res) => {
   }
 });
 
-// Browse files in container workspace
-app.get('/api/containers/:id/files', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { path: subPath = '' } = req.query;
-    const info = containers.get(id);
-
-    if (!info) {
-      return res.status(404).json({ error: 'Container not found' });
-    }
-
-    const fullPath = join(info.workspaceDir, subPath);
-
-    // Security check: ensure path is within workspace
-    if (!fullPath.startsWith(info.workspaceDir)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    if (!fs.existsSync(fullPath)) {
-      return res.status(404).json({ error: 'Path not found' });
-    }
-
-    const stat = fs.statSync(fullPath);
-
-    if (stat.isDirectory()) {
-      const files = fs.readdirSync(fullPath).map(name => {
-        const filePath = join(fullPath, name);
-        const fileStat = fs.statSync(filePath);
-        return {
-          name,
-          type: fileStat.isDirectory() ? 'directory' : 'file',
-          size: fileStat.size,
-          modified: fileStat.mtime
-        };
-      });
-      res.json({ type: 'directory', files });
-    } else {
-      res.json({ type: 'file', name: subPath });
-    }
-  } catch (error) {
-    console.error('Error browsing files:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Read file content
-app.get('/api/containers/:id/files/read', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { path: subPath } = req.query;
-    const info = containers.get(id);
-
-    if (!info || !subPath) {
-      return res.status(400).json({ error: 'Invalid request' });
-    }
-
-    const fullPath = join(info.workspaceDir, subPath);
-
-    // Security check
-    if (!fullPath.startsWith(info.workspaceDir)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    if (!fs.existsSync(fullPath)) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-
-    const stat = fs.statSync(fullPath);
-    if (stat.isDirectory()) {
-      return res.status(400).json({ error: 'Cannot read directory' });
-    }
-
-    // Check file size (limit to 1MB for display)
-    if (stat.size > 1024 * 1024) {
-      return res.status(400).json({ error: 'File too large to display' });
-    }
-
-    const content = fs.readFileSync(fullPath, 'utf8');
-    res.json({
-      content,
-      name: subPath,
-      size: stat.size,
-      modified: stat.mtime
-    });
-  } catch (error) {
-    console.error('Error reading file:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// NOTE (Phase 8, decision #7): the PoC file-browser endpoints
+// (GET /api/containers/:id/files and .../files/read) were removed. File
+// browsing/editing now lives in code-server, reached through the authenticated
+// gateway at the per-machine editor subdomain — the unauthenticated host
+// file-read surface here is gone. See README and plans/phase-8-implementation.md.
 
 // Get list of available wallpapers
 app.get('/api/wallpapers', (req, res) => {

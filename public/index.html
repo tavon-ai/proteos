@@ -27,10 +27,7 @@
                 <div class="icon-image"><img src="images/icons/apps/OpenAI.svg" alt="OpenAI" class="custom-icon" onerror="this.src='images/icons/apps/OpenAI.png'"></div>
                 <div class="icon-label">OpenAI Codex</div>
             </div>
-            <div class="desktop-icon" id="files-icon" title="Browse Container Files">
-                <div class="icon-image"><img src="images/icons/folders/Folder-Full.svg" alt="Files" class="custom-icon" onerror="this.src='images/icons/folders/Folder-Full.png'"></div>
-                <div class="icon-label">Files</div>
-            </div>
+            <!-- Files icon removed in Phase 8 (decision #7): file browsing moved to code-server. -->
             <div class="desktop-icon" id="logs-icon" title="View System Logs">
                 <div class="icon-image"><img src="images/icons/apps/Logs.svg" alt="Logs" class="custom-icon" onerror="this.src='images/icons/apps/Logs.png'"></div>
                 <div class="icon-label">System Logs</div>
@@ -51,9 +48,6 @@
                 <div class="menu-items">
                     <div class="menu-item" id="settings-menu">
                         <span>Settings</span>
-                    </div>
-                    <div class="menu-item" id="folders-menu">
-                        <span>Folders</span>
                     </div>
                     <div class="menu-item" id="help-menu">
                         <span>Help</span>
@@ -119,43 +113,8 @@
         </div>
     </div>
 
-    <!-- File Browser Modal -->
-    <div class="modal" id="files-modal">
-        <div class="modal-content file-browser-modal">
-            <div class="modal-header">
-                <h2><i data-lucide="folder" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 8px;"></i>Container Files</h2>
-                <button class="modal-close" data-modal="files">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="container-selector">
-                    <label>Select Container:</label>
-                    <select id="file-browser-container-select"></select>
-                </div>
-                <div class="file-browser">
-                    <div class="file-path">
-                        <button class="path-back-btn" title="Go back"><i data-lucide="arrow-left" style="width: 16px; height: 16px;"></i></button>
-                        <span id="current-path">/</span>
-                    </div>
-                    <div class="file-list" id="file-list">
-                        <div class="loading">Loading files...</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- File Viewer Modal -->
-    <div class="modal" id="file-viewer-modal">
-        <div class="modal-content file-viewer-modal">
-            <div class="modal-header">
-                <h2 id="file-viewer-title"><i data-lucide="file-text" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 8px;"></i>File Viewer</h2>
-                <button class="modal-close" data-modal="file-viewer">&times;</button>
-            </div>
-            <div class="modal-body">
-                <pre id="file-content"></pre>
-            </div>
-        </div>
-    </div>
+    <!-- File Browser + File Viewer modals removed in Phase 8 (decision #7):
+         file browsing/editing moved to code-server (the per-machine editor). -->
 
     <!-- System Logs Modal -->
     <div class="modal" id="logs-modal">

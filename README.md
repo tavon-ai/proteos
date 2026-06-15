@@ -26,7 +26,10 @@
 
 ### 📁 File System
 - **Persistent Storage**: Each container gets its own workspace
-- **File Browser**: View and manage files across all containers
+- **File editing**: handled by **code-server** (a full VS Code in the browser),
+  reached through the authenticated gateway at the per-machine editor subdomain.
+  The old unauthenticated PoC file-browser/viewer was removed in Phase 8
+  (decision #7) — see `plans/phase-8-implementation.md`.
 - **Easy Access**: Files stored locally in `workspace/containers/`
 
 ### 📊 System Monitoring

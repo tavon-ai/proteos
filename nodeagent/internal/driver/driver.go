@@ -117,11 +117,17 @@ type Driver interface {
 // to the caller (the control-plane gateway) so the node-agent never parses the
 // terminal protocol — it is a dumb pipe (decision #4).
 //
+// port selects the in-guest vsock port (Phase 8): the terminal agent
+// (agentapi.GuestTerminalPort) or the code-server forward
+// (agentapi.GuestWebPort). A zero port means the driver's default terminal
+// port, so Phase 3/4 callers stay source-compatible.
+//
 //   - FirecrackerDriver: connects to the jailed vsock uds and performs the
-//     hybrid CONNECT/OK handshake to reach guest port 1024.
-//   - DevDriver: dials the machine's guest.sock unix socket.
+//     hybrid CONNECT/OK handshake to reach the requested guest port.
+//   - DevDriver: dials the machine's guest.sock (terminal) or guest-web.sock
+//     (web) unix socket.
 //
 // DialGuest returns ErrUnknownMachine for an id the driver does not track.
 type GuestDialer interface {
-	DialGuest(ctx context.Context, machineID string) (net.Conn, error)
+	DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error)
 }

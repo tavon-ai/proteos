@@ -24,8 +24,19 @@ type fakeGuestDriver struct {
 	guestNet string // network/addr to dial as the guest
 	guestAdr string
 	dialErr  error
-	unknown  bool // Status returns ErrUnknownMachine
+	unknown  bool       // Status returns ErrUnknownMachine
+	lastPort atomicPort // the port the handler asked DialGuest for (Phase 8)
 }
+
+// atomicPort records the most recent DialGuest port for assertions without a
+// data race against the handler goroutine.
+type atomicPort struct {
+	mu sync.Mutex
+	p  uint32
+}
+
+func (a *atomicPort) set(p uint32) { a.mu.Lock(); a.p = p; a.mu.Unlock() }
+func (a *atomicPort) get() uint32  { a.mu.Lock(); defer a.mu.Unlock(); return a.p }
 
 func (f *fakeGuestDriver) EnsureRunning(context.Context, driver.VMSpec) (string, error) {
 	return "h", nil
@@ -37,10 +48,11 @@ func (f *fakeGuestDriver) Status(_ context.Context, id string) (driver.Status, e
 	}
 	return driver.Status{MachineID: id, State: f.state}, nil
 }
-func (f *fakeGuestDriver) Destroy(context.Context, string) error          { return nil }
-func (f *fakeGuestDriver) List(context.Context) ([]driver.Status, error)  { return nil, nil }
-func (f *fakeGuestDriver) Reattach(context.Context) error                 { return nil }
-func (f *fakeGuestDriver) DialGuest(ctx context.Context, _ string) (net.Conn, error) {
+func (f *fakeGuestDriver) Destroy(context.Context, string) error         { return nil }
+func (f *fakeGuestDriver) List(context.Context) ([]driver.Status, error) { return nil, nil }
+func (f *fakeGuestDriver) Reattach(context.Context) error                { return nil }
+func (f *fakeGuestDriver) DialGuest(ctx context.Context, _ string, port uint32) (net.Conn, error) {
+	f.lastPort.set(port)
 	if f.dialErr != nil {
 		return nil, f.dialErr
 	}
@@ -182,6 +194,68 @@ func TestGuestTunnelClosesWhenGuestGone(t *testing.T) {
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if _, err := br.ReadByte(); err == nil {
 		t.Fatal("expected tunnel to close after guest went away")
+	}
+}
+
+// openTunnelPath performs the upgrade handshake against an arbitrary path/query
+// (used for the Phase 8 ?port= allowlist), returning the status line.
+func openTunnelPath(t *testing.T, ts *httptest.Server, path, token string) (net.Conn, *bufio.Reader, string) {
+	t.Helper()
+	u := strings.TrimPrefix(ts.URL, "http://")
+	conn, err := net.Dial("tcp", u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("GET " + path + " HTTP/1.1\r\n")
+	b.WriteString("Host: " + u + "\r\n")
+	b.WriteString("Authorization: " + api.BearerPrefix + token + "\r\n")
+	b.WriteString("Connection: Upgrade\r\n")
+	b.WriteString("Upgrade: " + api.UpgradeGuestProto + "\r\n\r\n")
+	if _, err := conn.Write([]byte(b.String())); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	statusLine, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	return conn, br, statusLine
+}
+
+// TestGuestTunnelPortAllowlist covers the Phase 8 ?port= parameter: absent ⇒
+// the terminal port, the web port is forwarded verbatim, and an off-list port is
+// rejected 400 before any dial.
+func TestGuestTunnelPortAllowlist(t *testing.T) {
+	network, addr, closeEcho := echoServer(t)
+	defer closeEcho()
+
+	cases := []struct {
+		name     string
+		path     string
+		wantCode string
+		wantPort uint32
+	}{
+		{"absent defaults to terminal", "/v1/machines/m1/guest", "101", api.GuestTerminalPort},
+		{"explicit terminal port", "/v1/machines/m1/guest?port=1024", "101", api.GuestTerminalPort},
+		{"web port", "/v1/machines/m1/guest?port=1025", "101", api.GuestWebPort},
+		{"off-list port", "/v1/machines/m1/guest?port=22", "400", 0},
+		{"non-numeric port", "/v1/machines/m1/guest?port=abc", "400", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			drv := &fakeGuestDriver{state: api.StateRunning, guestNet: network, guestAdr: addr}
+			ts := httptest.NewServer(httpapi.New(testToken, drv).Handler())
+			defer ts.Close()
+			conn, _, status := openTunnelPath(t, ts, tc.path, testToken)
+			defer conn.Close()
+			if !strings.Contains(status, tc.wantCode) {
+				t.Fatalf("status = %q, want %s", status, tc.wantCode)
+			}
+			if tc.wantCode == "101" && drv.lastPort.get() != tc.wantPort {
+				t.Fatalf("dialed port = %d, want %d", drv.lastPort.get(), tc.wantPort)
+			}
+		})
 	}
 }
 

@@ -24,6 +24,14 @@ Environment=PROTEOS_GUEST_SCROLLBACK_KIB=256
 # than refusing terminals. The agent runs as root (no User= here) so it can
 # mount and, on resume, clock_settime + reseed the CRNG.
 Environment=PROTEOS_GUEST_PERSIST_DEV=/dev/vdb
+# Phase 8 (decision #4/#5): the code-server web forward. The agent listens on a
+# second vsock port (1025) that the node-agent tunnel reaches on the guest web
+# port, and lazily starts + supervises code-server (bound loopback-only on
+# 127.0.0.1:13337) on the first web connection. code-server is baked at
+# /usr/local/bin/code-server by image/build-rootfs.sh; a build that opted out
+# (--no-codeserver) leaves this listener up but unable to start the editor.
+Environment=PROTEOS_GUEST_WEB_LISTEN=vsock:1025
+Environment=PROTEOS_CODESERVER_BIN=/usr/local/bin/code-server
 Restart=always
 RestartSec=1
 # The shell sessions are children of the agent; give them room.

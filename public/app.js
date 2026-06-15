@@ -40,10 +40,7 @@ class ProteOS {
             });
         });
 
-        // Files icon
-        document.getElementById('files-icon').addEventListener('click', () => {
-            this.showFileBrowser();
-        });
+        // (Phase 8) Files icon/browser removed — see code-server editor.
 
         // About icon
         document.getElementById('about-icon').addEventListener('click', () => {
@@ -56,10 +53,6 @@ class ProteOS {
         });
 
         // Menu items
-        document.getElementById('folders-menu')?.addEventListener('click', () => {
-            this.showFileBrowser();
-        });
-
         document.getElementById('help-menu')?.addEventListener('click', () => {
             this.showAboutModal();
         });
@@ -77,8 +70,6 @@ class ProteOS {
             btn.addEventListener('click', () => {
                 const modalType = btn.dataset.modal;
                 if (modalType === 'about') this.hideAboutModal();
-                if (modalType === 'files') this.hideFileBrowser();
-                if (modalType === 'file-viewer') this.hideFileViewer();
                 if (modalType === 'logs') this.hideLogViewer();
                 if (modalType === 'settings') this.hideSettings();
             });
@@ -87,12 +78,6 @@ class ProteOS {
         // Close modals on background click
         document.getElementById('about-modal').addEventListener('click', (e) => {
             if (e.target.id === 'about-modal') this.hideAboutModal();
-        });
-        document.getElementById('files-modal').addEventListener('click', (e) => {
-            if (e.target.id === 'files-modal') this.hideFileBrowser();
-        });
-        document.getElementById('file-viewer-modal').addEventListener('click', (e) => {
-            if (e.target.id === 'file-viewer-modal') this.hideFileViewer();
         });
         document.getElementById('settings-modal').addEventListener('click', (e) => {
             if (e.target.id === 'settings-modal') this.hideSettings();
@@ -111,17 +96,6 @@ class ProteOS {
 
         document.getElementById('theme-selector')?.addEventListener('change', (e) => {
             this.changeTheme(e.target.value);
-        });
-
-        // File browser controls
-        document.getElementById('file-browser-container-select').addEventListener('change', (e) => {
-            this.currentBrowserContainer = e.target.value;
-            this.currentBrowserPath = '';
-            this.loadFiles();
-        });
-
-        document.querySelector('.path-back-btn').addEventListener('click', () => {
-            this.goBackInPath();
         });
     }
 
@@ -618,171 +592,10 @@ class ProteOS {
         }, 3000);
     }
 
-    // File Browser Methods
-    showFileBrowser() {
-        this.currentBrowserPath = '';
-        this.populateContainerSelect();
-        document.getElementById('files-modal').classList.add('active');
-    }
-
-    hideFileBrowser() {
-        document.getElementById('files-modal').classList.remove('active');
-    }
-
-    populateContainerSelect() {
-        const select = document.getElementById('file-browser-container-select');
-        select.innerHTML = '';
-
-        if (this.containers.size === 0) {
-            select.innerHTML = '<option>No containers running</option>';
-            document.getElementById('file-list').innerHTML =
-                '<div class="empty-state">No containers available. Launch a Claude terminal first!</div>';
-            return;
-        }
-
-        this.containers.forEach((container, id) => {
-            const option = document.createElement('option');
-            option.value = id;
-            option.textContent = container.name;
-            select.appendChild(option);
-        });
-
-        this.currentBrowserContainer = select.value;
-        this.loadFiles();
-    }
-
-    async loadFiles() {
-        const fileList = document.getElementById('file-list');
-        fileList.innerHTML = '<div class="loading">Loading files...</div>';
-
-        document.getElementById('current-path').textContent = '/' + this.currentBrowserPath;
-        document.querySelector('.path-back-btn').disabled = !this.currentBrowserPath;
-
-        try {
-            const response = await fetch(
-                `/api/containers/${this.currentBrowserContainer}/files?path=${encodeURIComponent(this.currentBrowserPath)}`
-            );
-
-            if (!response.ok) {
-                throw new Error('Failed to load files');
-            }
-
-            const data = await response.json();
-
-            if (data.type === 'directory') {
-                this.displayFiles(data.files);
-            }
-        } catch (error) {
-            console.error('Error loading files:', error);
-            fileList.innerHTML = '<div class="empty-state">Error loading files</div>';
-        }
-    }
-
-    displayFiles(files) {
-        const fileList = document.getElementById('file-list');
-
-        if (files.length === 0) {
-            fileList.innerHTML = '<div class="empty-state">This directory is empty</div>';
-            return;
-        }
-
-        // Sort: directories first, then alphabetically
-        files.sort((a, b) => {
-            if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-            return a.name.localeCompare(b.name);
-        });
-
-        fileList.innerHTML = '';
-
-        files.forEach(file => {
-            const fileItem = document.createElement('div');
-            fileItem.className = 'file-item';
-
-            const icon = file.type === 'directory'
-                ? '<i data-lucide="folder" style="width: 20px; height: 20px; color: #fbbf24;"></i>'
-                : '<i data-lucide="file" style="width: 20px; height: 20px; color: #9ca3af;"></i>';
-            const size = file.type === 'file' ? this.formatFileSize(file.size) : '';
-
-            fileItem.innerHTML = `
-                <div class="file-icon">${icon}</div>
-                <div class="file-info">
-                    <div class="file-name">${file.name}</div>
-                    <div class="file-meta">${size} ${new Date(file.modified).toLocaleString()}</div>
-                </div>
-            `;
-
-            fileItem.addEventListener('click', () => {
-                if (file.type === 'directory') {
-                    this.openDirectory(file.name);
-                } else {
-                    this.openFile(file.name);
-                }
-            });
-
-            fileList.appendChild(fileItem);
-        });
-
-        // Re-initialize Lucide icons for file browser
-        setTimeout(() => lucide.createIcons(), 10);
-    }
-
-    openDirectory(name) {
-        this.currentBrowserPath = this.currentBrowserPath
-            ? `${this.currentBrowserPath}/${name}`
-            : name;
-        this.loadFiles();
-    }
-
-    goBackInPath() {
-        if (!this.currentBrowserPath) return;
-
-        const parts = this.currentBrowserPath.split('/');
-        parts.pop();
-        this.currentBrowserPath = parts.join('/');
-        this.loadFiles();
-    }
-
-    async openFile(name) {
-        const filePath = this.currentBrowserPath
-            ? `${this.currentBrowserPath}/${name}`
-            : name;
-
-        try {
-            const response = await fetch(
-                `/api/containers/${this.currentBrowserContainer}/files/read?path=${encodeURIComponent(filePath)}`
-            );
-
-            if (!response.ok) {
-                throw new Error('Failed to read file');
-            }
-
-            const data = await response.json();
-            this.showFileViewer(data);
-        } catch (error) {
-            console.error('Error reading file:', error);
-            this.showNotification('Failed to read file', true);
-        }
-    }
-
-    showFileViewer(fileData) {
-        const titleEl = document.getElementById('file-viewer-title');
-        titleEl.innerHTML = `<i data-lucide="file-text" style="width: 18px; height: 18px; vertical-align: middle; margin-right: 8px;"></i>${fileData.name}`;
-        document.getElementById('file-content').textContent = fileData.content;
-        document.getElementById('file-viewer-modal').classList.add('active');
-        setTimeout(() => lucide.createIcons(), 10);
-    }
-
-    hideFileViewer() {
-        document.getElementById('file-viewer-modal').classList.remove('active');
-    }
-
-    formatFileSize(bytes) {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-    }
+    // File Browser removed in Phase 8 (decision #7): file browsing/editing now
+    // lives in code-server behind the authenticated gateway (the per-machine
+    // editor subdomain), replacing the unauthenticated PoC file endpoints. See
+    // README and plans/phase-8-implementation.md.
 
     // System Log Methods
     addLog(level, message) {

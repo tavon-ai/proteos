@@ -195,6 +195,64 @@ install_node() {
   ok "Node ${version} unpacked into /usr/local"
 }
 
+# cs_arch maps uname -m onto the code-server release arch tag.
+cs_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo "amd64" ;;
+    arm64 | aarch64) echo "arm64" ;;
+    *) die "unsupported arch for code-server: $(uname -m)" ;;
+  esac
+}
+
+# install_codeserver MNT VERSION [SHA256] — fetch the pinned code-server
+# STANDALONE release tarball from GitHub (it bundles its own Node, so it needs no
+# system Node and stays self-contained — Phase 8 decision #5), verify its sha256,
+# and unpack it into /usr/local/lib/code-server with /usr/local/bin/code-server
+# symlinked to its entrypoint. An empty VERSION resolves the latest GitHub release.
+# The editor binds loopback only and is started lazily by the guest agent's web
+# forward; nothing here wires auth (the gateway authenticates). Sets CS_VERSION.
+install_codeserver() {
+  local mnt="$1" version="$2" want_sha="$3"
+  local arch tarball url
+  arch="$(cs_arch)"
+
+  if [[ -z $version ]]; then
+    log "resolving latest code-server release"
+    local tag
+    tag="$(dl https://api.github.com/repos/coder/code-server/releases/latest \
+      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]+"' \
+      | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || die "resolve code-server latest"
+    [[ -n $tag ]] || die "could not resolve latest code-server release"
+    version="${tag#v}"
+    ok "latest code-server is $version"
+  fi
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "bad code-server version: $version"
+
+  tarball="code-server-${version}-linux-${arch}.tar.gz"
+  url="https://github.com/coder/code-server/releases/download/v${version}/${tarball}"
+  log "fetching code-server ${version} (${arch})"
+  dl "$url" "$WORK/$tarball" || die "download code-server $version"
+
+  local actual
+  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
+  if [[ -n $want_sha ]]; then
+    [[ "$actual" == "$want_sha" ]] || die "code-server sha256 mismatch: expected $want_sha, got $actual"
+    ok "code-server sha256 verified ($actual)"
+  else
+    log "WARNING: --codeserver-sha256 not given; pinning to the tarball's own sha256 ($actual)"
+  fi
+  CS_SHA256="$actual"
+
+  # Unpack into /usr/local/lib/code-server (strip the top-level versioned dir),
+  # then symlink the entrypoint onto PATH.
+  sudo rm -rf "$mnt/usr/local/lib/code-server"
+  sudo mkdir -p "$mnt/usr/local/lib/code-server"
+  sudo tar -xzf "$WORK/$tarball" -C "$mnt/usr/local/lib/code-server" --strip-components=1
+  sudo ln -sf ../lib/code-server/bin/code-server "$mnt/usr/local/bin/code-server"
+  CS_VERSION="$version"
+  ok "code-server ${version} installed (/usr/local/bin/code-server)"
+}
+
 # npm_global MNT SPEC — install an npm package globally INSIDE the image via
 # chroot, so the package's native arch + #!/usr/bin/env node shebangs are correct
 # at guest runtime. Requires /dev,/proc bind mounts (added by the caller) and the
@@ -410,6 +468,16 @@ GIT_VERSION=""
 USER_PROVISION=1
 USER_NAME=""
 RUN_AS_USER="dev"
+# Phase 8: bake the code-server editor (standalone release, self-contained). On
+# by default — the browser editor is reached through the guest agent's web
+# forward (vsock:1025). --no-codeserver opts out (air-gapped builds, or a base
+# that already ships it). Installs the LATEST release unless --codeserver-version
+# pins one; --codeserver-sha256 verifies the tarball.
+CODESERVER_INSTALL=1
+CODESERVER_VERSION=""
+CODESERVER_SHA256=""
+CS_VERSION=""
+CS_SHA256=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
@@ -417,6 +485,10 @@ while [[ $# -gt 0 ]]; do
     --no-git) GIT_INSTALL=0; shift ;;
     --user) USER_PROVISION=1; shift ;;
     --no-user) USER_PROVISION=0; shift ;;
+    --codeserver) CODESERVER_INSTALL=1; shift ;;
+    --no-codeserver) CODESERVER_INSTALL=0; shift ;;
+    --codeserver-version) CODESERVER_VERSION=$2; shift 2 ;;
+    --codeserver-sha256) CODESERVER_SHA256=$2; shift 2 ;;
     --out-dir) OUT_DIR=$2; shift 2 ;;
     --grow-mib) GROW_MIB=$2; shift 2 ;;
     --claude-binary) CLAUDE_BIN=$2; shift 2 ;;
@@ -516,6 +588,12 @@ if [[ $GIT_INSTALL -eq 1 ]]; then
   GIT_NEED=$((GROW_MIB + 192))
   log "baking git — bumping grow ${GROW_MIB}→${GIT_NEED}MiB headroom"
   GROW_MIB=$GIT_NEED
+fi
+# Phase 8: code-server (standalone, bundles Node) unpacks to ~350MiB.
+if [[ $CODESERVER_INSTALL -eq 1 ]]; then
+  CS_NEED=$((GROW_MIB + 450))
+  log "baking code-server — bumping grow ${GROW_MIB}→${CS_NEED}MiB headroom"
+  GROW_MIB=$CS_NEED
 fi
 log "copying base image → $OUT_IMG (+${GROW_MIB}MiB headroom)"
 cp "$BASE" "$OUT_IMG"
@@ -646,6 +724,14 @@ if [[ $USER_PROVISION -eq 1 ]]; then
   FEATURES="$FEATURES,user"
 fi
 
+# Phase 8: bake code-server (decision #5). The standalone tarball is
+# self-contained (bundles its own Node), so it needs no chroot and is just
+# unpacked into /usr/local/lib + symlinked onto PATH.
+if [[ $CODESERVER_INSTALL -eq 1 ]]; then
+  install_codeserver "$MNT" "$CODESERVER_VERSION" "$CODESERVER_SHA256"
+  FEATURES="$FEATURES,codeserver"
+fi
+
 if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
   FEATURES="$FEATURES,node"
@@ -681,6 +767,7 @@ PROTEOS_GUESTAGENT_VERSION=$VERSION
 PROTEOS_GUESTAGENT_FEATURES=$FEATURES
 PROTEOS_GIT_VERSION=${GIT_VERSION:-none}
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
+PROTEOS_CODESERVER_VERSION=${CS_VERSION:-none}
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
 PROTEOS_NODE_VERSION=${NODE_VERSION:-none}
 PROTEOS_GEMINI_VERSION=${GEMINI_VERSION:-none}
@@ -712,6 +799,8 @@ base_rootfs    = $BASE_NAME
 guestagent     = $VERSION
 features       = $FEATURES
 git_version    = ${GIT_VERSION:-none}
+codeserver_version = ${CS_VERSION:-none}
+codeserver_sha256  = ${CS_SHA256:-none}
 claude_version = ${CLAUDE_VERSION:-none}
 claude_sha256  = ${CLAUDE_SHA256:-none}
 node_version   = ${NODE_VERSION:-none}

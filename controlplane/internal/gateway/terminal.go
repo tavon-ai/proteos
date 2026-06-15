@@ -21,8 +21,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
 	"github.com/tavon/proteos/controlplane/internal/nodeclient"
+	guestwire "github.com/tavon/proteos/guestagent/api"
+	agentapi "github.com/tavon/proteos/nodeagent/api"
 )
 
 // pingInterval keeps the browser leg alive (and any idle timers between us and
@@ -33,11 +34,12 @@ const pingInterval = 30 * time.Second
 // dialTimeout bounds the guest tunnel + WebSocket handshake.
 const dialTimeout = 10 * time.Second
 
-// GuestDialer opens the opaque byte tunnel to a machine's guest agent. The
+// GuestDialer opens the opaque byte tunnel to a machine's guest agent at the
+// given guest port (agentapi.GuestTerminalPort for the terminal). The
 // nodeclient.Client satisfies this; keeping it an interface makes the proxy
 // testable against a fake agent.
 type GuestDialer interface {
-	DialGuest(ctx context.Context, machineID string) (net.Conn, error)
+	DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error)
 }
 
 // Proxy is the terminal gateway. Construct it with NewProxy and register Serve
@@ -94,7 +96,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, opts ServeOpts) {
 
 	// 1. Dial the node-agent guest tunnel.
 	dialCtx, dialCancel := context.WithTimeout(ctx, dialTimeout)
-	tunnel, err := p.guests.DialGuest(dialCtx, opts.MachineID)
+	tunnel, err := p.guests.DialGuest(dialCtx, opts.MachineID, agentapi.GuestTerminalPort)
 	if err != nil {
 		dialCancel()
 		code, reason := closeForDialError(ctx, err, opts.Refresh)

@@ -50,7 +50,7 @@ func TestGuestVsockTerminal(t *testing.T) {
 		deadline := time.Now().Add(30 * time.Second)
 		for {
 			dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			conn, err := d.DialGuest(dctx, id)
+			conn, err := d.DialGuest(dctx, id, api.GuestTerminalPort)
 			cancel()
 			if err == nil {
 				if br, herr := wsHandshake(conn, "/terminal?session=main"); herr == nil {

@@ -244,3 +244,46 @@ Buildable immediately in parallel: 8.0, 8.1, 8.5. Only 8.4's image and 8.6 need 
 - **Rate limiting on the subdomain endpoints** — Phase 10 with the rest of `/gw/*`.
 - **Multi-instance revocation fan-out for proxied WS** — Phase 10/11 with the Phase 3
   registry's own multi-instance story.
+
+## As-built notes
+
+### 8.0(a) — Embedding decision (browser matrix)
+
+`EditorPanel` ships **iframe-by-default with an always-present "Open in new tab"
+fallback** — both work from the same partitioned-cookie design, so no browser is
+blocked regardless of the matrix outcome. The subdomain cookie is
+`HttpOnly; Secure; SameSite=None; Partitioned` (CHIPS). Current-2026 behavior:
+Chrome 114+ honours `Partitioned` for the embedded cross-origin frame; Firefox
+and Safari partition third-party cookies by default (Total Cookie Protection /
+ITP), so the frame carries its own cookie under the dashboard's top-level site.
+A browser that blocks the framed cookie still has the first-party new-tab path
+(always works). The cookie is `Secure`, so the editor requires HTTPS — the
+`PROTEOS_COOKIE_SECURE=true` deployment default already enforces this.
+
+### 8.0(c) — code-server pin
+
+code-server is baked from the **standalone GitHub release tarball** (it bundles
+its own Node, so it is self-contained and needs no system Node):
+`build-rootfs.sh` installs it to `/usr/local/lib/code-server` with
+`/usr/local/bin/code-server` symlinked, on by default (`--no-codeserver` opts
+out). The version + tarball sha256 are recorded in `manifest.lock`
+(`codeserver_version`, `codeserver_sha256`); unpinned ⇒ the latest release, a
+forced rebuild bumps it (Ansible `proteos_codeserver_version`). Flags per
+decision #5 (`--auth none --bind-addr 127.0.0.1:13337 --disable-telemetry
+--disable-update-check`, user-data/extensions under `$HOME`, default folder
+`/workspace`). Image-size delta: **~+350–400 MiB** (recorded in `manifest.lock`
+`image_size_mib` after a real bake).
+
+### Verification status
+
+- **Built + tested on a Mac (Track A):** tunnel port param (`go test` node-agent +
+  the webfwd supervisor/forward unit tests); the full machine-web e2e
+  (`TestMachineWebE2E`: real node-agent DevDriver + guest webfwd → stub backend,
+  mint→auth→proxy→WS-echo→logout-closes-WS, `/api` on subdomain 404, host-first
+  routing); the gateway authz table; the cookie host-only regression
+  (`TestSessionCookieIsHostOnly`); web `tsc`/`vite build`.
+- **Host-only (Proxmox), scripted for the operator:** image bake (the
+  `build-rootfs.sh` / Ansible code-server step), `image/verify-phase8-rootfs.sh`
+  (loop-mount checks), `image/verify-phase8-live.sh` +
+  `TestGuestWebForwardCodeServer` (boot a VM, dial port 1025, lazy-start
+  code-server), and the browser live-acceptance walkthrough in RUNBOOK Part G.

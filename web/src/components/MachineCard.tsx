@@ -6,6 +6,7 @@ import {
   useMachineMutations,
   useProviders,
 } from "../api/hooks";
+import { EditorPanel } from "./EditorPanel";
 import { TerminalPanel } from "./TerminalPanel";
 
 // Transitional states show a spinner and disable action buttons. hibernating is
@@ -32,6 +33,7 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
   const { create, start, stop } = useMachineMutations();
   const { data: providers } = useProviders();
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   // The registry key of the provider whose agent session is open, or null.
   const [agentProvider, setAgentProvider] = useState<string | null>(null);
 
@@ -105,6 +107,9 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
             <button className="btn" onClick={() => setTerminalOpen(true)}>
               Open terminal
             </button>
+            <button className="btn" onClick={() => setEditorOpen(true)}>
+              Open editor
+            </button>
             {launchable.map((p) => (
               <button
                 key={p.key}
@@ -138,6 +143,11 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
 
       {terminalOpen && machine.state === "running" && (
         <TerminalPanel machineID={machine.id} onClose={() => setTerminalOpen(false)} />
+      )}
+      {/* The editor panel stays mounted across a stop so it can show a reconnect
+          banner (driven by the live machine state) instead of a dead frame. */}
+      {editorOpen && (
+        <EditorPanel machineState={machine.state} onClose={() => setEditorOpen(false)} />
       )}
       {agentProvider && machine.state === "running" && (
         <TerminalPanel

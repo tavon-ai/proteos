@@ -170,6 +170,13 @@
     update_cache: true
   when: proteos_npm_providers | bool
 
+- name: Phase 8 — ensure code-server bake prerequisites are present
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, tar, gzip]
+    state: present
+    update_cache: true
+  when: proteos_codeserver_install | bool
+
 - name: Bake the guest agent (and, if configured, the provider CLIs) into the base rootfs
   ansible.builtin.command:
     cmd: >-
@@ -182,6 +189,7 @@
       {% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}
       {% if proteos_npm_providers | bool and proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}
       {% if not (proteos_git_install | bool) %} --no-git{% endif %}
+      {% if not (proteos_codeserver_install | bool) %} --no-codeserver{% else %}{% if proteos_codeserver_version | length > 0 %} --codeserver-version {{ proteos_codeserver_version }}{% endif %}{% if proteos_codeserver_sha256 | length > 0 %} --codeserver-sha256 {{ proteos_codeserver_sha256 }}{% endif %}{% endif %}
   environment:
     PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
     # Carries the real commit SHA into the image name on the rsync path (the
@@ -223,6 +231,19 @@
   ansible.builtin.command:
     cmd: >-
       {{ proteos_src_dir }}/image/verify-phase7-rootfs.sh
+      --image {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}
+      --images-dir {{ proteos_images_dir }}
+  changed_when: false
+
+# Phase 8 gate: verify the baked image contains a runnable code-server + the
+# guest agent's web-forward systemd wiring, with NO auth/credential baked.
+# Loop-mount only (no VM boot), cheap and safe on every bake. A red gate aborts.
+- name: Phase 8 acceptance — code-server present + web forward wired, no secret baked
+  tags: [acceptance, codeserver]
+  when: proteos_codeserver_install | bool
+  ansible.builtin.command:
+    cmd: >-
+      {{ proteos_src_dir }}/image/verify-phase8-rootfs.sh
       --image {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}
       --images-dir {{ proteos_images_dir }}
   changed_when: false

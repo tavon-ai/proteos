@@ -22,7 +22,7 @@ func newDriver(t *testing.T, guestAgentBin string) (*dev.DevDriver, *state.Store
 	if err != nil {
 		t.Fatal(err)
 	}
-	return dev.New(store, fastBoot, "", guestAgentBin), store
+	return dev.New(store, fastBoot, "", guestAgentBin, ""), store
 }
 
 func waitState(t *testing.T, d *dev.DevDriver, id, want string) driver.Status {

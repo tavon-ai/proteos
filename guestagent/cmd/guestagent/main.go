@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/tavon/proteos/guestagent/internal/secrets"
 	"github.com/tavon/proteos/guestagent/internal/server"
 	"github.com/tavon/proteos/guestagent/internal/term"
+	"github.com/tavon/proteos/guestagent/internal/webfwd"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".
@@ -117,6 +119,40 @@ func run() error {
 			slog.Error("credential helper socket", "err", err)
 		}
 	}()
+
+	// Phase 8: the code-server web forward (decision #4). When a web listener is
+	// configured it serves on a second private port (vsock:1025 / a dev unix
+	// socket); the node-agent tunnel reaches it on agentapi.GuestWebPort. With a
+	// code-server binary configured it lazily starts + supervises code-server,
+	// else it forwards to an already-running backend (dev/e2e stub).
+	if cfg.WebListen != "" {
+		webLn, err := listen.Listen(cfg.WebListen)
+		if err != nil {
+			return err
+		}
+		defer webLn.Close()
+
+		args := webfwd.DefaultCodeServerArgs(cfg.WebBackend, id.Home, "/workspace")
+		if cfg.CodeServerArgs != "" {
+			args = strings.Fields(cfg.CodeServerArgs)
+		}
+		sup := webfwd.NewSupervisor(webfwd.SupervisorConfig{
+			Bin:  cfg.CodeServerBin,
+			Args: args,
+			Env:  p.ShellEnv(),
+			Dir:  "/workspace",
+			Cred: id.Credential(),
+			Addr: cfg.WebBackend,
+		})
+		fwd := webfwd.New(webLn, cfg.WebBackend, sup)
+		go func() {
+			slog.Info("guest web forward listening", "listen", cfg.WebListen, "backend", cfg.WebBackend, "supervised", cfg.CodeServerBin != "")
+			if err := fwd.Serve(ctx); err != nil {
+				slog.Error("web forward serve", "err", err)
+			}
+		}()
+		defer sup.Shutdown()
+	}
 
 	srv := server.New(mgr, p, sec, control)
 	httpServer := &http.Server{

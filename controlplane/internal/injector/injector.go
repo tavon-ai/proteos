@@ -23,16 +23,18 @@ import (
 	"time"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	agentapi "github.com/tavon/proteos/nodeagent/api"
 
 	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 )
 
-// GuestDialer opens the opaque byte tunnel to a machine's guest agent.
-// *nodeclient.Client satisfies it.
+// GuestDialer opens the opaque byte tunnel to a machine's guest agent at the
+// given guest port. *nodeclient.Client satisfies it; secret injection rides the
+// terminal port (agentapi.GuestTerminalPort).
 type GuestDialer interface {
-	DialGuest(ctx context.Context, machineID string) (net.Conn, error)
+	DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error)
 }
 
 // Injector reads provider secrets and pushes them to guests.
@@ -133,7 +135,7 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 // whose transport returns the tunnel for its single connection (the same trick
 // the gateway uses for the guest WebSocket).
 func (i *Injector) push(ctx context.Context, machineID string, req guestwire.SecretsRequest) error {
-	tunnel, err := i.guests.DialGuest(ctx, machineID)
+	tunnel, err := i.guests.DialGuest(ctx, machineID, agentapi.GuestTerminalPort)
 	if err != nil {
 		return fmt.Errorf("dial guest: %w", err)
 	}

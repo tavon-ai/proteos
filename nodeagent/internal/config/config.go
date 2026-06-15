@@ -52,6 +52,14 @@ type Config struct {
 	// (Phase 3): the whole terminal path then works on a Mac with no hypervisor.
 	GuestAgentBin string
 
+	// DevGuestWebBackend (PROTEOS_DEV_GUEST_WEB_BACKEND), when set, enables the
+	// guest agent's Phase 8 web forward (code-server stand-in) in the dev driver,
+	// pointing it at this address. In dev/e2e it is a stub HTTP+WS server, so the
+	// code-server tunnel (DialGuest on the web port) round-trips with no real
+	// code-server. Empty ⇒ terminal-only dev (no web listener). Unused by the
+	// firecracker driver, which always runs the in-image code-server on 1025.
+	DevGuestWebBackend string
+
 	// GuestVsockPort is the fixed guest port the in-VM agent listens on; the
 	// firecracker driver connects to it via the jailed vsock uds (Phase 3,
 	// decision #3). Unused by the dev driver.
@@ -91,23 +99,24 @@ type Config struct {
 // Load reads and validates configuration from the environment.
 func Load() (*Config, error) {
 	c := &Config{
-		Addr:           getenv("PROTEOS_AGENT_ADDR", ":9090"),
-		Token:          os.Getenv("PROTEOS_AGENT_TOKEN"),
-		TLSCert:        os.Getenv("PROTEOS_AGENT_TLS_CERT"),
-		TLSKey:         os.Getenv("PROTEOS_AGENT_TLS_KEY"),
-		DataDir:        getenv("PROTEOS_AGENT_DATA_DIR", ".data/agent"),
-		Driver:         getenv("PROTEOS_AGENT_DRIVER", "dev"),
-		StubPath:       os.Getenv("PROTEOS_DEV_STUB"),
-		GuestAgentBin:  os.Getenv("PROTEOS_DEV_GUESTAGENT_BIN"),
-		GuestVsockPort: getenvInt("PROTEOS_GUEST_VSOCK_PORT", 1024),
-		FirecrackerBin: getenv("PROTEOS_FIRECRACKER_BIN", "/usr/local/bin/firecracker"),
-		JailerBin:      getenv("PROTEOS_JAILER_BIN", "/usr/local/bin/jailer"),
-		ChrootBaseDir:  getenv("PROTEOS_CHROOT_BASE_DIR", "/srv/jailer"),
-		ImagesDir:      getenv("PROTEOS_AGENT_IMAGES_DIR", "/var/lib/proteos/images"),
-		JailUIDStart:   getenvInt("PROTEOS_JAIL_UID_START", 100000),
-		JailUIDCount:   getenvInt("PROTEOS_JAIL_UID_COUNT", 1000),
-		VolumesDir:     getenv("PROTEOS_AGENT_VOLUMES_DIR", "/var/lib/proteos/volumes"),
-		CryptsetupBin:  getenv("PROTEOS_CRYPTSETUP_BIN", "/usr/sbin/cryptsetup"),
+		Addr:               getenv("PROTEOS_AGENT_ADDR", ":9090"),
+		Token:              os.Getenv("PROTEOS_AGENT_TOKEN"),
+		TLSCert:            os.Getenv("PROTEOS_AGENT_TLS_CERT"),
+		TLSKey:             os.Getenv("PROTEOS_AGENT_TLS_KEY"),
+		DataDir:            getenv("PROTEOS_AGENT_DATA_DIR", ".data/agent"),
+		Driver:             getenv("PROTEOS_AGENT_DRIVER", "dev"),
+		StubPath:           os.Getenv("PROTEOS_DEV_STUB"),
+		GuestAgentBin:      os.Getenv("PROTEOS_DEV_GUESTAGENT_BIN"),
+		DevGuestWebBackend: os.Getenv("PROTEOS_DEV_GUEST_WEB_BACKEND"),
+		GuestVsockPort:     getenvInt("PROTEOS_GUEST_VSOCK_PORT", 1024),
+		FirecrackerBin:     getenv("PROTEOS_FIRECRACKER_BIN", "/usr/local/bin/firecracker"),
+		JailerBin:          getenv("PROTEOS_JAILER_BIN", "/usr/local/bin/jailer"),
+		ChrootBaseDir:      getenv("PROTEOS_CHROOT_BASE_DIR", "/srv/jailer"),
+		ImagesDir:          getenv("PROTEOS_AGENT_IMAGES_DIR", "/var/lib/proteos/images"),
+		JailUIDStart:       getenvInt("PROTEOS_JAIL_UID_START", 100000),
+		JailUIDCount:       getenvInt("PROTEOS_JAIL_UID_COUNT", 1000),
+		VolumesDir:         getenv("PROTEOS_AGENT_VOLUMES_DIR", "/var/lib/proteos/volumes"),
+		CryptsetupBin:      getenv("PROTEOS_CRYPTSETUP_BIN", "/usr/sbin/cryptsetup"),
 	}
 
 	if (c.TLSCert == "") != (c.TLSKey == "") {

@@ -102,7 +102,7 @@ func (d *Driver) installedFCVersion() string {
 // log loudly instead. Returns the corrected skew (host − guest, ms) the guest
 // reported.
 func (d *Driver) callGuestResume(ctx context.Context, machineID string) (int64, error) {
-	conn, err := d.DialGuest(ctx, machineID)
+	conn, err := d.DialGuest(ctx, machineID, 0) // 0 ⇒ terminal port (the agent's control surface)
 	if err != nil {
 		return 0, fmt.Errorf("dial guest for resume: %w", err)
 	}

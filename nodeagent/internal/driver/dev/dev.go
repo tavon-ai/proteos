@@ -44,6 +44,13 @@ type DevDriver struct {
 	// Empty ⇒ the plain stub (Phase 2 behaviour).
 	guestAgentBin string
 
+	// guestWebBackend, when set (PROTEOS_DEV_GUEST_WEB_BACKEND), enables the guest
+	// agent's Phase 8 web forward (code-server stand-in): the guest agent listens
+	// on guest-web.sock and raw-forwards to this address. In dev/e2e this points
+	// at a stub HTTP+WS server, so DialGuest(GuestWebPort) round-trips without a
+	// real code-server. Empty ⇒ no web listener (terminal-only dev).
+	guestWebBackend string
+
 	mu    sync.Mutex
 	procs map[string]*exec.Cmd // machineID -> running stub child
 }
@@ -51,7 +58,9 @@ type DevDriver struct {
 // New builds a DevDriver. stubPath empty ⇒ resolve `sleep` from PATH. The stub
 // just needs to be a process that stays alive until signalled. guestAgentBin,
 // when non-empty, replaces the stub with the real guest agent (see field doc).
-func New(store *state.Store, bootDelay time.Duration, stubPath, guestAgentBin string) *DevDriver {
+// guestWebBackend, when non-empty, enables the guest agent's web forward toward
+// that address (Phase 8 dev/e2e stand-in for code-server).
+func New(store *state.Store, bootDelay time.Duration, stubPath, guestAgentBin, guestWebBackend string) *DevDriver {
 	args := []string{"2147483647"} // ~68 years; `sleep` accepts a plain number on darwin+linux
 	if stubPath == "" {
 		if p, err := exec.LookPath("sleep"); err == nil {
@@ -59,19 +68,26 @@ func New(store *state.Store, bootDelay time.Duration, stubPath, guestAgentBin st
 		}
 	}
 	return &DevDriver{
-		store:         store,
-		bootDelay:     bootDelay,
-		stubPath:      stubPath,
-		stubArgs:      args,
-		guestAgentBin: guestAgentBin,
-		procs:         make(map[string]*exec.Cmd),
+		store:           store,
+		bootDelay:       bootDelay,
+		stubPath:        stubPath,
+		stubArgs:        args,
+		guestAgentBin:   guestAgentBin,
+		guestWebBackend: guestWebBackend,
+		procs:           make(map[string]*exec.Cmd),
 	}
 }
 
-// guestSockPath is the per-machine unix socket the guest agent listens on (and
-// DialGuest connects to).
+// guestSockPath is the per-machine unix socket the guest agent's terminal
+// listener uses (and DialGuest connects to for the terminal port).
 func (d *DevDriver) guestSockPath(machineID string) string {
 	return filepath.Join(d.store.MachineDir(machineID), "guest.sock")
+}
+
+// guestWebSockPath is the per-machine unix socket the guest agent's Phase 8 web
+// forward (code-server) listens on, standing in for vsock port 1025 in dev.
+func (d *DevDriver) guestWebSockPath(machineID string) string {
+	return filepath.Join(d.store.MachineDir(machineID), "guest-web.sock")
 }
 
 // persistDir is the per-machine directory standing in for the real driver's
@@ -220,13 +236,25 @@ func (d *DevDriver) buildCmd(machineID string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("mkdir persist dir: %w", err)
 	}
 
-	cmd := exec.Command(d.guestAgentBin)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"PROTEOS_GUEST_LISTEN=unix:"+sock,
 		"PROTEOS_GUEST_SHELL=/bin/bash",
 		"PROTEOS_GUEST_PERSIST="+persist,
 		"PROTEOS_GUEST_ENV_DIR="+d.envDir(machineID),
 	)
+	// Phase 8: when a web backend is configured, run the guest agent's web forward
+	// on a per-machine socket (the dev stand-in for vsock port 1025) pointing at
+	// that backend (a stub/real code-server). No PROTEOS_CODESERVER_BIN ⇒ the
+	// forward assumes the backend is already up rather than supervising it.
+	if d.guestWebBackend != "" {
+		env = append(env,
+			"PROTEOS_GUEST_WEB_LISTEN=unix:"+d.guestWebSockPath(machineID),
+			"PROTEOS_GUEST_WEB_BACKEND="+d.guestWebBackend,
+		)
+	}
+
+	cmd := exec.Command(d.guestAgentBin)
+	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd, nil
 }
@@ -354,17 +382,23 @@ func (d *DevDriver) Destroy(ctx context.Context, machineID string) error {
 	return d.store.Delete(machineID)
 }
 
-// DialGuest connects to the machine's guest agent over its guest.sock. The
-// machine must be tracked (else ErrUnknownMachine); the HTTP layer is
-// responsible for the running-state check before calling this.
-func (d *DevDriver) DialGuest(ctx context.Context, machineID string) (net.Conn, error) {
+// DialGuest connects to the machine's guest agent over its terminal socket
+// (guest.sock) or, for the Phase 8 web port, its web socket (guest-web.sock).
+// The machine must be tracked (else ErrUnknownMachine); the HTTP layer is
+// responsible for the running-state check and port allowlisting before calling
+// this. A zero port means the terminal socket.
+func (d *DevDriver) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	if _, ok, err := d.store.Load(machineID); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, driver.ErrUnknownMachine
 	}
+	sock := d.guestSockPath(machineID)
+	if port == agentapi.GuestWebPort {
+		sock = d.guestWebSockPath(machineID)
+	}
 	var dialer net.Dialer
-	return dialer.DialContext(ctx, "unix", d.guestSockPath(machineID))
+	return dialer.DialContext(ctx, "unix", sock)
 }
 
 var _ driver.GuestDialer = (*DevDriver)(nil)

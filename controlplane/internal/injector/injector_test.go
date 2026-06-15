@@ -50,7 +50,7 @@ func (g *fakeGuest) handler() http.Handler {
 // sockets involved.
 type pipeDialer struct{ h http.Handler }
 
-func (d pipeDialer) DialGuest(_ context.Context, _ string) (net.Conn, error) {
+func (d pipeDialer) DialGuest(_ context.Context, _ string, _ uint32) (net.Conn, error) {
 	client, server := net.Pipe()
 	ch := make(chan net.Conn, 1)
 	ch <- server
@@ -234,4 +234,3 @@ func TestInjectorPushesEmptyWhenNoKeys(t *testing.T) {
 		t.Fatalf("expected empty replace-all push, got %v", guest.last.Providers)
 	}
 }
-

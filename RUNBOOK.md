@@ -538,6 +538,93 @@ When every row passes, tick the master-plan Phase 6 checklist in
 
 ---
 
+## Part G — Phase 8: per-machine editor (code-server) subdomains
+
+The browser editor is **code-server inside the microVM**, reached only through
+the authenticated gateway at a per-machine subdomain `m-<uuid>.<machine-domain>`
+(master plan "Web origin isolation"). It needs wildcard DNS + TLS at the proxy
+layer and one config flag on the control plane; the app-stack nginx already
+carries the wildcard `server_name` block (Phase 8). The editor binary is baked
+into the rootfs by the node_agent Ansible role (`proteos_codeserver_install`,
+default on).
+
+### G1. Wildcard DNS + TLS (NPMplus / proxy layer)
+
+Pick a parent domain for editors (separate label from the app, e.g.
+`machines.proteos.example`). At the proxy that already fronts the app VM
+(NPMplus in this lab):
+
+```
+# 1. DNS: a WILDCARD A/AAAA record for the editor parent domain → app VM IP.
+#    *.machines.proteos.example   A   <APP_VM_IP>
+#    (the app host itself, e.g. proteos.example, keeps its own record.)
+
+# 2. TLS: a WILDCARD certificate for *.machines.proteos.example. Per-host certs
+#    cannot cover unbounded m-<uuid> names, so this MUST be a wildcard — issue it
+#    via a DNS-01 challenge (NPMplus → SSL → Let's Encrypt → DNS challenge).
+
+# 3. Proxy host in NPMplus: forward *.machines.proteos.example → app VM :<WEB_PORT>
+#    with WebSockets enabled (the editor is WS-heavy). The app-stack nginx then
+#    host-routes m-<uuid>.… to the control plane (its wildcard server block).
+```
+
+### G2. Turn it on (app stack)
+
+```
+# in deploy/app-stack/.env
+PROTEOS_MACHINE_DOMAIN=machines.proteos.example
+# Cookies are cross-site (SameSite=None; Partitioned) — they REQUIRE Secure, so
+# the editor only works over HTTPS. Keep PROTEOS_COOKIE_SECURE=true behind TLS.
+docker compose up -d controlplane web
+```
+
+Leaving `PROTEOS_MACHINE_DOMAIN` unset disables the editor entirely (the
+dashboard's "Open editor" mints but the route 404s) — no wildcard infra needed
+for a non-editor deployment.
+
+### G3. Bake check + live tunnel (KVM host)
+
+```
+# Non-destructive image check (loop-mount): code-server present + web-forward
+# wiring + no auth baked.
+sudo image/verify-phase8-rootfs.sh
+
+# Live: boot a microVM and prove the editor tunnel (port 1025 → code-server).
+# Run on a FRESH node (or stop the node-agent first).
+sudo image/verify-phase8-live.sh
+```
+
+### G4. Live acceptance (app stack, browser)
+
+Walk the master-plan Phase 8 checklist:
+
+1. Dashboard → **Open editor** on a running machine → the editor iframe loads
+   code-server (opens `/workspace`). Edit + **save** a file.
+2. Open a **terminal** on the same machine → the saved file is visible (and a
+   file written in the terminal appears in the editor) — shared `/workspace`.
+   *(Durable across stop/start once Phase 4's disk has landed.)*
+3. **No direct route to the guest**: from outside the host, a port scan of the
+   editor subdomain shows only the proxy ports; hitting `m-<uuid>.<domain>/`
+   **without** the editor cookie returns 401.
+4. **Logout in another tab** kills the editor: the live code-server socket drops
+   and a reload returns 403 (the parent-session-alive check).
+5. **DevTools** on the editor subdomain: the `proteos_machine` cookie is present
+   with `Secure; HttpOnly; SameSite=None; Partitioned`, and the main
+   `proteos_session` cookie is **absent** (it is host-only — fact #1).
+
+Tick the boxes in `plans/proteos-poc-to-prod.md` (the "edits persist" box notes
+the Phase 4 gating if the disk has not landed).
+
+### G5. Gotcha — the wildcard `server_name` block
+
+Without the Phase 8 nginx block, every `m-<uuid>.…` request matches the catch-all
+`server_name _` and returns the SPA's `index.html` with **200** — the exact
+silent-failure class the `/gw/` WebSocket gotcha already bit us with. The block
+is in `deploy/app-stack/nginx.conf`; if editors return the dashboard HTML, that
+block (or the NPMplus WebSocket toggle) is missing.
+
+---
+
 ## Reproducibility notes
 
 - **Pinned versions** live in `spike/firecracker/env.sh` + the committed
@@ -559,6 +646,11 @@ When every row passes, tick the master-plan Phase 6 checklist in
 - Containers can't reach a `127.0.0.1` agent — use the KVM host's LAN IP (split
   VMs) or `host.docker.internal` (same host).
 - On plain HTTP keep `PROTEOS_COOKIE_SECURE=false`; put TLS in front for real use.
+- **Phase 8 editor** needs a wildcard DNS record + wildcard TLS for
+  `*.<PROTEOS_MACHINE_DOMAIN>` and `PROTEOS_COOKIE_SECURE=true` (the editor cookie
+  is `SameSite=None; Partitioned`, which browsers only send with `Secure`). If the
+  editor shows the dashboard HTML instead, the nginx wildcard `server_name` block
+  or the proxy's WebSocket toggle is missing (see Part G5).
 - **Default-deny system FORWARD policy** (Docker, ufw, or a manual `iptables -P
   FORWARD DROP` on the KVM host): the guest gets no internet even though the
   `proteos` forward rules accept it, because that drop lives in a separate

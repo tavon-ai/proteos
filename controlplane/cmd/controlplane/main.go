@@ -171,6 +171,25 @@ func run(migrate, migrateOnly bool) error {
 	sessions.SetRevocationListener(gwRegistry)
 	gw := gateway.NewProxy(cfg.AllowedWSOrigins, nodes, gwRegistry)
 
+	// Phase 8: the per-machine code-server editor origin (m-<uuid>.<domain>).
+	// NewMachineWeb returns nil when PROTEOS_MACHINE_DOMAIN is unset, disabling
+	// host-first routing and the web-session route. It shares the terminal's conn
+	// registry so a logout closes live editor sockets too.
+	sessRes, machRes := httpapi.MachineWebResolvers(sessions, machineSvc)
+	machineWeb := gateway.NewMachineWeb(gateway.MachineWebConfig{
+		Domain:         cfg.MachineDomain,
+		SigningKey:     cfg.StateSigningKey,
+		CookieSecure:   cfg.CookieSecure,
+		FrameAncestors: cfg.AllowedWSOrigins,
+		Guests:         nodes,
+		Registry:       gwRegistry,
+		Sessions:       sessRes,
+		Machines:       machRes,
+	})
+	if machineWeb != nil {
+		slog.Info("machine-web editor enabled", "domain", cfg.MachineDomain)
+	}
+
 	var authHandler *auth.Handler
 	var ghClient *github.Client
 	var tokenSrc *github.TokenSource
@@ -203,16 +222,17 @@ func run(migrate, migrateOnly bool) error {
 	}
 
 	srv := &httpapi.Server{
-		Sessions:  sessions,
-		Auth:      authHandler,
-		Machines:  machineSvc,
-		Broker:    broker,
-		Queries:   q,
-		Gateway:   gw,
-		Providers: providerRegistry,
-		Secrets:   sec,
-		Audit:     auditRec,
-		Injector:  inject,
+		Sessions:   sessions,
+		Auth:       authHandler,
+		Machines:   machineSvc,
+		Broker:     broker,
+		Queries:    q,
+		Gateway:    gw,
+		MachineWeb: machineWeb,
+		Providers:  providerRegistry,
+		Secrets:    sec,
+		Audit:      auditRec,
+		Injector:   inject,
 	}
 	if guestCtl != nil {
 		srv.GitHub = ghClient

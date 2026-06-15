@@ -29,6 +29,20 @@ WHERE sessions.token_hash = $1
   AND sessions.revoked_at IS NULL
   AND sessions.expires_at > now();
 
+-- name: GetSessionByID :one
+-- Look up a live (unexpired, unrevoked) session by its id, returning the session
+-- with the owning user. Used by the Phase 8 machine-web cookie path, which binds
+-- the subdomain cookie to the parent session id (never the session token), so a
+-- logout/revoke of the parent immediately invalidates the editor.
+SELECT
+    sqlc.embed(sessions),
+    sqlc.embed(users)
+FROM sessions
+JOIN users ON users.id = sessions.user_id
+WHERE sessions.id = $1
+  AND sessions.revoked_at IS NULL
+  AND sessions.expires_at > now();
+
 -- name: TouchSession :exec
 -- Slide the expiry forward on use (sliding-refresh sessions).
 UPDATE sessions SET expires_at = $2 WHERE id = $1;

@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
+	agentapi "github.com/tavon/proteos/nodeagent/api"
 
 	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/github"
@@ -33,10 +34,11 @@ const (
 	requestTimeout = 30 * time.Second
 )
 
-// GuestDialer opens the opaque byte tunnel to a machine's guest agent.
-// *nodeclient.Client satisfies it.
+// GuestDialer opens the opaque byte tunnel to a machine's guest agent at the
+// given guest port. *nodeclient.Client satisfies it; the control channel rides
+// the terminal port (agentapi.GuestTerminalPort).
 type GuestDialer interface {
-	DialGuest(ctx context.Context, machineID string) (net.Conn, error)
+	DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error)
 }
 
 // Manager maintains one control channel per running machine and serves guest →
@@ -178,7 +180,7 @@ func (m *Manager) supervise(ctx context.Context, machineID, userID string) {
 // session was established (so the supervisor can reset its backoff).
 func (m *Manager) connectOnce(ctx context.Context, machineID, userID string) (established bool, err error) {
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	tunnel, err := m.dialer.DialGuest(dctx, machineID)
+	tunnel, err := m.dialer.DialGuest(dctx, machineID, agentapi.GuestTerminalPort)
 	cancel()
 	if err != nil {
 		return false, fmt.Errorf("dial guest: %w", err)

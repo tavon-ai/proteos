@@ -28,7 +28,7 @@ import (
 // failDialer, which fails the test). Used to prove the injector was reached.
 type errDialer struct{}
 
-func (errDialer) DialGuest(context.Context, string) (net.Conn, error) {
+func (errDialer) DialGuest(context.Context, string, uint32) (net.Conn, error) {
 	return nil, errors.New("errDialer: no guest")
 }
 

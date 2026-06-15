@@ -138,7 +138,7 @@ func freeAddr(t *testing.T) string {
 
 // startNodeAgent runs the node-agent binary (DevDriver + the guest-agent binary)
 // as a subprocess and returns its base URL once healthy.
-func startNodeAgent(t *testing.T, agentBin, guestBin, token string) string {
+func startNodeAgent(t *testing.T, agentBin, guestBin, token string, extraEnv ...string) string {
 	t.Helper()
 	addr := freeAddr(t)
 	// Keep the data dir short: the guest agent's unix socket lives at
@@ -159,6 +159,7 @@ func startNodeAgent(t *testing.T, agentBin, guestBin, token string) string {
 		"PROTEOS_DEV_GUESTAGENT_BIN="+guestBin,
 		"PROTEOS_DEV_BOOT_DELAY=150ms",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	// Log to a regular file rather than the test's stdout: the node-agent
 	// leaves "VMs" (here, guest-agent processes) running across its own
 	// shutdown by design, and a grandchild inheriting the test binary's stdout
@@ -221,7 +222,7 @@ func waitGuestReachable(t *testing.T, nodes *nodeclient.Client, id string) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		conn, err := nodes.DialGuest(ctx, id)
+		conn, err := nodes.DialGuest(ctx, id, agentapi.GuestTerminalPort)
 		cancel()
 		if err == nil {
 			conn.Close()

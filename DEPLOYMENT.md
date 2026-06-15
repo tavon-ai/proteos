@@ -127,6 +127,12 @@ ProteOS needs access to Docker socket to manage containers:
 
 ## 🌐 Production Deployment
 
+> **Note:** the sections below cover the original PoC desktop (single Docker
+> image). The production microVM stack (control plane + node-agent + Firecracker)
+> and its **per-machine code-server editor subdomains** (wildcard DNS/TLS for
+> `*.<PROTEOS_MACHINE_DOMAIN>`) are documented in **`RUNBOOK.md`** — see
+> *Part G — Phase 8: per-machine editor (code-server) subdomains*.
+
 ### With Nginx Reverse Proxy
 
 ```nginx

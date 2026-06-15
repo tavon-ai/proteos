@@ -145,7 +145,7 @@ func mustMarshal(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
 // tcpDialer dials the fake guest's TCP listener as if it were the guest tunnel.
 type tcpDialer struct{ addr string }
 
-func (d tcpDialer) DialGuest(ctx context.Context, _ string) (net.Conn, error) {
+func (d tcpDialer) DialGuest(ctx context.Context, _ string, _ uint32) (net.Conn, error) {
 	var nd net.Dialer
 	return nd.DialContext(ctx, "tcp", d.addr)
 }
