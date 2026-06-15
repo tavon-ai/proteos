@@ -7,10 +7,10 @@
 # release endpoint) or --claude-binary (air-gapped) to bake the pinned Claude
 # Code CLI; claude_version/claude_sha256 then record the exact pin.
 #
-# Phase 6: pass --node-version + --gemini-version/--pi-version/--codex-* to bake
-# the Node runtime and the Gemini/Codex/pi.dev CLIs. The exact versions to use
-# come from image/PROVIDERS.md (the single source of truth for provider pins);
-# the *_version/*_sha256 fields below are filled in by the bake.
+# Phase 6: pass --gemini / --codex / --pi (each installs latest unless a
+# --<name>-version pins it) to bake the Node runtime + the Gemini/Codex/pi.dev
+# npm CLIs. The bake fills the *_version fields below with the concrete resolved
+# versions (recorded back into image/PROVIDERS.md too).
 image          = (not yet built)
 sha256         = (not yet built)
 base_rootfs    = (pin the Firecracker-CI ubuntu-24.04 ext4)
@@ -18,10 +18,9 @@ guestagent     = (ga-<gitshort>)
 features       = (terminal,persist,resume,providers[,claude,node,gemini,codex,pi])
 claude_version = (none until --claude-binary is passed)
 claude_sha256  = (none until --claude-binary is passed)
-node_version   = (none until --node-version is passed)
-node_sha256    = (none until --node-version is passed)
-gemini_version = (none until --gemini-version is passed)
-codex_version  = (none until --codex-* is passed)
-codex_sha256   = (none until --codex-* is passed)
-pi_version     = (none until --pi-version is passed)
+node_version   = (none until a provider CLI is baked)
+node_sha256    = (none until a provider CLI is baked)
+gemini_version = (none until --gemini is passed)
+codex_version  = (none until --codex is passed)
+pi_version     = (none until --pi is passed)
 built_at       = (unbuilt)

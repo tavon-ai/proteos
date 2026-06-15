@@ -101,6 +101,20 @@ ssh <host> 'curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:9090/h
     and `proteos_claude_sha256` to pin), e.g.
     `--extra-vars 'proteos_claude_install=binary proteos_claude_version=2.1.89 proteos_claude_binary_src=./claude-2.1.89 proteos_claude_sha256=<hex>'`.
   - `none` — skip Claude Code (the providers `profile.d` wiring is still baked).
+- **Baking the other providers (Phase 6):** Gemini, OpenAI Codex, and pi.dev are
+  npm CLIs baked alongside a Node LTS runtime, each controlled by
+  `proteos_<provider>_install` (`gemini`/`codex`/`pi`):
+  - `none` (**default**) — these providers are **opt-in**; the base bake ships
+    only Claude. Enable the ones you want, e.g.
+    `--extra-vars 'proteos_gemini_install=latest proteos_codex_install=latest'`.
+  - `latest` — install the CLI at its **latest** published version. Pin a specific
+    release with `proteos_<provider>_version` (e.g. `proteos_gemini_version=0.4.1`).
+    Like Claude bootstrap, this needs network on the **bake host**; the runtime
+    image stays pinned. Node installs the latest LTS automatically when any of
+    these is enabled (pin with `proteos_node_version`); the resolved versions land
+    in `manifest.lock`.
+  - Codex authenticates via a login step, wired automatically by the registry's
+    `setup_command` (`codex login --with-api-key`) — no extra Ansible config.
 
   **Bumping the version/channel on an already-baked host needs a forced rebuild**
   (delete `manifest.lock`), since the bake is guarded on source changes, not on

@@ -69,6 +69,35 @@ proteos_claude_binary_url: ""         # binary mode: direct URL to the pinned li
 proteos_claude_binary_src: ""         # binary mode: OR a local file on the ansible controller
 proteos_claude_staged: "{{ proteos_images_dir }}/claude-staged"  # host staging path (binary mode)
 
+# ----------------------------------------------------------------------------
+# Phase 6: bake the remaining provider CLIs (Gemini, OpenAI Codex, pi.dev) into
+# the rootfs alongside a Node LTS runtime. Each is OPT-IN (default "none"); enable
+# the ones you want by setting its install mode to "latest". When enabled, it
+# follows Claude's bootstrap philosophy: install the LATEST version unless the
+# matching *_version pins a specific release.
+#
+# proteos_<provider>_install:
+#   "latest" — install the CLI; the latest published version unless the matching
+#       *_version pins one. Gemini/Codex/pi.dev are all npm packages, so this
+#       needs network on the BAKE HOST (the KVM host), like claude bootstrap.
+#   "none" (default) — skip this provider.
+#
+# Node is the shared runtime for the three npm CLIs; it is installed automatically
+# whenever any of them is enabled. proteos_node_version pins it (empty ⇒ latest
+# LTS resolved from nodejs.org).
+#
+# As with Claude, bumping a version/toggle on an already-baked host needs a FORCED
+# rebuild (delete {{ proteos_images_dir }}/manifest.lock — see README.md): the
+# bake is guarded on source changes, not on these vars.
+# ----------------------------------------------------------------------------
+proteos_node_version: ""               # empty ⇒ latest LTS (only used when an npm CLI is enabled)
+proteos_gemini_install: "none"         # latest | none
+proteos_gemini_version: ""             # empty ⇒ latest; set to pin
+proteos_codex_install: "none"          # latest | none
+proteos_codex_version: ""              # empty ⇒ latest; set to pin
+proteos_pi_install: "none"             # latest | none
+proteos_pi_version: ""                 # empty ⇒ latest; set to pin
+
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.
 # ============================================================================

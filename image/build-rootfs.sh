@@ -41,19 +41,19 @@
 # Omitting both bakes the providers profile.d wiring but no agent CLI (it warns).
 #
 # Phase 6: bake the three additional provider CLIs (Gemini, OpenAI Codex, pi.dev)
-# alongside a pinned Node LTS runtime. All pins come from image/PROVIDERS.md — no
-# version literal lives in this script. Each provider is optional; pass its
-# version to include it (a build with none still bakes the wiring + claude):
+# alongside a Node LTS runtime. Like --claude-bootstrap, each is enabled with a
+# flag and installs the LATEST version by default; pass --<name>-version to pin.
 #
+#   --gemini [--gemini-version X.Y.Z]   npm i -g @google/gemini-cli[@ver]
+#   --codex  [--codex-version X.Y.Z]    npm i -g @openai/codex[@ver]
+#   --pi     [--pi-version X.Y.Z]       npm i -g @pi/agent[@ver]  (pkg per PROVIDERS.md)
 #   --node-version vX.Y.Z [--node-sha256 <hex>]
-#       Pinned Node LTS tarball from nodejs.org (shared runtime for the npm CLIs).
-#       Required if --gemini-version or --pi-version is given.
-#   --gemini-version X.Y.Z      npm i -g @google/gemini-cli@X.Y.Z (in a chroot)
-#   --pi-version X.Y.Z          npm i -g @pi/agent@X.Y.Z (pin the package per PROVIDERS.md)
-#   --codex-binary /path | --codex-url <url>   pinned Codex musl binary → /usr/local/bin/codex
-#   --codex-version X.Y.Z [--codex-sha256 <hex>]
+#       Pin the shared Node runtime. Omitted ⇒ the latest LTS is resolved from
+#       nodejs.org. Node is installed automatically whenever any npm CLI above is
+#       enabled (it is their runtime).
 #
-# The npm installs run via `chroot` into the mounted image (native arch, correct
+# A build with none of these still bakes the providers wiring + claude. The npm
+# installs run via `chroot` into the mounted image (native arch, correct
 # shebangs), so this must run on a host matching the rootfs arch with network.
 #
 # The base must be a systemd image (the unit is installed for systemd); the
@@ -135,16 +135,39 @@ node_arch() {
   esac
 }
 
-# install_node MNT VERSION [SHA256] — fetch the pinned Node LTS tarball from
-# nodejs.org, verify its sha256 (against the published SHASUMS256 if not given),
-# and unpack it into the image's /usr/local (node + npm on PATH). Phase 6 decision
-# #4: a pinned Node runtime is shared infrastructure for npm-distributed agents.
+# install_node MNT VERSION [SHA256] — fetch the Node LTS tarball from nodejs.org,
+# verify its sha256 (against the published SHASUMS256 if not given), and unpack it
+# into the image's /usr/local (node + npm on PATH). A shared runtime for the
+# npm-distributed agents (Phase 6 decision #4). An empty VERSION resolves the
+# latest LTS (the --claude-bootstrap "latest by default" pattern).
 install_node() {
   local mnt="$1" version="$2" want_sha="$3"
   local arch tarball url
   arch="$(node_arch)"
+
+  # Resolve "latest LTS" from the canonical dist index.json when unpinned. It is
+  # sorted newest-first, so the first entry whose "lts" is not false is the latest
+  # LTS release.
+  if [[ -z $version ]]; then
+    log "resolving latest Node LTS"
+    local index
+    index="$(dl "https://nodejs.org/dist/index.json")" || die "fetch Node index.json"
+    if command -v jq >/dev/null 2>&1; then
+      version="$(printf '%s' "$index" | jq -r 'map(select(.lts != false))[0].version')"
+    else
+      # One object per line (objects start with '{'; nested arrays use '['), then
+      # take the first with an "lts":"<name>" (false has no quote after the colon).
+      version="$(printf '%s' "$index" | tr '{' '\n' \
+        | grep -m1 '"lts":"' \
+        | grep -oE '"version":"v[0-9]+\.[0-9]+\.[0-9]+"' \
+        | grep -oE 'v[0-9.]+')"
+    fi
+    [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "could not resolve latest Node LTS (got '$version')"
+    ok "latest Node LTS is $version"
+  fi
   tarball="node-${version}-linux-${arch}.tar.xz"
   url="https://nodejs.org/dist/${version}/${tarball}"
+  NODE_VERSION="$version"
 
   log "fetching Node ${version} (${arch})"
   dl "$url" "$WORK/$tarball" || die "download Node $version"
@@ -179,6 +202,20 @@ npm_global() {
   ok "installed $spec"
 }
 
+# npm_spec PKG VERSION — "pkg@version" if pinned, else "pkg" (npm resolves latest).
+npm_spec() {
+  local pkg="$1" ver="$2"
+  if [[ -n $ver ]]; then echo "${pkg}@${ver}"; else echo "$pkg"; fi
+}
+
+# npm_resolved MNT PKG — echo the concrete globally-installed version of PKG, so a
+# "latest" install records its real version in manifest.lock / PROVIDERS.md.
+npm_resolved() {
+  sudo chroot "$1" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin \
+    npm ls -g "$2" --depth=0 2>/dev/null \
+    | grep -oE "${2}@[0-9][0-9A-Za-z.-]*" | sed -E 's/.*@//' | head -1
+}
+
 # --- args -------------------------------------------------------------------
 BASE=""
 OUT_DIR=""
@@ -188,15 +225,17 @@ CLAUDE_VERSION=""
 CLAUDE_SHA256=""
 CLAUDE_BOOTSTRAP=0
 CLAUDE_PLATFORM=""   # override the auto-detected downloads.claude.ai platform (e.g. linux-x64-musl)
-# Phase 6 provider pins (all optional; default off → behaviour identical to Phase 5).
+# Phase 6 provider pins. Each CLI is off unless its --<name> flag (or --<name>-
+# version) is given; an empty version installs the latest. Default off → behaviour
+# identical to Phase 5.
 NODE_VERSION=""
 NODE_SHA256=""
+GEMINI=0
 GEMINI_VERSION=""
-PI_VERSION=""
-CODEX_BIN=""
-CODEX_URL=""
+CODEX=0
 CODEX_VERSION=""
-CODEX_SHA256=""
+PI=0
+PI_VERSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
@@ -209,15 +248,18 @@ while [[ $# -gt 0 ]]; do
     --claude-platform) CLAUDE_PLATFORM=$2; shift 2 ;;
     --node-version) NODE_VERSION=$2; shift 2 ;;
     --node-sha256) NODE_SHA256=$2; shift 2 ;;
-    --gemini-version) GEMINI_VERSION=$2; shift 2 ;;
-    --pi-version) PI_VERSION=$2; shift 2 ;;
-    --codex-binary) CODEX_BIN=$2; shift 2 ;;
-    --codex-url) CODEX_URL=$2; shift 2 ;;
-    --codex-version) CODEX_VERSION=$2; shift 2 ;;
-    --codex-sha256) CODEX_SHA256=$2; shift 2 ;;
+    --gemini) GEMINI=1; shift ;;
+    --gemini-version) GEMINI=1; GEMINI_VERSION=$2; shift 2 ;;
+    --codex) CODEX=1; shift ;;
+    --codex-version) CODEX=1; CODEX_VERSION=$2; shift 2 ;;
+    --pi) PI=1; shift ;;
+    --pi-version) PI=1; PI_VERSION=$2; shift 2 ;;
     *) die "unknown arg: $1" ;;
   esac
 done
+# Any npm-distributed CLI implies the Node runtime.
+NEED_NODE=0
+[[ $GEMINI -eq 1 || $CODEX -eq 1 || $PI -eq 1 ]] && NEED_NODE=1
 [[ -n $BASE ]] || die "--base <pinned firecracker-ci ext4> is required"
 [[ -f $BASE ]] || die "base rootfs not found: $BASE"
 if [[ -n $CLAUDE_BIN ]]; then
@@ -225,17 +267,8 @@ if [[ -n $CLAUDE_BIN ]]; then
   [[ -f $CLAUDE_BIN ]] || die "claude binary not found: $CLAUDE_BIN"
   [[ -n $CLAUDE_VERSION ]] || die "--claude-version is required with --claude-binary (pins the manifest)"
 fi
-# Phase 6: the npm-distributed CLIs need the pinned Node runtime.
-if [[ -n $GEMINI_VERSION || -n $PI_VERSION ]]; then
-  [[ -n $NODE_VERSION ]] || die "--node-version is required to bake the gemini/pi npm CLIs"
-fi
-if [[ -n $CODEX_BIN ]]; then
-  [[ -z $CODEX_URL ]] || die "use either --codex-binary or --codex-url, not both"
-  [[ -f $CODEX_BIN ]] || die "codex binary not found: $CODEX_BIN"
-fi
-if [[ -n $CODEX_BIN || -n $CODEX_URL ]]; then
-  [[ -n $CODEX_VERSION ]] || die "--codex-version is required when baking Codex (pins manifest.lock)"
-fi
+# Phase 6: the npm CLIs share the Node runtime; if any is enabled without a pinned
+# Node version, the latest LTS is resolved at install time (see install_node).
 
 # Resolve repo paths relative to this script.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -280,25 +313,6 @@ if [[ $CLAUDE_BOOTSTRAP -eq 1 ]]; then
   fetch_claude_official "$CLAUDE_TARGET" "$CLAUDE_BIN"
 fi
 
-# Phase 6: fetch the pinned Codex musl binary now (before the loop-mount) so a
-# network/checksum failure aborts cleanly. --codex-binary supplies it offline.
-if [[ -n $CODEX_URL ]]; then
-  log "fetching Codex $CODEX_VERSION from $CODEX_URL"
-  CODEX_BIN="$WORK/codex"
-  dl "$CODEX_URL" "$CODEX_BIN" || die "download Codex"
-  chmod +x "$CODEX_BIN"
-fi
-if [[ -n $CODEX_BIN ]]; then
-  CODEX_ACTUAL_SHA="$(sha256sum "$CODEX_BIN" | awk '{print $1}')"
-  if [[ -n $CODEX_SHA256 ]]; then
-    [[ "$CODEX_SHA256" == "$CODEX_ACTUAL_SHA" ]] || die "codex sha256 mismatch: expected $CODEX_SHA256, got $CODEX_ACTUAL_SHA"
-  else
-    log "WARNING: --codex-sha256 not given; pinning to the binary's own sha256 ($CODEX_ACTUAL_SHA)"
-  fi
-  CODEX_SHA256="$CODEX_ACTUAL_SHA"
-  ok "Codex $CODEX_VERSION ready (sha256 $CODEX_SHA256)"
-fi
-
 # --- 2. copy + grow the base image -------------------------------------------
 # The Claude Code native binary is large (~240 MiB) and the default headroom is
 # sized for the guest agent alone, so when baking Claude grow enough to fit it
@@ -311,10 +325,10 @@ if [[ -n $CLAUDE_BIN ]]; then
     GROW_MIB=$NEED_MIB
   fi
 fi
-# Phase 6: Node (~120MiB unpacked) + the npm CLIs + Codex grow the image
-# materially. Reserve generous headroom so the chroot npm installs don't ENOSPC;
-# the exact final size is recorded in PROVIDERS.md after a real bake.
-if [[ -n $NODE_VERSION || -n $CODEX_BIN ]]; then
+# Phase 6: Node (~120MiB unpacked) + the npm CLIs grow the image materially.
+# Reserve generous headroom so the chroot npm installs don't ENOSPC; the exact
+# final size is recorded in PROVIDERS.md after a real bake.
+if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   PROV_NEED=$((GROW_MIB + 512))
   log "baking Node/provider CLIs — bumping grow ${GROW_MIB}→${PROV_NEED}MiB headroom"
   GROW_MIB=$PROV_NEED
@@ -410,9 +424,10 @@ else
   log "WARNING: no --claude-binary; baking providers wiring but no agent CLI"
 fi
 
-# Phase 6: bake the pinned Node runtime + the Gemini/Codex/pi.dev CLIs. Auth for
-# all three is injected at runtime (Gemini/Pi via env; Codex via the registry's
-# setup_command login) — nothing secret is baked. See image/PROVIDERS.md.
+# Phase 6: bake the Node runtime + the Gemini/Codex/pi.dev CLIs (all npm). Auth
+# for all three is injected at runtime (Gemini/Pi via env; Codex via the registry
+# setup_command login) — nothing secret is baked. Each installs LATEST unless a
+# version was pinned. See image/PROVIDERS.md.
 CHROOT_BOUND=0
 bind_chroot() {
   # npm postinstalls and the dynamic loader expect /dev,/proc,/sys present.
@@ -429,30 +444,31 @@ unbind_chroot() {
   CHROOT_BOUND=0
 }
 
-if [[ -n $NODE_VERSION ]]; then
-  install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"
+if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
+  install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
   FEATURES="$FEATURES,node"
 
-  if [[ -n $GEMINI_VERSION || -n $PI_VERSION ]]; then
-    # Ensure the binds are torn down even if an npm install fails (the EXIT trap
-    # would otherwise try to umount the image while the binds still hold it).
-    bind_chroot
-    [[ -n $GEMINI_VERSION ]] && { npm_global "$MNT" "@google/gemini-cli@${GEMINI_VERSION}"; FEATURES="$FEATURES,gemini"; }
-    [[ -n $PI_VERSION ]] && { npm_global "$MNT" "@pi/agent@${PI_VERSION}"; FEATURES="$FEATURES,pi"; }
-    unbind_chroot
+  # Bind /dev,/proc,/sys so the chroot npm installs work; release on any exit
+  # path (the EXIT trap would otherwise try to umount the busy image).
+  bind_chroot
+  if [[ $GEMINI -eq 1 ]]; then
+    npm_global "$MNT" "$(npm_spec @google/gemini-cli "$GEMINI_VERSION")"
+    GEMINI_VERSION="$(npm_resolved "$MNT" @google/gemini-cli)"
+    FEATURES="$FEATURES,gemini"
   fi
+  if [[ $CODEX -eq 1 ]]; then
+    npm_global "$MNT" "$(npm_spec @openai/codex "$CODEX_VERSION")"
+    CODEX_VERSION="$(npm_resolved "$MNT" @openai/codex)"
+    FEATURES="$FEATURES,codex"
+  fi
+  if [[ $PI -eq 1 ]]; then
+    # Confirm the package name at bake (PROVIDERS.md); @pi/agent is the assumption.
+    npm_global "$MNT" "$(npm_spec @pi/agent "$PI_VERSION")"
+    PI_VERSION="$(npm_resolved "$MNT" @pi/agent)"
+    FEATURES="$FEATURES,pi"
+  fi
+  unbind_chroot
 fi
-
-if [[ -n $CODEX_BIN ]]; then
-  file "$CODEX_BIN" | grep -q "ELF" || die "codex binary is not an ELF executable: $CODEX_BIN"
-  log "installing Codex $CODEX_VERSION → /usr/local/bin/codex"
-  sudo install -D -m 0755 "$CODEX_BIN" "$MNT/usr/local/bin/codex"
-  FEATURES="$FEATURES,codex"
-  ok "Codex baked ($CODEX_VERSION)"
-fi
-
-# Make sure the chroot binds are released before the unmount below.
-unbind_chroot
 
 # /etc/proteos-release — provenance the guest (and humans) can read.
 BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
@@ -491,7 +507,6 @@ node_version   = ${NODE_VERSION:-none}
 node_sha256    = ${NODE_SHA256:-none}
 gemini_version = ${GEMINI_VERSION:-none}
 codex_version  = ${CODEX_VERSION:-none}
-codex_sha256   = ${CODEX_SHA256:-none}
 pi_version     = ${PI_VERSION:-none}
 built_at       = $BUILD_STAMP
 EOF

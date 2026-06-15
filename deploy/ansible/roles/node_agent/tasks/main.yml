@@ -144,13 +144,43 @@
     - proteos_claude_binary_url | length == 0
     - proteos_claude_binary_src | length > 0
 
-- name: Bake the guest agent (and, if configured, Claude Code) into the base rootfs
+# Phase 6: Gemini / OpenAI Codex / pi.dev. Each is "latest" (install, latest
+# version) or "none"; an empty *_version installs the latest, a set one pins it.
+- name: Phase 6 — validate provider install modes
+  ansible.builtin.assert:
+    that:
+      - proteos_gemini_install in ['latest', 'none']
+      - proteos_codex_install in ['latest', 'none']
+      - proteos_pi_install in ['latest', 'none']
+    fail_msg: "proteos_{gemini,codex,pi}_install must be one of: latest, none"
+
+# True when any npm-distributed provider is enabled — they share the Node runtime
+# the bake installs, and the bake host needs network + xz to fetch/unpack it.
+- name: Phase 6 — note whether any npm provider CLI is enabled
+  ansible.builtin.set_fact:
+    proteos_npm_providers: >-
+      {{ (proteos_gemini_install == 'latest')
+         or (proteos_codex_install == 'latest')
+         or (proteos_pi_install == 'latest') }}
+
+- name: Phase 6 — ensure Node/npm bake prerequisites are present
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, xz-utils]
+    state: present
+    update_cache: true
+  when: proteos_npm_providers | bool
+
+- name: Bake the guest agent (and, if configured, the provider CLIs) into the base rootfs
   ansible.builtin.command:
     cmd: >-
       {{ proteos_src_dir }}/image/build-rootfs.sh
       --base {{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}
       --out-dir {{ proteos_images_dir }}
       {% if proteos_claude_install == 'bootstrap' %}--claude-bootstrap{% if proteos_claude_version | length > 0 %} --claude-version {{ proteos_claude_version }}{% endif %}{% elif proteos_claude_install == 'binary' %}--claude-binary {{ proteos_claude_staged }} --claude-version {{ proteos_claude_version }}{% if proteos_claude_sha256 | length > 0 %} --claude-sha256 {{ proteos_claude_sha256 }}{% endif %}{% endif %}
+      {% if proteos_gemini_install == 'latest' %} --gemini{% if proteos_gemini_version | length > 0 %} --gemini-version {{ proteos_gemini_version }}{% endif %}{% endif %}
+      {% if proteos_codex_install == 'latest' %} --codex{% if proteos_codex_version | length > 0 %} --codex-version {{ proteos_codex_version }}{% endif %}{% endif %}
+      {% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}
+      {% if proteos_npm_providers | bool and proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}
   environment:
     PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
     # Carries the real commit SHA into the image name on the rsync path (the
