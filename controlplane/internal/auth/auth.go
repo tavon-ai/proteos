@@ -147,25 +147,32 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write tokens to the secrets store — NEVER to Postgres.
+	// Write tokens to the secrets store — NEVER to Postgres. The absolute expiry
+	// timestamps are stored alongside the tokens so the Phase 7 TokenSource knows
+	// when to refresh (the relative expires_in is only meaningful at issue time).
+	now := time.Now()
 	userID := uuidString(user.ID)
 	secretRef := secrets.UserGitHubPath(userID)
 	if err := h.secrets.Put(secretRef, map[string]string{
-		"access_token":  tok.AccessToken,
-		"refresh_token": tok.RefreshToken,
-		"token_type":    tok.TokenType,
-		"scope":         tok.Scope,
+		"access_token":             tok.AccessToken,
+		"refresh_token":            tok.RefreshToken,
+		"token_type":               tok.TokenType,
+		"scope":                    tok.Scope,
+		"access_token_expires_at":  now.Add(time.Duration(tok.ExpiresIn) * time.Second).UTC().Format(time.RFC3339),
+		"refresh_token_expires_at": now.Add(time.Duration(tok.RefreshTokenExpiresIn) * time.Second).UTC().Format(time.RFC3339),
 	}); err != nil {
 		slog.Error("store github tokens failed", "err", err)
 		h.redirectError(w, r, "internal")
 		return
 	}
 
-	// Persist only the secret_ref + non-sensitive metadata.
+	// Persist only the secret_ref + non-sensitive metadata. Re-login clears any
+	// prior revoked flag (decision #4): a fresh grant re-enables git operations.
 	meta, _ := json.Marshal(map[string]any{
 		"expires_in":               tok.ExpiresIn,
 		"refresh_token_expires_in": tok.RefreshTokenExpiresIn,
 		"scope":                    tok.Scope,
+		"revoked":                  false,
 	})
 	if _, err := h.store.UpsertGitHubLink(r.Context(), store.UpsertGitHubLinkParams{
 		UserID:    user.ID,

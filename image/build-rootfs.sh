@@ -56,6 +56,12 @@
 # installs run via `chroot` into the mounted image (native arch, correct
 # shebangs), so this must run on a host matching the rootfs arch with network.
 #
+# Phase 7: git is installed into the guest by default (clone/commit/push need a
+# real git binary; the ProteOS credential helper is the guestagent binary, wired
+# via gitconfig at runtime — nothing secret is baked). It is installed via apt in
+# the chroot and is idempotent (skipped if the base already ships git). Pass
+# --no-git to skip (air-gapped builds, or a base that already includes git).
+#
 # The base must be a systemd image (the unit is installed for systemd); the
 # script asserts this and fails loudly otherwise.
 
@@ -202,6 +208,29 @@ npm_global() {
   ok "installed $spec"
 }
 
+# install_git MNT — ensure git is present in the image (Phase 7). The guest needs
+# a real git binary for clone/commit/push; the ProteOS credential helper is the
+# guestagent binary, wired via gitconfig at runtime (no secret is baked). This is
+# idempotent: if the base already ships git it records the version and returns;
+# otherwise it installs it via apt inside the chroot (needs the /dev,/proc,/sys
+# binds the caller set up and the baked resolv.conf for registry DNS). Sets
+# GIT_VERSION.
+install_git() {
+  local mnt="$1"
+  if sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v git' >/dev/null 2>&1; then
+    GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}')"
+    ok "git already present in base (${GIT_VERSION:-unknown})"
+    return
+  fi
+  log "installing git via apt (chroot)"
+  sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
+    sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends git' \
+    || die "apt-get install git failed (the base image needs working apt sources + network)"
+  GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}')"
+  ok "git installed (${GIT_VERSION:-unknown})"
+}
+
 # npm_spec PKG VERSION — "pkg@version" if pinned, else "pkg" (npm resolves latest).
 npm_spec() {
   local pkg="$1" ver="$2"
@@ -236,9 +265,16 @@ CODEX=0
 CODEX_VERSION=""
 PI=0
 PI_VERSION=""
+# Phase 7: git in the guest. On by default — clone/commit/push need it and the
+# credential helper is wired at runtime. --no-git opts out (e.g. a base that
+# already ships git, or an air-gapped build with no apt).
+GIT_INSTALL=1
+GIT_VERSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
+    --git) GIT_INSTALL=1; shift ;;
+    --no-git) GIT_INSTALL=0; shift ;;
     --out-dir) OUT_DIR=$2; shift 2 ;;
     --grow-mib) GROW_MIB=$2; shift 2 ;;
     --claude-binary) CLAUDE_BIN=$2; shift 2 ;;
@@ -332,6 +368,12 @@ if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   PROV_NEED=$((GROW_MIB + 512))
   log "baking Node/provider CLIs — bumping grow ${GROW_MIB}→${PROV_NEED}MiB headroom"
   GROW_MIB=$PROV_NEED
+fi
+# Phase 7: git + its apt dependencies need a little headroom when not in the base.
+if [[ $GIT_INSTALL -eq 1 ]]; then
+  GIT_NEED=$((GROW_MIB + 192))
+  log "baking git — bumping grow ${GROW_MIB}→${GIT_NEED}MiB headroom"
+  GROW_MIB=$GIT_NEED
 fi
 log "copying base image → $OUT_IMG (+${GROW_MIB}MiB headroom)"
 cp "$BASE" "$OUT_IMG"
@@ -444,6 +486,15 @@ unbind_chroot() {
   CHROOT_BOUND=0
 }
 
+# Phase 7: ensure git is in the guest (idempotent). Needs the chroot binds for
+# apt, so do it inside a bind/unbind even when no npm CLIs are baked.
+if [[ $GIT_INSTALL -eq 1 ]]; then
+  bind_chroot
+  install_git "$MNT"
+  unbind_chroot
+  FEATURES="$FEATURES,git"
+fi
+
 if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
   FEATURES="$FEATURES,node"
@@ -477,6 +528,7 @@ sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_GUESTAGENT_VERSION=$VERSION
 PROTEOS_GUESTAGENT_FEATURES=$FEATURES
+PROTEOS_GIT_VERSION=${GIT_VERSION:-none}
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
 PROTEOS_NODE_VERSION=${NODE_VERSION:-none}
 PROTEOS_GEMINI_VERSION=${GEMINI_VERSION:-none}
@@ -507,6 +559,7 @@ sha256         = $SHA
 base_rootfs    = $BASE_NAME
 guestagent     = $VERSION
 features       = $FEATURES
+git_version    = ${GIT_VERSION:-none}
 claude_version = ${CLAUDE_VERSION:-none}
 claude_sha256  = ${CLAUDE_SHA256:-none}
 node_version   = ${NODE_VERSION:-none}

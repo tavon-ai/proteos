@@ -111,6 +111,12 @@ services:
       GITHUB_APP_CLIENT_SECRET: ${GITHUB_APP_CLIENT_SECRET:?}
       PROTEOS_STATE_KEY: ${PROTEOS_STATE_KEY:?32+ byte random hex}
       ALLOWED_GITHUB_LOGINS: ${ALLOWED_GITHUB_LOGINS:-}
+      # GitHub git operations (Phase 7). GITHUB_APP_SLUG builds the "choose repos"
+      # link the Repos panel shows (github.com/apps/<slug>). PROTEOS_GIT_HOST is
+      # the host clones target + the credential helper mints tokens for; leave it
+      # at github.com (overridden only by the e2e harness's local git server).
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+      PROTEOS_GIT_HOST: ${PROTEOS_GIT_HOST:-github.com}
     volumes:
       - cpdata:/var/lib/proteos
       # AppRole secret_id, written by openbao-init.sh. Read-only, off the env.

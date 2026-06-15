@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  ApiError,
   machineEventsUrl,
   SessionExpiredError,
   type MachineEvent,
   type MachineEventData,
   type MachineSummary,
+  type ReposResponse,
   type SnapshotData,
 } from "./client";
 
@@ -96,6 +98,40 @@ export function useProviderMutations() {
     onSuccess: invalidate,
   });
   return { setKey, deleteKey };
+}
+
+// reposKey is the query cache key for the user's accessible repos.
+const reposKey = ["repos"] as const;
+
+// useRepos loads the repos the user has granted the GitHub App access to (Phase
+// 7). A 409 reconnect_github (ApiError) is surfaced — not retried — so the UI can
+// show the Reconnect banner; a 401 still routes to /login. The data is not
+// refetched aggressively (repo lists change slowly); the panel offers a manual
+// refresh and React Query refetches on window focus.
+export function useRepos() {
+  return useQuery<ReposResponse>({
+    queryKey: reposKey,
+    queryFn: api.listRepos,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false; // 409 reconnect / 5xx: don't hammer
+      return failureCount < 2;
+    },
+  });
+}
+
+// useCloneRepo dispatches a clone. It returns the op_id immediately (202);
+// completion arrives as a git.clone machine event. On a stale grant the mutation
+// rejects with ApiError 409 reconnect_github, which the panel surfaces.
+export function useCloneRepo() {
+  return useMutation({
+    mutationFn: (fullName: string) => api.cloneRepo(fullName),
+  });
+}
+
+// reconnectRequired reports whether an error is the GitHub "reconnect" signal.
+export function reconnectRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && error.code === "reconnect_github";
 }
 
 // useMachineEvents subscribes to the SSE stream. It writes live machine state

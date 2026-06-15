@@ -16,8 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	guestwire "github.com/tavon/proteos/guestagent/api"
 	"github.com/tavon/proteos/guestagent/internal/config"
+	"github.com/tavon/proteos/guestagent/internal/ctlchan"
 	"github.com/tavon/proteos/guestagent/internal/listen"
+	"github.com/tavon/proteos/guestagent/internal/localsock"
 	"github.com/tavon/proteos/guestagent/internal/persist"
 	"github.com/tavon/proteos/guestagent/internal/secrets"
 	"github.com/tavon/proteos/guestagent/internal/server"
@@ -28,6 +31,16 @@ import (
 var version = "dev"
 
 func main() {
+	// Subcommand dispatch: the same static binary is the credential helper git
+	// invokes (Phase 7 decision #5). `git-credential` speaks the credential
+	// protocol on stdio and exits; everything else runs the long-lived agent.
+	if len(os.Args) > 1 && os.Args[1] == "git-credential" {
+		if err := gitCredential(os.Args[2:]); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -72,7 +85,21 @@ func run() error {
 		return err
 	}
 
-	srv := server.New(mgr, p, sec)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Phase 7: the control channel (CP-dialed GET /control) and the local
+	// credential-helper socket. The manager holds the single live channel and
+	// resolves git credentials for the helper over it.
+	control := ctlchan.New(p.ShellEnv())
+	helperSock := localsock.New(guestwire.AgentSockPath, control)
+	go func() {
+		if err := helperSock.Serve(ctx); err != nil {
+			slog.Error("credential helper socket", "err", err)
+		}
+	}()
+
+	srv := server.New(mgr, p, sec, control)
 	httpServer := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -84,9 +111,6 @@ func run() error {
 			slog.Error("http serve", "err", err)
 		}
 	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
 	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

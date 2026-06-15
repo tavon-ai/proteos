@@ -5,11 +5,14 @@
 // Trust boundary (Phase 3 decision #10): this listener is NOT browser-facing.
 // It is reached only over the per-VM private transport (vsock inside the VM /
 // a 0600 unix socket in dev), which the node-agent alone can connect to. There
-// is therefore no Origin check and no app-layer credential here this phase;
-// per-machine identity (OpenBao) is deferred to Phase 7 (Phase 5 decision #8:
-// it authenticates guest-initiated calls, of which Phase 5 has none — its
-// secret injection is a control-plane push). The WebSocket Origin check that
-// protects the browser leg lives in the control-plane gateway.
+// is therefore no Origin check and no app-layer credential here this phase.
+// Per-machine identity (OpenBao) is STILL unminted after Phase 7 (decision #2):
+// it would authenticate guest-*initiated* calls, but Phase 7's control channel
+// (GET /control, added below) is CP-*dialed*, and even the git credential
+// request rides that CP-dialed channel guest→CP — so no guest-initiated
+// transport exists to authenticate. Revisit when one appears (Phase 11 cross-
+// host routing). The WebSocket Origin check that protects the browser leg lives
+// in the control-plane gateway.
 package server
 
 import (
@@ -66,20 +69,30 @@ type SecretStore interface {
 	Degraded(key string) bool
 }
 
+// Controller serves the Phase 7 control channel (GET /control): the CP-dialed
+// bidirectional WebSocket carrying git.configure/git.clone/git.credential.
+// Implemented by *ctlchan.Manager; nil disables the route.
+type Controller interface {
+	HandleControl(w http.ResponseWriter, r *http.Request)
+}
+
 // Server bridges terminal WebSockets to PTY sessions managed by mgr, and serves
-// the Phase 4 control surface (/resume, /info) backed by persist plus the Phase
-// 5 secret-injection surface (/secrets) backed by sec.
+// the Phase 4 control surface (/resume, /info) backed by persist, the Phase 5
+// secret-injection surface (/secrets) backed by sec, and the Phase 7 control
+// channel (/control) backed by control.
 type Server struct {
 	mgr     *term.Manager
 	persist Persister
 	sec     SecretStore
+	control Controller
 }
 
-// New returns a Server backed by mgr and (optionally) persist + sec. A nil
-// persist disables /resume and /info (503); a nil sec disables /secrets (503)
-// and makes every agent session close with CloseProviderUnavailable.
-func New(mgr *term.Manager, persist Persister, sec SecretStore) *Server {
-	return &Server{mgr: mgr, persist: persist, sec: sec}
+// New returns a Server backed by mgr and (optionally) persist + sec + control.
+// A nil persist disables /resume and /info (503); a nil sec disables /secrets
+// (503) and makes every agent session close with CloseProviderUnavailable; a nil
+// control disables /control (404).
+func New(mgr *term.Manager, persist Persister, sec SecretStore, control Controller) *Server {
+	return &Server{mgr: mgr, persist: persist, sec: sec, control: control}
 }
 
 // Handler builds the HTTP handler. /terminal serves sessions; /resume + /info
@@ -91,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(guestwire.RouteResume, s.handleResume)
 	mux.HandleFunc(guestwire.RouteInfo, s.handleInfo)
 	mux.HandleFunc(guestwire.RouteSecrets, s.handleSecrets)
+	if s.control != nil {
+		mux.HandleFunc(guestwire.RouteControl, s.control.HandleControl)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

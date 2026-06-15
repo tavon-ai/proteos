@@ -3,6 +3,7 @@ import type { Me } from "../api/client";
 import { useLogout } from "../api/hooks";
 import { MachineCard } from "../components/MachineCard";
 import { ProvidersPanel } from "../components/ProvidersPanel";
+import { ReposPanel } from "../components/ReposPanel";
 
 export function Dashboard({ me }: { me: Me }) {
   const navigate = useNavigate();
@@ -33,6 +34,7 @@ export function Dashboard({ me }: { me: Me }) {
 
       <main className="content">
         <MachineCard initialMachine={me.machine} />
+        <ReposPanel />
         <ProvidersPanel />
       </main>
     </div>

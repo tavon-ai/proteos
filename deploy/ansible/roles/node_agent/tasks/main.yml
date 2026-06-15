@@ -181,6 +181,7 @@
       {% if proteos_codex_install == 'latest' %} --codex{% if proteos_codex_version | length > 0 %} --codex-version {{ proteos_codex_version }}{% endif %}{% endif %}
       {% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}
       {% if proteos_npm_providers | bool and proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}
+      {% if not (proteos_git_install | bool) %} --no-git{% endif %}
   environment:
     PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
     # Carries the real commit SHA into the image name on the rsync path (the
@@ -212,6 +213,19 @@
     path: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
   register: baked_rootfs
   failed_when: not baked_rootfs.stat.exists
+
+# Phase 7 gate: verify the baked image actually contains git + the credential
+# helper subcommand and bakes NO token/gitconfig material. Loop-mount only (no VM
+# boot), so it is cheap and safe to run on every bake. A red gate aborts the play.
+- name: Phase 7 acceptance — git + credential helper present, no secret baked
+  tags: [acceptance, git]
+  when: proteos_git_install | bool
+  ansible.builtin.command:
+    cmd: >-
+      {{ proteos_src_dir }}/image/verify-phase7-rootfs.sh
+      --image {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}
+      --images-dir {{ proteos_images_dir }}
+  changed_when: false
 
 # ----------------------------------------------------------------------------
 # Acceptance gate (Phase 4): prove THIS host can actually boot a jailed microVM

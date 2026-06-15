@@ -435,3 +435,68 @@ body {
   color: var(--error);
   font-size: 0.85rem;
 }
+
+/* ── Phase 7: repositories panel ─────────────────────────────────────────── */
+.repos-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: min(560px, 100%);
+  text-align: left;
+  margin-top: 1.5rem;
+}
+.repos-panel h2 { margin: 0; }
+.repos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.github-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot-ok { background: #3fb950; }
+.github-reconnect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+}
+.repo-list { list-style: none; margin: 1rem 0 0; padding: 0; }
+.repo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--border);
+}
+.repo-meta { display: flex; align-items: center; gap: 0.5rem; min-width: 0; flex-wrap: wrap; }
+.repo-name { font-weight: 600; }
+.repo-pushed { font-size: 0.78rem; }
+.repo-action { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+.repo-cloned { color: #3fb950; font-size: 0.8rem; }
+.repo-failed { color: var(--error); font-size: 0.8rem; }
+.repos-footer { margin-top: 1rem; font-size: 0.8rem; }
+.badge-private {
+  background: rgba(139, 148, 158, 0.15);
+  border-color: var(--muted);
+  color: var(--muted);
+}
+.btn-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }

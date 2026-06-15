@@ -1,6 +1,15 @@
 # Phase 7 Implementation Plan: GitHub git operations
 
-> Source: `plans/proteos-poc-to-prod.md` Phase 7, planned 2026-06-11. Status: **not started.**
+> Source: `plans/proteos-poc-to-prod.md` Phase 7, planned 2026-06-11.
+> Status: **landed 2026-06-15 (Track A + infra + UI).** Backend (control channel
+> `internal/guestctl`, `github.TokenSource`, repos/clone APIs), guest
+> (`internal/ctlchan`, `internal/localsock`, `guestagent git-credential`), git
+> baked into the rootfs (`build-rootfs.sh` + ansible + `verify-phase7-rootfs.sh`),
+> the React Repos panel + GitHub status, and the CI e2e (real git clone/commit/
+> push through the helper, token-never-on-disk) are implemented and tested.
+> **Remaining:** task 7.6's *live* acceptance pass on the Proxmox stack with the
+> real GitHub App (real private repo, revocation drill, stop/start mid-session)
+> and the **[verify live]** items in `docs/github-app.md`.
 > Prerequisites: Phases 1–3 landed — that is enough for everything here. Phase 5 (OpenBao)
 > and Phase 4 (persistent disk) are planned but not landed; Phase 7 needs neither to be
 > implementable: tokens go through the `secrets.Store` **interface** (FileStore today,

@@ -21,6 +21,11 @@ const (
 	ActionSecretDelete = "secret.delete" // a user removed a provider key
 	ActionSecretRead   = "secret.read"   // the injector read a secret for injection
 	ActionAgentLaunch  = "agent.launch"  // a user launched an agent session
+
+	// Phase 7 git actions. Targets are repo full-names / hosts — never tokens.
+	ActionGitRepos      = "git.repos"      // a user listed their accessible repos
+	ActionGitClone      = "git.clone"      // a user cloned a repo into a machine
+	ActionGitCredential = "git.credential" // the credential handler minted a git token
 )
 
 // Actor prefixes identify who performed the action.

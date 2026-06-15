@@ -15,6 +15,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/config"
 	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/github"
+	"github.com/tavon/proteos/controlplane/internal/guestctl"
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
 	"github.com/tavon/proteos/controlplane/internal/injector"
 	"github.com/tavon/proteos/controlplane/internal/machine"
@@ -171,13 +172,16 @@ func run(migrate, migrateOnly bool) error {
 	gw := gateway.NewProxy(cfg.AllowedWSOrigins, nodes, gwRegistry)
 
 	var authHandler *auth.Handler
+	var ghClient *github.Client
+	var tokenSrc *github.TokenSource
+	var guestCtl *guestctl.Manager
 	if err := cfg.ValidateOAuth(); err != nil {
 		// Without OAuth config the server still serves /healthz and the
 		// authenticated API (which simply 401s) — useful for the 1.0 smoke
 		// path and CI before secrets are wired. Warn loudly.
-		slog.Warn("GitHub OAuth not configured; login routes disabled", "reason", err.Error())
+		slog.Warn("GitHub OAuth not configured; login + git routes disabled", "reason", err.Error())
 	} else {
-		ghClient := github.NewClient(github.Config{
+		ghClient = github.NewClient(github.Config{
 			ClientID:     cfg.GitHubClientID,
 			ClientSecret: cfg.GitHubClientSecret,
 		})
@@ -188,6 +192,14 @@ func run(migrate, migrateOnly bool) error {
 			SessionTTL:          cfg.SessionTTL,
 			AllowedGitHubLogins: cfg.AllowedGitHubLogins,
 		}, ghClient, sessions, q, sec)
+
+		// Phase 7: per-user token lifecycle + the persistent guest control channel
+		// manager. The manager watches machine state (via the broker) and keeps one
+		// control channel per running machine, serving on-demand git.credential
+		// requests through its single authorization choke point.
+		tokenSrc = github.NewTokenSource(ghClient, q, sec)
+		guestCtl = guestctl.New(nodes, broker, q, tokenSrc, auditRec, cfg.GitHost)
+		go guestCtl.Run(ctx)
 	}
 
 	srv := &httpapi.Server{
@@ -201,6 +213,13 @@ func run(migrate, migrateOnly bool) error {
 		Secrets:   sec,
 		Audit:     auditRec,
 		Injector:  inject,
+	}
+	if guestCtl != nil {
+		srv.GitHub = ghClient
+		srv.Tokens = tokenSrc
+		srv.GitChannel = guestCtl
+		srv.GitHost = cfg.GitHost
+		srv.GitHubAppSlug = cfg.GitHubAppSlug
 	}
 
 	httpServer := &http.Server{

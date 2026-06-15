@@ -29,7 +29,7 @@ func newP4Server(t *testing.T, p Persister) *httptest.Server {
 	t.Helper()
 	mgr := term.NewManager(term.Config{Shell: "/bin/sh", ScrollbackKiB: 64})
 	t.Cleanup(mgr.Shutdown)
-	ts := httptest.NewServer(New(mgr, p, nil).Handler())
+	ts := httptest.NewServer(New(mgr, p, nil, nil).Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }

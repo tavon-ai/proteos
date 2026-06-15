@@ -69,7 +69,9 @@ export interface MachineSummary {
 
 export interface MachineEvent {
   id: number;
-  type: "transition" | "error" | "info";
+  // "git.clone" is a Phase 7 info-style event carrying a clone completion
+  // (payload: { op_id, ok, detail }).
+  type: "transition" | "error" | "info" | "git.clone";
   from_state: string | null;
   to_state: string | null;
   actor: string;
@@ -105,6 +107,29 @@ export interface Provider {
   enabled: boolean;
   key_set: boolean;
   secret_fields: SecretField[];
+}
+
+// Repo is one row of GET /api/git/repos — a repository the user has granted the
+// GitHub App access to (Phase 7). pushed_at is RFC3339.
+export interface Repo {
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  pushed_at: string;
+}
+
+// ReposResponse is GET /api/git/repos. grants_url links to the App's
+// installation-settings page so the user can choose which repos ProteOS can see;
+// it may be "" when the App slug is unconfigured.
+export interface ReposResponse {
+  repos: Repo[];
+  grants_url: string;
+}
+
+// CloneStarted is the 202 body of POST /api/git/clone; completion arrives as a
+// git.clone machine event over the SSE stream.
+export interface CloneStarted {
+  op_id: string;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -165,6 +190,17 @@ export const api = {
     }),
   deleteProviderKey: (key: string) =>
     request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: "DELETE" }),
+
+  // Git operations (Phase 7). listRepos may throw ApiError 409 reconnect_github
+  // when the GitHub grant is revoked; cloneRepo returns an op_id and the clone
+  // completes asynchronously (watch git.clone machine events).
+  listRepos: () => request<ReposResponse>("/api/git/repos"),
+  cloneRepo: (fullName: string) =>
+    request<CloneStarted>("/api/git/clone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ full_name: fullName }),
+    }),
 };
 
 // SSE endpoint for live machine state; consumed by useMachineEvents via the

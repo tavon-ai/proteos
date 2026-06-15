@@ -98,6 +98,13 @@ proteos_codex_version: ""              # empty ⇒ latest; set to pin
 proteos_pi_install: "none"             # latest | none
 proteos_pi_version: ""                 # empty ⇒ latest; set to pin
 
+# Phase 7: install git into the guest rootfs (clone/commit/push need a real git
+# binary; the ProteOS credential helper is the guestagent binary, wired via
+# gitconfig at runtime — nothing secret is baked). On by default; set false only
+# for air-gapped builds or a base image that already ships git. When true, the
+# node_agent role also runs image/verify-phase7-rootfs.sh as a post-bake gate.
+proteos_git_install: true
+
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.
 # ============================================================================

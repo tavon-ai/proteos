@@ -14,7 +14,10 @@
 //     exit (guest→client, last, followed by a normal close).
 package guestwire
 
-import "regexp"
+import (
+	"encoding/json"
+	"regexp"
+)
 
 // FrameType is the discriminator of a text (JSON) control frame.
 type FrameType string
@@ -100,6 +103,128 @@ const RouteSecrets = "PUT /secrets"
 // RouteSecretsPath is the path portion of RouteSecrets, used by the control
 // plane to build the PUT URL over the guest tunnel.
 const RouteSecretsPath = "/secrets"
+
+// Phase 7 control channel. A single bidirectional WebSocket the control plane
+// dials at the guest's GET /control endpoint (CP-initiated, so the guest never
+// opens a connection and the channel inherits the vsock topology-attested
+// identity — Phase 7 decision #1). It carries JSON request/response frames in
+// both directions:
+//
+//   - CP → guest: git.configure (write ~/.gitconfig), git.clone (clone a repo
+//     into the workspace). git.clone is acked immediately; completion arrives
+//     later as a guest → CP git.clone.done frame.
+//   - guest → CP: git.credential (the in-VM credential helper asks for a fresh
+//     git token on demand), git.clone.done (clone completion notification).
+//
+// Exactly one channel exists per running machine; on reconnect the CP re-sends
+// git.configure (it is idempotent).
+const RouteControl = "GET /control"
+
+// RouteControlPath is the path portion of RouteControl, used by the control
+// plane to build the WebSocket URL over the guest tunnel.
+const RouteControlPath = "/control"
+
+// AgentSockPath is the in-VM unix socket (on tmpfs) the credential helper
+// subprocess talks to. The guest agent serves it and relays git.credential
+// requests over the control channel (Phase 7 decision #5). Never written to by
+// anything but the agent; carries no secret at rest.
+const AgentSockPath = "/run/proteos/agent.sock"
+
+// HelperBinPath is the credential.helper command baked into the pushed gitconfig:
+// the same static guestagent binary, invoked with the git-credential subcommand
+// (Phase 7 decision #5). git appends the action (get/store/erase) as an argument.
+const HelperBinPath = "/usr/local/bin/guestagent git-credential"
+
+// ControlKind discriminates a control frame: a request, a successful response,
+// or an error response.
+type ControlKind string
+
+const (
+	ControlReq  ControlKind = "req"  // initiates an operation; carries Op + Payload
+	ControlResp ControlKind = "resp" // success reply to the req with the same ID
+	ControlErr  ControlKind = "err"  // failure reply to the req with the same ID
+)
+
+// Control operation names (the Op field of a req frame).
+const (
+	OpGitConfigure  = "git.configure"  // CP → guest
+	OpGitClone      = "git.clone"      // CP → guest (acked; completion via OpGitCloneDone)
+	OpGitCloneDone  = "git.clone.done" // guest → CP (completion notification)
+	OpGitCredential = "git.credential" // guest → CP
+)
+
+// ControlError codes (the Code field of an err frame's ControlErrorPayload).
+const (
+	// ErrCodeReconnectGitHub: the user's GitHub grant is revoked or its refresh
+	// token is dead; the user must re-run the login flow. The helper surfaces this
+	// on stderr and exits non-zero so git stops cleanly.
+	ErrCodeReconnectGitHub = "reconnect_github"
+	// ErrCodeForbiddenHost: the credential request named a host/protocol the
+	// control plane will not mint a credential for (only github.com/https).
+	ErrCodeForbiddenHost = "forbidden_host"
+	// ErrCodeUnavailable: a transient failure (token store unreachable, no owner
+	// resolvable, etc.). The helper exits non-zero; git reports the failure.
+	ErrCodeUnavailable = "unavailable"
+)
+
+// ControlFrame is the envelope for every control-channel message. ID pairs a
+// resp/err with its req; it is unique per direction. For a req, Op + Payload are
+// set. For a resp, Payload carries the operation's result. For an err, Payload
+// is a ControlErrorPayload.
+type ControlFrame struct {
+	ID      int64           `json:"id"`
+	Kind    ControlKind     `json:"kind"`
+	Op      string          `json:"op,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// GitConfigurePayload is the body of a git.configure req: the identity and
+// helper wiring written to ~/.gitconfig. It contains NO secret (the token is
+// fetched on demand by the helper), so persisting the file is safe.
+type GitConfigurePayload struct {
+	Name   string `json:"name"`   // user.name (GitHub login or display name)
+	Email  string `json:"email"`  // user.email (primary/noreply)
+	Helper string `json:"helper"` // credential.helper (HelperBinPath)
+}
+
+// GitClonePayload is the body of a git.clone req. The URL never embeds a token —
+// the credential helper supplies it at fetch time, so .git/config keeps a clean
+// remote URL.
+type GitClonePayload struct {
+	URL  string `json:"url"`   // https clone URL, no credentials
+	Dest string `json:"dest"`  // absolute path under the workspace
+	OpID string `json:"op_id"` // correlates the later git.clone.done frame
+}
+
+// GitCloneDonePayload is the body of a guest → CP git.clone.done req: the
+// outcome of an earlier git.clone, correlated by OpID.
+type GitCloneDonePayload struct {
+	OpID   string `json:"op_id"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"` // sanitized failure detail (never a token)
+}
+
+// GitCredentialRequest is the body of a guest → CP git.credential req.
+type GitCredentialRequest struct {
+	Host     string `json:"host"`     // must be the configured git host (github.com)
+	Protocol string `json:"protocol"` // must be https
+}
+
+// GitCredentialResponse is the body of a successful git.credential resp: a
+// short-lived credential and its absolute expiry (RFC3339), so the helper can
+// pass password_expiry_utc back to git.
+type GitCredentialResponse struct {
+	Username string `json:"username"`         // x-access-token for GitHub App user tokens
+	Password string `json:"password"`         // the access token (never logged/persisted)
+	Expiry   string `json:"expiry,omitempty"` // RFC3339 access-token expiry
+}
+
+// ControlErrorPayload is the body of an err frame: a machine-readable code plus
+// an optional human message (never carrying secret material).
+type ControlErrorPayload struct {
+	Code    string `json:"code"`
+	Message string `json:"message,omitempty"`
+}
 
 // AgentSessionPrefix marks a terminal session that should spawn a provider's
 // injected launch command instead of the login shell. The provider key is the

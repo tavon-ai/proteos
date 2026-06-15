@@ -43,7 +43,7 @@ func newAgentServer(t *testing.T, key string) (*httptest.Server, *secrets.Store)
 
 	mgr := term.NewManager(term.Config{Shell: "/bin/sh", ScrollbackKiB: 64})
 	t.Cleanup(mgr.Shutdown)
-	ts := httptest.NewServer(New(mgr, nil, sec).Handler())
+	ts := httptest.NewServer(New(mgr, nil, sec, nil).Handler())
 	t.Cleanup(ts.Close)
 	return ts, sec
 }
@@ -134,7 +134,7 @@ func TestAgentSessionDegradedClosesSetupFailed(t *testing.T) {
 
 	mgr := term.NewManager(term.Config{Shell: "/bin/sh", ScrollbackKiB: 64})
 	t.Cleanup(mgr.Shutdown)
-	ts := httptest.NewServer(New(mgr, nil, sec).Handler())
+	ts := httptest.NewServer(New(mgr, nil, sec, nil).Handler())
 	t.Cleanup(ts.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

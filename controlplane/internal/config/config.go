@@ -27,6 +27,16 @@ type Config struct {
 	GitHubClientID     string
 	GitHubClientSecret string
 
+	// GitHubAppSlug is the App's URL slug (github.com/apps/<slug>), used to build
+	// the installation-management ("grants") URL the Repos panel links to so the
+	// user can choose which repos ProteOS may access (Phase 7 decision #7).
+	GitHubAppSlug string
+
+	// GitHost is the git host the credential handler will mint credentials for and
+	// the only host clones target (Phase 7). Defaults to github.com; overridden
+	// only by the e2e harness to point at its local git server.
+	GitHost string
+
 	// StateSigningKey is the HMAC key used to sign the short-lived OAuth state
 	// cookie. Must be non-empty in any environment that runs the OAuth flow.
 	StateSigningKey []byte
@@ -116,6 +126,8 @@ func Load() (*Config, error) {
 		BaseURL:             getenv("PROTEOS_BASE_URL", "http://localhost:8080"),
 		GitHubClientID:      os.Getenv("GITHUB_APP_CLIENT_ID"),
 		GitHubClientSecret:  os.Getenv("GITHUB_APP_CLIENT_SECRET"),
+		GitHubAppSlug:       os.Getenv("GITHUB_APP_SLUG"),
+		GitHost:             getenv("PROTEOS_GIT_HOST", "github.com"),
 		SecretsBackend:      getenv("PROTEOS_SECRETS_BACKEND", "file"),
 		SecretsFile:         getenv("PROTEOS_SECRETS_FILE", ".data/secrets.json"),
 		OpenBaoAddr:         getenv("PROTEOS_OPENBAO_ADDR", "http://127.0.0.1:8200"),

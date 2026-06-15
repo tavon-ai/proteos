@@ -9,6 +9,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/auth"
 	"github.com/tavon/proteos/controlplane/internal/gateway"
+	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
@@ -44,6 +45,16 @@ type Server struct {
 	// launch (Phase 5). Nil ⇒ the push step is skipped (the poller's start-time
 	// injection is then the only path).
 	Injector Injector
+
+	// Phase 7: git operations. GitHub (REST client), Tokens (per-user token
+	// lifecycle), and GitChannel (the guest control channel) back /api/git/*.
+	// When any is nil the git routes are disabled. GitHost is the only host clones
+	// target; GitHubAppSlug builds the grants URL the Repos panel links to.
+	GitHub        *github.Client
+	Tokens        *github.TokenSource
+	GitChannel    GitChannel
+	GitHost       string
+	GitHubAppSlug string
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
@@ -82,6 +93,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/providers", s.requireAuth(http.HandlerFunc(s.handleListProviders)))
 		mux.Handle("PUT /api/secrets/providers/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetProviderKey))))
 		mux.Handle("DELETE /api/secrets/providers/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteProviderKey))))
+	}
+
+	// Git operations (Phase 7). Reads are auth-only; clone mutates state so it
+	// also requires the CSRF header. Enabled only when the full git stack is wired.
+	if s.GitHub != nil && s.Tokens != nil && s.GitChannel != nil {
+		mux.Handle("GET /api/git/repos", s.requireAuth(http.HandlerFunc(s.handleGitRepos)))
+		mux.Handle("POST /api/git/clone", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitClone))))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check
