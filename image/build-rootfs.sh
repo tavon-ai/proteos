@@ -228,9 +228,13 @@ install_git() {
   # apt-key and makes every repo look "not signed". Disable the sandbox so apt
   # runs as root (APT::Sandbox::User=root) and retry transient network errors.
   local apt_opts='-o APT::Sandbox::User=root -o Acquire::Retries=3'
+  # The CI base squashfs is slimmed: its apt cache/list dirs (incl. the partial/
+  # subdirs apt downloads into) are stripped. Recreate them, plus /tmp, before
+  # fetching or apt errors with "Archives directory .../partial is missing".
   sudo chroot "$mnt" /usr/bin/env \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
-    sh -c "apt-get $apt_opts update -qq && apt-get $apt_opts install -y --no-install-recommends git" \
+    sh -c "mkdir -p /tmp /var/cache/apt/archives/partial /var/lib/apt/lists/partial && \
+      apt-get $apt_opts update -qq && apt-get $apt_opts install -y --no-install-recommends git ca-certificates" \
     || die "apt-get install git failed (the base image needs working apt sources + network; set proteos_git_install=false / pass --no-git to skip)"
   GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}')"
   ok "git installed (${GIT_VERSION:-unknown})"
