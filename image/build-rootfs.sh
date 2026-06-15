@@ -319,11 +319,11 @@ lay_down_cache() {
 # default is realism + a speed-bump). Idempotent: skips the user if it exists and
 # only installs sudo if missing. Needs the chroot binds (apt). Sets USER_NAME.
 provision_user() {
-  local mnt="$1" user="$2" uid="$3"
+  local mnt="$1" user="$2"
   command -v dpkg-deb >/dev/null || die "dpkg-deb required on the build host to lay down sudo"
   sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    sh -c 'command -v useradd && command -v groupadd' >/dev/null 2>&1 \
-    || die "base image lacks useradd/groupadd (the 'passwd' package); cannot create the '$user' user (pass --no-user to skip)"
+    sh -c 'command -v useradd' >/dev/null 2>&1 \
+    || die "base image lacks useradd (the 'passwd' package); cannot create the '$user' user (pass --no-user to skip)"
 
   # sudo, extract-only (apt would reinstall the base closure in the slimmed image
   # and break resume — same reasoning as install_git).
@@ -344,13 +344,16 @@ provision_user() {
       || die "sudo extract-only install failed: sudo not runnable in the image"
   fi
 
-  # Create the group + user idempotently. -m seeds /home/$user from /etc/skel.
+  # Create the user idempotently (-m seeds /home/$user from /etc/skel; useradd
+  # also makes a primary group named after the user — USERGROUPS_ENAB on Ubuntu).
+  # We do NOT pin uid/gid: the cloud base already occupies 1000 (its default
+  # 'ubuntu' user), so let useradd take the next free id. The guest agent resolves
+  # this user by NAME (not a hardcoded number), so the exact id does not matter.
   sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    sh -c "getent group $user >/dev/null 2>&1 || groupadd -g $uid $user" \
-    || die "groupadd $user failed"
-  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    sh -c "id -u $user >/dev/null 2>&1 || useradd -m -u $uid -g $uid -s /bin/bash $user" \
+    sh -c "id -u $user >/dev/null 2>&1 || useradd -m -s /bin/bash $user" \
     || die "useradd $user failed"
+  local uid
+  uid="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin id -u "$user" 2>/dev/null)"
 
   # Passwordless sudo for the user (0440, root-owned, as visudo requires).
   printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" | sudo tee "$mnt/etc/sudoers.d/$user" >/dev/null
@@ -358,7 +361,7 @@ provision_user() {
   sudo chown 0:0 "$mnt/etc/sudoers.d/$user"
 
   USER_NAME="$user"
-  ok "provisioned unprivileged user '$user' (uid $uid) with passwordless sudo"
+  ok "provisioned unprivileged user '$user' (uid ${uid:-?}) with passwordless sudo"
 }
 
 # npm_spec PKG VERSION — "pkg@version" if pinned, else "pkg" (npm resolves latest).
@@ -407,7 +410,6 @@ GIT_VERSION=""
 USER_PROVISION=1
 USER_NAME=""
 RUN_AS_USER="dev"
-RUN_AS_UID=1000
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
@@ -639,7 +641,7 @@ fi
 # for apt (sudo) and useradd, so bracket it the same way.
 if [[ $USER_PROVISION -eq 1 ]]; then
   bind_chroot
-  provision_user "$MNT" "$RUN_AS_USER" "$RUN_AS_UID"
+  provision_user "$MNT" "$RUN_AS_USER"
   unbind_chroot
   FEATURES="$FEATURES,user"
 fi
