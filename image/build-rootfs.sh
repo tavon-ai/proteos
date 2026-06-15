@@ -223,10 +223,15 @@ install_git() {
     return
   fi
   log "installing git via apt (chroot)"
+  # apt drops privileges to the _apt sandbox user to fetch, but in a loop-mounted
+  # chroot that user often cannot create temp files under /tmp — which breaks
+  # apt-key and makes every repo look "not signed". Disable the sandbox so apt
+  # runs as root (APT::Sandbox::User=root) and retry transient network errors.
+  local apt_opts='-o APT::Sandbox::User=root -o Acquire::Retries=3'
   sudo chroot "$mnt" /usr/bin/env \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
-    sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends git' \
-    || die "apt-get install git failed (the base image needs working apt sources + network)"
+    sh -c "apt-get $apt_opts update -qq && apt-get $apt_opts install -y --no-install-recommends git" \
+    || die "apt-get install git failed (the base image needs working apt sources + network; set proteos_git_install=false / pass --no-git to skip)"
   GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}')"
   ok "git installed (${GIT_VERSION:-unknown})"
 }
