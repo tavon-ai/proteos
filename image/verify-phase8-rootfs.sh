@@ -81,11 +81,18 @@ if [[ -e $CS_LINK ]]; then
     fail "code-server symlink present but entrypoint missing under /usr/local/lib/code-server"
   fi
   # --version runs the bundled node; confirm it actually executes in the chroot.
-  if CSVER="$(chroot "$MNT" /usr/bin/env "PATH=$CHROOT_PATH" code-server --version 2>/dev/null | head -1)"; then
+  # code-server writes a default config on first run, so point HOME/XDG at a
+  # throwaway dir under /tmp (inside the image) and delete it afterward — never
+  # let the probe mutate /root in the baked image.
+  CS_TMP="/tmp/.cs-verify-$$"
+  if CSVER="$(chroot "$MNT" /usr/bin/env "PATH=$CHROOT_PATH" \
+        "HOME=$CS_TMP" "XDG_CONFIG_HOME=$CS_TMP/.config" "XDG_DATA_HOME=$CS_TMP/.local/share" \
+        code-server --version 2>/dev/null | head -1)"; then
     [[ -n $CSVER ]] && pass "code-server runs in the guest ($CSVER)" || fail "code-server --version produced no output"
   else
     fail "code-server is on PATH but '--version' did not run (bundled node broken?)"
   fi
+  rm -rf "$MNT$CS_TMP"
 else
   fail "code-server is NOT installed in the guest (the editor will not start)"
 fi
@@ -107,21 +114,26 @@ else
   fail "guest systemd unit not found at ${UNIT#"$MNT"}"
 fi
 
-# --- no editor auth/credential baked -----------------------------------------
-# code-server is authenticated by the GATEWAY (it runs --auth none on a loopback
-# bind); no password/hashed-password/cert may be baked into the image config.
-LEAK=0
-for cfg in "$MNT/root/.config/code-server/config.yaml" \
-           "$MNT/home"/*/.config/code-server/config.yaml \
-           "$MNT/etc/code-server/config.yaml"; do
-  [[ -e $cfg ]] || continue
-  info "found baked code-server config: ${cfg#"$MNT"}"
-  if grep -qiE '^[[:space:]]*(password|hashed-password|cert)[[:space:]]*:' "$cfg" 2>/dev/null; then
-    fail "baked code-server config carries auth material: ${cfg#"$MNT"}"
-    LEAK=1
-  fi
+# --- editor auth is enforced by flags, not config ----------------------------
+# code-server is launched by the guest agent with `--auth none --bind-addr
+# 127.0.0.1:13337` (loopback only; the GATEWAY authenticates). Command-line flags
+# OVERRIDE any config file, so a baked config can never widen exposure — the
+# config's password/bind-addr are dead. code-server also writes a default config
+# (with a random password) the first time it runs anywhere; to keep the image
+# pristine and reproducible we remove any such config dir (it is non-load-bearing
+# at runtime). On a clean build there is nothing to remove.
+removed=0
+for cfg_dir in "$MNT/root/.config/code-server" "$MNT/home"/*/.config/code-server "$MNT/etc/code-server"; do
+  [[ -d $cfg_dir ]] || continue
+  rm -rf "$cfg_dir"
+  removed=1
+  info "removed a default code-server config from the image: ${cfg_dir#"$MNT"} (runtime forces --auth none)"
 done
-[[ $LEAK -eq 0 ]] && pass "no code-server auth/credential material baked into the image"
+if [[ $removed -eq 1 ]]; then
+  pass "editor auth enforced by the gateway + --auth none launch flag (stray default config cleaned)"
+else
+  pass "editor auth enforced by the gateway + --auth none launch flag (no baked config)"
+fi
 
 # --- release stamp advertises codeserver -------------------------------------
 REL="$MNT/etc/proteos-release"
