@@ -40,7 +40,7 @@ func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (
 	}
 
 	if port == 0 {
-		port = d.cfg.GuestVsockPort
+		port = uint32(d.cfg.GuestVsockPort)
 		if port == 0 {
 			port = defaultGuestPort
 		}
