@@ -32,10 +32,15 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
   const { create, start, stop } = useMachineMutations();
   const { data: providers } = useProviders();
   const [terminalOpen, setTerminalOpen] = useState(false);
-  // The provider whose agent session is open (e.g. "claude"), or null.
+  // The registry key of the provider whose agent session is open, or null.
   const [agentProvider, setAgentProvider] = useState<string | null>(null);
 
-  const claude = providers?.find((p) => p.key === "claude");
+  // The launch list is rendered entirely from the registry: any enabled provider
+  // the user has keyed is launchable, with zero per-provider code (Phase 6 #5).
+  const enabledProviders = providers?.filter((p) => p.enabled) ?? [];
+  const launchable = enabledProviders.filter((p) => p.key_set);
+  const needKey = enabledProviders.filter((p) => !p.key_set);
+  const openProvider = providers?.find((p) => p.key === agentProvider) ?? null;
 
   if (!machine) {
     return (
@@ -100,11 +105,15 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
             <button className="btn" onClick={() => setTerminalOpen(true)}>
               Open terminal
             </button>
-            {claude?.enabled && claude.key_set && (
-              <button className="btn btn-primary" onClick={() => setAgentProvider("claude")}>
-                Launch Claude Code
+            {launchable.map((p) => (
+              <button
+                key={p.key}
+                className="btn btn-primary"
+                onClick={() => setAgentProvider(p.key)}
+              >
+                Launch {p.display_name}
               </button>
-            )}
+            ))}
             <button className="btn" onClick={() => stop.mutate()} disabled={busy}>
               Stop
             </button>
@@ -117,10 +126,11 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
         )}
       </div>
 
-      {machine.state === "running" && claude?.enabled && !claude.key_set && (
+      {machine.state === "running" && needKey.length > 0 && (
         <p className="muted launch-hint">
-          Set a {claude.display_name} API key in <strong>AI providers</strong> below to
-          launch it here.
+          Set an API key for {needKey.map((p) => p.display_name).join(", ")} in{" "}
+          <strong>AI providers</strong> below to launch{" "}
+          {needKey.length > 1 ? "them" : "it"} here.
         </p>
       )}
 
@@ -133,7 +143,7 @@ export function MachineCard({ initialMachine }: { initialMachine: MachineSummary
         <TerminalPanel
           machineID={machine.id}
           provider={agentProvider}
-          title={claude?.display_name ?? agentProvider}
+          title={openProvider?.display_name ?? agentProvider}
           onClose={() => setAgentProvider(null)}
         />
       )}

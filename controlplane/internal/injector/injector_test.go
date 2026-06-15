@@ -154,6 +154,63 @@ func TestInjectorPushesComposedSecrets(t *testing.T) {
 	}
 }
 
+// TestInjectorComposesMultiFieldSetupProvider proves the injector builds the
+// guest ProviderDef for a multi-field provider that carries a setup_command:
+// each declared field maps to its env var, and the setup command rides along in
+// the push (Phase 6 — composed from data, no per-provider code).
+func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
+	ctx := context.Background()
+	pool, q := testutil.Postgres(t)
+
+	// Insert a custom provider row directly — onboarding a provider is data only.
+	const setup = "printenv OPENAI_API_KEY | codex login --with-api-key"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO providers (key, display_name, launch_command, setup_command, secret_fields, enabled)
+		 VALUES ('stub','Stub','stub',$1,$2::jsonb,true)`,
+		setup,
+		`[{"name":"client_id","label":"Client ID","env":"STUB_CLIENT_ID"},
+		  {"name":"client_secret","label":"Client secret","env":"STUB_CLIENT_SECRET"}]`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	user, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 101, Login: "multi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	if err := sec.Put(secrets.UserProviderPath(uid, "stub"), map[string]string{
+		"client_id":     "id-42",
+		"client_secret": "shh-99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q))
+	if err := inj.Inject(ctx, uid, "m-multi"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	def, ok := guest.last.Providers["stub"]
+	if !ok {
+		t.Fatalf("stub not pushed: %v", guest.last.Providers)
+	}
+	if def.Command != "stub" {
+		t.Fatalf("command = %q, want stub", def.Command)
+	}
+	if def.SetupCommand != setup {
+		t.Fatalf("setup_command = %q, want %q", def.SetupCommand, setup)
+	}
+	if def.Env["STUB_CLIENT_ID"] != "id-42" || def.Env["STUB_CLIENT_SECRET"] != "shh-99" {
+		t.Fatalf("env composition wrong: %v", def.Env)
+	}
+}
+
 func TestInjectorPushesEmptyWhenNoKeys(t *testing.T) {
 	ctx := context.Background()
 	_, q := testutil.Postgres(t)

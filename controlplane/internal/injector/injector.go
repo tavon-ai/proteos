@@ -114,13 +114,17 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 			Action: audit.ActionSecretRead,
 			Target: path,
 		})
-		env := make(map[string]string, len(p.SecretEnv))
-		for envVar, field := range p.SecretEnv {
-			if v, ok := data[field]; ok {
-				env[envVar] = v
+		env := make(map[string]string, len(p.SecretFields))
+		for _, f := range p.SecretFields {
+			if v, ok := data[f.Name]; ok {
+				env[f.Env] = v
 			}
 		}
-		out.Providers[p.Key] = guestwire.ProviderDef{Command: p.LaunchCommand, Env: env}
+		out.Providers[p.Key] = guestwire.ProviderDef{
+			Command:      p.LaunchCommand,
+			Env:          env,
+			SetupCommand: p.SetupCommand,
+		}
 	}
 	return out, nil
 }

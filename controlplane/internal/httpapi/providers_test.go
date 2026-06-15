@@ -96,14 +96,24 @@ func TestProvidersListAndKeySet(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&views); err != nil {
 		t.Fatal(err)
 	}
-	if len(views) != 1 || views[0]["key"] != "claude" {
-		t.Fatalf("expected seeded claude provider, got %v", views)
+	// Phase 6 seeds four providers, ordered by key: claude, gemini, openai, pi.
+	if len(views) != 4 || views[0]["key"] != "claude" {
+		t.Fatalf("expected four seeded providers starting with claude, got %v", views)
 	}
 	if views[0]["key_set"] != false || views[0]["enabled"] != true {
 		t.Fatalf("claude should be enabled, key unset: %v", views[0])
 	}
+	// The view carries field metadata so the UI can render a form from data.
+	fields, ok := views[0]["secret_fields"].([]any)
+	if !ok || len(fields) != 1 {
+		t.Fatalf("claude secret_fields = %v", views[0]["secret_fields"])
+	}
+	f0 := fields[0].(map[string]any)
+	if f0["name"] != "api_key" || f0["env"] != "ANTHROPIC_API_KEY" || f0["label"] == "" {
+		t.Fatalf("claude field metadata wrong: %v", f0)
+	}
 
-	r2 := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"api_key":"sk-live-123"}`, true)
+	r2 := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"sk-live-123"}}`, true)
 	r2.Body.Close()
 	if r2.StatusCode != http.StatusNoContent {
 		t.Fatalf("put key: status %d, want 204", r2.StatusCode)
@@ -127,7 +137,7 @@ func TestProvidersListAndKeySet(t *testing.T) {
 
 func TestPutUnknownProvider404(t *testing.T) {
 	fx := setupProviders(t)
-	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/nope", `{"api_key":"x"}`, true)
+	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/nope", `{"fields":{"api_key":"x"}}`, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown provider: status %d, want 404", resp.StatusCode)
@@ -136,7 +146,7 @@ func TestPutUnknownProvider404(t *testing.T) {
 
 func TestPutEmptyKey422(t *testing.T) {
 	fx := setupProviders(t)
-	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"api_key":"   "}`, true)
+	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"   "}}`, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("empty key: status %d, want 422", resp.StatusCode)
@@ -145,7 +155,7 @@ func TestPutEmptyKey422(t *testing.T) {
 
 func TestPutRequiresCSRF(t *testing.T) {
 	fx := setupProviders(t)
-	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"api_key":"x"}`, false)
+	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"x"}}`, false)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("missing CSRF: status %d, want 403", resp.StatusCode)
@@ -154,7 +164,7 @@ func TestPutRequiresCSRF(t *testing.T) {
 
 func TestDeleteProviderKey(t *testing.T) {
 	fx := setupProviders(t)
-	fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"api_key":"sk-1"}`, true).Body.Close()
+	fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"sk-1"}}`, true).Body.Close()
 
 	resp := fx.do(t, http.MethodDelete, "/api/secrets/providers/claude", "", true)
 	defer resp.Body.Close()
@@ -172,7 +182,7 @@ func TestAuditRowsOnPutDelete(t *testing.T) {
 	fx := setupProviders(t)
 	ctx := context.Background()
 
-	fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"api_key":"sk-secret-xyz"}`, true).Body.Close()
+	fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"sk-secret-xyz"}}`, true).Body.Close()
 	fx.do(t, http.MethodDelete, "/api/secrets/providers/claude", "", true).Body.Close()
 
 	rows, err := fx.pool.Query(ctx, "SELECT action, target FROM audit_log ORDER BY id")
@@ -206,7 +216,7 @@ func TestKeyNeverInResponse(t *testing.T) {
 	fx := setupProviders(t)
 	const key = "sk-must-not-leak-9999"
 
-	put := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"api_key":"`+key+`"}`, true)
+	put := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"`+key+`"}}`, true)
 	b, _ := io.ReadAll(put.Body)
 	put.Body.Close()
 
@@ -218,5 +228,79 @@ func TestKeyNeverInResponse(t *testing.T) {
 		if bytes.Contains(body, []byte(key)) {
 			t.Fatalf("key leaked in response: %s", body)
 		}
+	}
+}
+
+// TestPutUnknownField422 proves a field not declared by the provider is rejected.
+func TestPutUnknownField422(t *testing.T) {
+	fx := setupProviders(t)
+	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude",
+		`{"fields":{"api_key":"sk-1","bogus":"x"}}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown field: status %d, want 422", resp.StatusCode)
+	}
+}
+
+// TestPutMissingField422 proves an empty fields map (declared field absent) is
+// rejected as a missing required field.
+func TestPutMissingField422(t *testing.T) {
+	fx := setupProviders(t)
+	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{}}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("missing field: status %d, want 422", resp.StatusCode)
+	}
+}
+
+// TestSeededProvidersShape proves the Phase 6 seeds expose the expected field
+// metadata and that openai carries a setup-style provider (no key in the view).
+func TestSeededProvidersShape(t *testing.T) {
+	fx := setupProviders(t)
+	resp := fx.do(t, http.MethodGet, "/api/providers", "", false)
+	defer resp.Body.Close()
+	var views []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&views); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]map[string]any{}
+	for _, v := range views {
+		byKey[v["key"].(string)] = v
+	}
+	for _, want := range []struct{ key, env string }{
+		{"gemini", "GEMINI_API_KEY"},
+		{"openai", "OPENAI_API_KEY"},
+		{"pi", "ANTHROPIC_API_KEY"},
+	} {
+		v, ok := byKey[want.key]
+		if !ok {
+			t.Fatalf("provider %q not seeded; got %v", want.key, byKey)
+		}
+		fields := v["secret_fields"].([]any)
+		if len(fields) != 1 {
+			t.Fatalf("%s should declare one field, got %v", want.key, fields)
+		}
+		if env := fields[0].(map[string]any)["env"]; env != want.env {
+			t.Fatalf("%s env = %v, want %v", want.key, env, want.env)
+		}
+	}
+}
+
+// TestPiKeyStoredUnderOwnPath proves pi's borrowed Anthropic key is stored under
+// pi's own provider path, not read from or written to claude's (Phase 6 #2).
+func TestPiKeyStoredUnderOwnPath(t *testing.T) {
+	fx := setupProviders(t)
+	r := fx.do(t, http.MethodPut, "/api/secrets/providers/pi",
+		`{"fields":{"anthropic_api_key":"sk-pi-borrowed"}}`, true)
+	r.Body.Close()
+	if r.StatusCode != http.StatusNoContent {
+		t.Fatalf("put pi key: status %d, want 204", r.StatusCode)
+	}
+	pi, err := fx.sec.Get(secrets.UserProviderPath(fx.uid(), "pi"))
+	if err != nil || pi["anthropic_api_key"] != "sk-pi-borrowed" {
+		t.Fatalf("pi secret = %v, err = %v", pi, err)
+	}
+	if _, err := fx.sec.Get(secrets.UserProviderPath(fx.uid(), "claude")); err == nil {
+		t.Fatal("claude path must remain untouched when setting pi's key")
 	}
 }

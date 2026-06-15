@@ -395,10 +395,22 @@ body {
 
 .provider-key-form {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.6rem;
   margin-top: 0.75rem;
+}
+
+/* One declared secret field: its label sits above its input (Phase 6 — the form
+   is rendered from provider.secret_fields, so providers may have several). */
+.provider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.provider-field-label {
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 .provider-key-input {

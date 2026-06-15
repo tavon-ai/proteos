@@ -76,9 +76,10 @@ type Provider struct {
 	Key           string             `json:"key"`
 	DisplayName   string             `json:"display_name"`
 	LaunchCommand string             `json:"launch_command"`
-	SecretEnv     []byte             `json:"secret_env"`
 	Enabled       bool               `json:"enabled"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	SecretFields  []byte             `json:"secret_fields"`
+	SetupCommand  *string            `json:"setup_command"`
 }
 
 type Session struct {

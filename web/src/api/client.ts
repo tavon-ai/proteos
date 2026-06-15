@@ -87,13 +87,24 @@ export interface MachineEventData {
   event: MachineEvent;
 }
 
+// SecretField is one declared input a provider needs (Phase 6). The settings UI
+// renders a form from these — name is the field key, label is the prompt, env is
+// the variable it becomes inside the machine. None of these are secret.
+export interface SecretField {
+  name: string;
+  label: string;
+  env: string;
+}
+
 // Provider is one row of GET /api/providers. The API never returns key material;
 // key_set only reports whether the user has stored a key (Phase 5 decision #5).
+// secret_fields drives the data-rendered settings form (Phase 6 decision #5).
 export interface Provider {
   key: string;
   display_name: string;
   enabled: boolean;
   key_set: boolean;
+  secret_fields: SecretField[];
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -142,14 +153,15 @@ export const api = {
   startMachine: () => request<MachineSummary>("/api/machine/start", { method: "POST" }),
   stopMachine: () => request<MachineSummary>("/api/machine/stop", { method: "POST" }),
 
-  // Providers + write-only secret keys (Phase 5). setProviderKey/deleteProviderKey
-  // return 204; the key is never echoed back.
+  // Providers + write-only secret keys. setProviderKey/deleteProviderKey return
+  // 204; values are never echoed back. fields maps each declared secret field
+  // name to its value (Phase 6 generalizes Phase 5's single api_key body).
   listProviders: () => request<Provider[]>("/api/providers"),
-  setProviderKey: (key: string, apiKey: string) =>
+  setProviderKey: (key: string, fields: Record<string, string>) =>
     request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: apiKey }),
+      body: JSON.stringify({ fields }),
     }),
   deleteProviderKey: (key: string) =>
     request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: "DELETE" }),

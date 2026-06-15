@@ -87,8 +87,8 @@ export function useProviderMutations() {
   const invalidate = () => qc.invalidateQueries({ queryKey: providersKey });
 
   const setKey = useMutation({
-    mutationFn: ({ key, apiKey }: { key: string; apiKey: string }) =>
-      api.setProviderKey(key, apiKey),
+    mutationFn: ({ key, fields }: { key: string; fields: Record<string, string> }) =>
+      api.setProviderKey(key, fields),
     onSuccess: invalidate,
   });
   const deleteKey = useMutation({

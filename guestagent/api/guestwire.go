@@ -63,6 +63,19 @@ const (
 	CloseInternal            = 1011 // unexpected server-side failure
 )
 
+// CloseProviderUnavailable close reasons. The reason is the human-readable
+// string sent alongside code 4003, distinguishing why the provider is
+// unavailable so the browser can show an actionable message.
+const (
+	// CloseReasonNotInjected: the provider was never injected (no key set, or the
+	// push has not reached this guest yet).
+	CloseReasonNotInjected = "provider unavailable"
+	// CloseReasonSetupFailed: the provider's setup_command failed on the last
+	// push, so it is marked degraded and cannot be launched until a re-push
+	// (e.g. key rotation) re-runs setup successfully (Phase 6 decision #3).
+	CloseReasonSetupFailed = "setup_failed"
+)
+
 // DefaultSession is the session name attached to when ?session= is absent.
 const DefaultSession = "main"
 
@@ -94,11 +107,24 @@ const RouteSecretsPath = "/secrets"
 const AgentSessionPrefix = "agent-"
 
 // ProviderDef is one provider's injected launch definition: the command to run
-// for an agent session and the environment (secret) it runs with. Env values
-// are sensitive (API keys) and must never be logged.
+// for an agent session, the environment (secret) it runs with, and an optional
+// setup command run once per push to complete login-style auth (Phase 6
+// decision #3). Env values are sensitive (API keys) and must never be logged.
 type ProviderDef struct {
 	Command string            `json:"command"`
 	Env     map[string]string `json:"env"`
+
+	// SetupCommand, when non-empty, is a shell command the guest runs as a root
+	// login shell after the env file is written, on every push (start, resume,
+	// rotation). It completes auth styles that need a login step rather than
+	// pure env — e.g. Codex's `printenv OPENAI_API_KEY | codex login
+	// --with-api-key`, which writes ~/.codex/auth.json. It runs asynchronously
+	// with its output captured to the guest-agent log and MUST be idempotent
+	// (run-on-every-push avoids any "has it run yet" state machine). A failing
+	// setup marks the provider degraded; launching it then closes the agent WS
+	// with CloseProviderUnavailable and reason CloseReasonSetupFailed instead of
+	// spawning a broken TUI.
+	SetupCommand string `json:"setup_command,omitempty"`
 }
 
 // SecretsRequest is the body of PUT /secrets: the full set of provider

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 
 	"github.com/coder/websocket"
 
@@ -66,6 +67,17 @@ func browserCloseFor(res relayResult, running bool) (websocket.StatusCode, strin
 	// sent an exit frame, then closed 1000) — propagate it verbatim.
 	if websocket.CloseStatus(res.err) == websocket.StatusNormalClosure {
 		return websocket.StatusNormalClosure, ""
+	}
+	// A provider-unavailable close is the guest intentionally refusing an agent
+	// session (provider not injected, or its setup_command failed/degraded). Its
+	// reason (Phase 6: not-injected vs setup_failed) is actionable, so propagate
+	// the code and reason verbatim instead of masking it as an internal fault.
+	if websocket.CloseStatus(res.err) == guestwire.CloseProviderUnavailable {
+		var ce websocket.CloseError
+		if errors.As(res.err, &ce) {
+			return ce.Code, ce.Reason
+		}
+		return guestwire.CloseProviderUnavailable, guestwire.CloseReasonNotInjected
 	}
 	// Otherwise the tunnel/guest dropped unexpectedly: if the machine is no
 	// longer running it stopped under us; else it is an internal fault.

@@ -204,7 +204,7 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 }
 
 const getProvider = `-- name: GetProvider :one
-SELECT key, display_name, launch_command, secret_env, enabled, created_at FROM providers WHERE key = $1
+SELECT key, display_name, launch_command, enabled, created_at, secret_fields, setup_command FROM providers WHERE key = $1
 `
 
 func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error) {
@@ -214,9 +214,10 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 		&i.Key,
 		&i.DisplayName,
 		&i.LaunchCommand,
-		&i.SecretEnv,
 		&i.Enabled,
 		&i.CreatedAt,
+		&i.SecretFields,
+		&i.SetupCommand,
 	)
 	return i, err
 }
@@ -503,7 +504,7 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 }
 
 const listProviders = `-- name: ListProviders :many
-SELECT key, display_name, launch_command, secret_env, enabled, created_at FROM providers ORDER BY key
+SELECT key, display_name, launch_command, enabled, created_at, secret_fields, setup_command FROM providers ORDER BY key
 `
 
 // The provider registry, ordered for stable API output.
@@ -520,9 +521,10 @@ func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 			&i.Key,
 			&i.DisplayName,
 			&i.LaunchCommand,
-			&i.SecretEnv,
 			&i.Enabled,
 			&i.CreatedAt,
+			&i.SecretFields,
+			&i.SetupCommand,
 		); err != nil {
 			return nil, err
 		}

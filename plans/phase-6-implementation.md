@@ -1,6 +1,28 @@
 # Phase 6 Implementation Plan: Provider registry + remaining agents (Gemini, OpenAI Codex, pi.dev)
 
-> Source: `plans/proteos-poc-to-prod.md` Phase 6, planned 2026-06-11. Status: **not started.**
+> Source: `plans/proteos-poc-to-prod.md` Phase 6, planned 2026-06-11.
+> Status: **Track A landed** (6.1 registry generalization + seeds, 6.2 guest
+> setup_command + degraded state, 6.4 data-driven UI, 6.5 fifth-provider e2e).
+> Track B pending a Linux/Proxmox host: 6.3 (image bake — `build-rootfs.sh` +
+> `PROVIDERS.md` written, pins `TODO(bake)`) and 6.6 (live acceptance).
+>
+> **Migration numbering:** Phase 5's `000004` had already shipped (5.7 closed),
+> so per the header note this phase added a NEW migration `000005` rather than
+> folding the schema change into `000004`. Phase 5's decision #4/#5 are therefore
+> unchanged — `000004` keeps its `secret_env` shape in history; `000005` migrates
+> it forward to `secret_fields` + `setup_command`.
+>
+> **Decision #7 design note (closes "verified by design/review"):** the
+> 5th-provider criterion is an executable test, `TestFifthProviderE2E`
+> (`controlplane/internal/httpapi/fifth_provider_e2e_test.go`). It onboards
+> arbitrary `stub`/`plain`/`gate` providers entirely as data (a `providers` row
+> inserted via SQL at runtime + a launch script in the dev guest), sets their keys
+> through the public API, and launches them through `/gw/agent/<key>` — with zero
+> provider-specific Go/TS. It also covers the matrix: two providers keyed on one
+> machine both launchable; a failing `setup_command` degrades a provider and its
+> launch closes 4003 `setup_failed`; key rotation re-runs setup and clears the
+> degraded state. The web no-literals half is enforced by a grep
+> (no provider key literals in `web/src`).
 > Prerequisites: Phase 5 (`plans/phase-5-implementation.md`) — **planned, not landed.** Phase 6
 > is a thin layer over Phase 5's contracts: the `providers` table, the generic
 > `WS /gw/agent/{provider}` route, the injector push (`PUT /secrets` to the guest), and the

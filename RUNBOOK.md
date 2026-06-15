@@ -454,6 +454,73 @@ outlives the WebSocket — Phase 3 property reused for agents).
 When every row passes, tick the master-plan Phase 5 checklist in
 `plans/proteos-poc-to-prod.md`.
 
+## Part F — Phase 6 acceptance walkthrough (Gemini, Codex, pi.dev)
+
+Phase 6 adds three providers as **data + rootfs**, no control-plane code. Run
+this after Part E on the live stack.
+
+### F0. Bake + restage the bigger image
+
+The Phase 6 image bundles a pinned Node LTS + the three CLIs alongside Claude.
+Pin exact versions/sha256 in `image/PROVIDERS.md` first (run its verification
+recipe in an Ubuntu 24.04 x86_64 container), then bake:
+
+```bash
+image/build-rootfs.sh --base <firecracker-ci-ubuntu-24.04.ext4> \
+  --claude-bootstrap \
+  --node-version vX.Y.Z \
+  --gemini-version A.B.C --pi-version D.E.F \
+  --codex-binary ./codex --codex-version G.H.I --codex-sha256 <hex>
+```
+
+- This image grows **materially** over the claude-only Phase 5 image (Node alone
+  is ~120 MiB unpacked); the script reserves +512 MiB headroom when any provider
+  CLI is baked. Record the final size + build time in `image/PROVIDERS.md`.
+- Copy the emitted `.ext4` into `PROTEOS_AGENT_IMAGES_DIR` and re-pin
+  `PROTEOS_ROOTFS_REF` on both the control plane and node-agent. Confirm the new
+  pins are real:
+  ```bash
+  grep -E 'node_version|gemini_version|codex_version|pi_version|features' image/manifest.lock
+  # → real versions, and features include node,gemini,codex,pi
+  ```
+- On a guest **Open terminal**, confirm each CLI is present:
+  ```bash
+  claude --version && gemini --version && codex --version && pi --version
+  ```
+
+### F1. Set keys + launch each provider
+
+In **AI providers**, set a key for Gemini (`GEMINI_API_KEY`), OpenAI Codex
+(`OPENAI_API_KEY`), and Pi (Anthropic key). Each provider renders its own form
+from `secret_fields` — no per-provider UI. A **Launch <name>** button appears for
+every enabled+keyed provider. Launch each and prompt it to touch a file in the
+workspace.
+
+### F2. Verify Codex's setup login ran
+
+Codex authenticates via the registry `setup_command` (`codex login
+--with-api-key`), run by the guest agent on every push. After launching Codex:
+
+```bash
+# on the guest:
+test -f ~/.codex/auth.json && echo "auth.json present"
+# the key must NOT appear in any log:
+sudo journalctl -u proteos-guestagent | grep -i OPENAI_API_KEY   # → no matches
+```
+
+A failing setup degrades the provider: launching it closes the terminal with a
+`setup_failed` message instead of a broken TUI; fixing the key and re-launching
+re-runs setup and clears it.
+
+### F3. Re-injection across stop/start + reattach
+
+Stop/start the machine → all four providers are re-injected and re-launchable
+(the poller pushes on every `→ running`). Reload the browser mid-session → the
+agent session reattaches with scrollback (same as Part E5).
+
+When every row passes, tick the master-plan Phase 6 checklist in
+`plans/proteos-poc-to-prod.md`.
+
 ---
 
 ## Reproducibility notes

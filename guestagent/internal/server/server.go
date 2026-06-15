@@ -58,6 +58,12 @@ type SecretStore interface {
 	Get(key string) (guestwire.ProviderDef, bool)
 	// EnvList returns a provider's environment as KEY=VALUE pairs.
 	EnvList(key string) ([]string, bool)
+	// AwaitReady blocks (bounded by ctx) until a provider's setup_command has
+	// settled, so the launch path sees a deterministic Degraded outcome.
+	AwaitReady(ctx context.Context, key string)
+	// Degraded reports whether a provider's setup_command failed on the current
+	// push (Phase 6), making it unlaunchable until a successful re-push.
+	Degraded(key string) bool
 }
 
 // Server bridges terminal WebSockets to PTY sessions managed by mgr, and serves
@@ -183,14 +189,23 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 
 // errProviderUnavailable is returned by sessionFor when an agent session names a
 // provider that has not been injected (or has no launch command). It maps to a
-// CloseProviderUnavailable WebSocket close.
+// CloseProviderUnavailable WebSocket close with CloseReasonNotInjected.
 var errProviderUnavailable = errors.New("provider unavailable")
+
+// errSetupFailed is returned by sessionFor when an agent session names a
+// provider whose setup_command failed on the current push (Phase 6): it is
+// injected but degraded. It maps to the same close code with the more specific
+// CloseReasonSetupFailed reason so the browser can show an actionable message.
+var errSetupFailed = errors.New("provider setup failed")
 
 // sessionFor resolves a session name to a live Session. Plain names spawn the
 // login shell (Manager.Get); names with the agent- prefix spawn the named
 // provider's injected launch command with its secret env overlay. An agent
-// session for an un-injected provider returns errProviderUnavailable.
-func (s *Server) sessionFor(name string) (*term.Session, error) {
+// session for an un-injected provider returns errProviderUnavailable; for a
+// degraded (setup-failed) provider it returns errSetupFailed. For providers with
+// a setup_command it first waits for that command to settle, so the launch
+// decision sees a deterministic outcome rather than racing the async setup.
+func (s *Server) sessionFor(ctx context.Context, name string) (*term.Session, error) {
 	key, isAgent := guestwire.ProviderKeyFromSession(name)
 	if !isAgent {
 		return s.mgr.Get(name)
@@ -201,6 +216,10 @@ func (s *Server) sessionFor(name string) (*term.Session, error) {
 	def, ok := s.sec.Get(key)
 	if !ok {
 		return nil, errProviderUnavailable
+	}
+	s.sec.AwaitReady(ctx, key)
+	if s.sec.Degraded(key) {
+		return nil, errSetupFailed
 	}
 	command := strings.Fields(def.Command)
 	if len(command) == 0 {
@@ -216,14 +235,19 @@ func (s *Server) serve(ctx context.Context, c *websocket.Conn, sessionName strin
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	sess, err := s.sessionFor(sessionName)
+	sess, err := s.sessionFor(ctx, sessionName)
 	if err != nil {
-		if errors.Is(err, errProviderUnavailable) {
-			c.Close(websocket.StatusCode(guestwire.CloseProviderUnavailable), "provider unavailable")
+		switch {
+		case errors.Is(err, errSetupFailed):
+			c.Close(websocket.StatusCode(guestwire.CloseProviderUnavailable), guestwire.CloseReasonSetupFailed)
+			return err
+		case errors.Is(err, errProviderUnavailable):
+			c.Close(websocket.StatusCode(guestwire.CloseProviderUnavailable), guestwire.CloseReasonNotInjected)
+			return err
+		default:
+			c.Close(websocket.StatusInternalError, "spawn failed")
 			return err
 		}
-		c.Close(websocket.StatusInternalError, "spawn failed")
-		return err
 	}
 	att, err := sess.Attach()
 	if err != nil {

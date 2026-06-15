@@ -117,7 +117,6 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, opts ServeOpts) {
 	go pingLoop(ctx, c)
 
 	res := relay(ctx, c, guestWS)
-	cancel() // unblock the other relay direction
 
 	running := false
 	if res.side == sideGuest && websocket.CloseStatus(res.err) != websocket.StatusNormalClosure && opts.Refresh != nil {
@@ -127,7 +126,13 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, opts ServeOpts) {
 		rcancel()
 	}
 	code, reason := browserCloseFor(res, running)
+	// Close the browser leg (sending the close frame) BEFORE cancelling: coder/
+	// websocket forcibly tears a connection down if an in-flight Read's context
+	// is cancelled, which would replace our intended close frame with a raw EOF.
+	// The still-blocked relay direction is unblocked by this Close (browser leg)
+	// or by the deferred cancel (guest leg).
 	_ = c.Close(code, reason)
+	cancel()
 }
 
 // closeForDialError maps a guest-tunnel dial failure to a browser close code:

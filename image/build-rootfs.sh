@@ -40,6 +40,22 @@
 #
 # Omitting both bakes the providers profile.d wiring but no agent CLI (it warns).
 #
+# Phase 6: bake the three additional provider CLIs (Gemini, OpenAI Codex, pi.dev)
+# alongside a pinned Node LTS runtime. All pins come from image/PROVIDERS.md — no
+# version literal lives in this script. Each provider is optional; pass its
+# version to include it (a build with none still bakes the wiring + claude):
+#
+#   --node-version vX.Y.Z [--node-sha256 <hex>]
+#       Pinned Node LTS tarball from nodejs.org (shared runtime for the npm CLIs).
+#       Required if --gemini-version or --pi-version is given.
+#   --gemini-version X.Y.Z      npm i -g @google/gemini-cli@X.Y.Z (in a chroot)
+#   --pi-version X.Y.Z          npm i -g @pi/agent@X.Y.Z (pin the package per PROVIDERS.md)
+#   --codex-binary /path | --codex-url <url>   pinned Codex musl binary → /usr/local/bin/codex
+#   --codex-version X.Y.Z [--codex-sha256 <hex>]
+#
+# The npm installs run via `chroot` into the mounted image (native arch, correct
+# shebangs), so this must run on a host matching the rootfs arch with network.
+#
 # The base must be a systemd image (the unit is installed for systemd); the
 # script asserts this and fails loudly otherwise.
 
@@ -110,6 +126,59 @@ fetch_claude_official() {
   ok "fetched Claude Code $version ($platform), sha256 verified against manifest"
 }
 
+# node_arch maps uname -m onto the nodejs.org dist arch tag.
+node_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo "x64" ;;
+    arm64 | aarch64) echo "arm64" ;;
+    *) die "unsupported arch for Node: $(uname -m)" ;;
+  esac
+}
+
+# install_node MNT VERSION [SHA256] — fetch the pinned Node LTS tarball from
+# nodejs.org, verify its sha256 (against the published SHASUMS256 if not given),
+# and unpack it into the image's /usr/local (node + npm on PATH). Phase 6 decision
+# #4: a pinned Node runtime is shared infrastructure for npm-distributed agents.
+install_node() {
+  local mnt="$1" version="$2" want_sha="$3"
+  local arch tarball url
+  arch="$(node_arch)"
+  tarball="node-${version}-linux-${arch}.tar.xz"
+  url="https://nodejs.org/dist/${version}/${tarball}"
+
+  log "fetching Node ${version} (${arch})"
+  dl "$url" "$WORK/$tarball" || die "download Node $version"
+
+  local actual
+  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
+  if [[ -z $want_sha ]]; then
+    # Verify against the dist SHASUMS256.txt rather than trusting blindly.
+    want_sha="$(dl "https://nodejs.org/dist/${version}/SHASUMS256.txt" | grep " ${tarball}\$" | awk '{print $1}')"
+    [[ -n $want_sha ]] || die "no SHASUMS256 entry for $tarball"
+  fi
+  [[ "$actual" == "$want_sha" ]] || die "Node sha256 mismatch: expected $want_sha, got $actual"
+  NODE_SHA256="$want_sha"
+  ok "Node tarball sha256 verified ($actual)"
+
+  # Unpack into /usr/local, stripping the top-level node-<ver> dir so binaries
+  # land at /usr/local/bin/{node,npm,npx}.
+  sudo tar -xJf "$WORK/$tarball" -C "$mnt/usr/local" --strip-components=1
+  ok "Node ${version} unpacked into /usr/local"
+}
+
+# npm_global MNT SPEC — install an npm package globally INSIDE the image via
+# chroot, so the package's native arch + #!/usr/bin/env node shebangs are correct
+# at guest runtime. Requires /dev,/proc bind mounts (added by the caller) and the
+# baked resolv.conf for registry DNS.
+npm_global() {
+  local mnt="$1" spec="$2"
+  log "npm i -g $spec (chroot)"
+  sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/bin:/usr/bin:/bin npm install -g --no-fund --no-audit "$spec" \
+    || die "npm install -g $spec failed"
+  ok "installed $spec"
+}
+
 # --- args -------------------------------------------------------------------
 BASE=""
 OUT_DIR=""
@@ -119,6 +188,15 @@ CLAUDE_VERSION=""
 CLAUDE_SHA256=""
 CLAUDE_BOOTSTRAP=0
 CLAUDE_PLATFORM=""   # override the auto-detected downloads.claude.ai platform (e.g. linux-x64-musl)
+# Phase 6 provider pins (all optional; default off → behaviour identical to Phase 5).
+NODE_VERSION=""
+NODE_SHA256=""
+GEMINI_VERSION=""
+PI_VERSION=""
+CODEX_BIN=""
+CODEX_URL=""
+CODEX_VERSION=""
+CODEX_SHA256=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
@@ -129,6 +207,14 @@ while [[ $# -gt 0 ]]; do
     --claude-sha256) CLAUDE_SHA256=$2; shift 2 ;;
     --claude-bootstrap) CLAUDE_BOOTSTRAP=1; shift ;;
     --claude-platform) CLAUDE_PLATFORM=$2; shift 2 ;;
+    --node-version) NODE_VERSION=$2; shift 2 ;;
+    --node-sha256) NODE_SHA256=$2; shift 2 ;;
+    --gemini-version) GEMINI_VERSION=$2; shift 2 ;;
+    --pi-version) PI_VERSION=$2; shift 2 ;;
+    --codex-binary) CODEX_BIN=$2; shift 2 ;;
+    --codex-url) CODEX_URL=$2; shift 2 ;;
+    --codex-version) CODEX_VERSION=$2; shift 2 ;;
+    --codex-sha256) CODEX_SHA256=$2; shift 2 ;;
     *) die "unknown arg: $1" ;;
   esac
 done
@@ -138,6 +224,17 @@ if [[ -n $CLAUDE_BIN ]]; then
   [[ $CLAUDE_BOOTSTRAP -eq 0 ]] || die "use either --claude-binary or --claude-bootstrap, not both"
   [[ -f $CLAUDE_BIN ]] || die "claude binary not found: $CLAUDE_BIN"
   [[ -n $CLAUDE_VERSION ]] || die "--claude-version is required with --claude-binary (pins the manifest)"
+fi
+# Phase 6: the npm-distributed CLIs need the pinned Node runtime.
+if [[ -n $GEMINI_VERSION || -n $PI_VERSION ]]; then
+  [[ -n $NODE_VERSION ]] || die "--node-version is required to bake the gemini/pi npm CLIs"
+fi
+if [[ -n $CODEX_BIN ]]; then
+  [[ -z $CODEX_URL ]] || die "use either --codex-binary or --codex-url, not both"
+  [[ -f $CODEX_BIN ]] || die "codex binary not found: $CODEX_BIN"
+fi
+if [[ -n $CODEX_BIN || -n $CODEX_URL ]]; then
+  [[ -n $CODEX_VERSION ]] || die "--codex-version is required when baking Codex (pins manifest.lock)"
 fi
 
 # Resolve repo paths relative to this script.
@@ -183,6 +280,25 @@ if [[ $CLAUDE_BOOTSTRAP -eq 1 ]]; then
   fetch_claude_official "$CLAUDE_TARGET" "$CLAUDE_BIN"
 fi
 
+# Phase 6: fetch the pinned Codex musl binary now (before the loop-mount) so a
+# network/checksum failure aborts cleanly. --codex-binary supplies it offline.
+if [[ -n $CODEX_URL ]]; then
+  log "fetching Codex $CODEX_VERSION from $CODEX_URL"
+  CODEX_BIN="$WORK/codex"
+  dl "$CODEX_URL" "$CODEX_BIN" || die "download Codex"
+  chmod +x "$CODEX_BIN"
+fi
+if [[ -n $CODEX_BIN ]]; then
+  CODEX_ACTUAL_SHA="$(sha256sum "$CODEX_BIN" | awk '{print $1}')"
+  if [[ -n $CODEX_SHA256 ]]; then
+    [[ "$CODEX_SHA256" == "$CODEX_ACTUAL_SHA" ]] || die "codex sha256 mismatch: expected $CODEX_SHA256, got $CODEX_ACTUAL_SHA"
+  else
+    log "WARNING: --codex-sha256 not given; pinning to the binary's own sha256 ($CODEX_ACTUAL_SHA)"
+  fi
+  CODEX_SHA256="$CODEX_ACTUAL_SHA"
+  ok "Codex $CODEX_VERSION ready (sha256 $CODEX_SHA256)"
+fi
+
 # --- 2. copy + grow the base image -------------------------------------------
 # The Claude Code native binary is large (~240 MiB) and the default headroom is
 # sized for the guest agent alone, so when baking Claude grow enough to fit it
@@ -195,6 +311,14 @@ if [[ -n $CLAUDE_BIN ]]; then
     GROW_MIB=$NEED_MIB
   fi
 fi
+# Phase 6: Node (~120MiB unpacked) + the npm CLIs + Codex grow the image
+# materially. Reserve generous headroom so the chroot npm installs don't ENOSPC;
+# the exact final size is recorded in PROVIDERS.md after a real bake.
+if [[ -n $NODE_VERSION || -n $CODEX_BIN ]]; then
+  PROV_NEED=$((GROW_MIB + 512))
+  log "baking Node/provider CLIs — bumping grow ${GROW_MIB}→${PROV_NEED}MiB headroom"
+  GROW_MIB=$PROV_NEED
+fi
 log "copying base image → $OUT_IMG (+${GROW_MIB}MiB headroom)"
 cp "$BASE" "$OUT_IMG"
 # Grow so the binary + unit always fit, then fsck/resize.
@@ -206,6 +330,11 @@ resize2fs "$OUT_IMG" >/dev/null 2>&1 || die "resize2fs failed"
 MNT="$WORK/mnt"
 mkdir -p "$MNT"
 cleanup() {
+  # Release any chroot binds (Phase 6 npm install) before the image umount, or
+  # $MNT is busy. Defensive even if a bind failed midway.
+  sudo umount "$MNT/sys" 2>/dev/null || true
+  sudo umount "$MNT/proc" 2>/dev/null || true
+  sudo umount "$MNT/dev" 2>/dev/null || true
   sudo umount "$MNT" 2>/dev/null || true
   rm -rf "$WORK"
 }
@@ -281,6 +410,50 @@ else
   log "WARNING: no --claude-binary; baking providers wiring but no agent CLI"
 fi
 
+# Phase 6: bake the pinned Node runtime + the Gemini/Codex/pi.dev CLIs. Auth for
+# all three is injected at runtime (Gemini/Pi via env; Codex via the registry's
+# setup_command login) — nothing secret is baked. See image/PROVIDERS.md.
+CHROOT_BOUND=0
+bind_chroot() {
+  # npm postinstalls and the dynamic loader expect /dev,/proc,/sys present.
+  sudo mount --bind /dev "$MNT/dev"
+  sudo mount --bind /proc "$MNT/proc"
+  sudo mount --bind /sys "$MNT/sys"
+  CHROOT_BOUND=1
+}
+unbind_chroot() {
+  [[ $CHROOT_BOUND -eq 1 ]] || return 0
+  sudo umount "$MNT/sys" 2>/dev/null || true
+  sudo umount "$MNT/proc" 2>/dev/null || true
+  sudo umount "$MNT/dev" 2>/dev/null || true
+  CHROOT_BOUND=0
+}
+
+if [[ -n $NODE_VERSION ]]; then
+  install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"
+  FEATURES="$FEATURES,node"
+
+  if [[ -n $GEMINI_VERSION || -n $PI_VERSION ]]; then
+    # Ensure the binds are torn down even if an npm install fails (the EXIT trap
+    # would otherwise try to umount the image while the binds still hold it).
+    bind_chroot
+    [[ -n $GEMINI_VERSION ]] && { npm_global "$MNT" "@google/gemini-cli@${GEMINI_VERSION}"; FEATURES="$FEATURES,gemini"; }
+    [[ -n $PI_VERSION ]] && { npm_global "$MNT" "@pi/agent@${PI_VERSION}"; FEATURES="$FEATURES,pi"; }
+    unbind_chroot
+  fi
+fi
+
+if [[ -n $CODEX_BIN ]]; then
+  file "$CODEX_BIN" | grep -q "ELF" || die "codex binary is not an ELF executable: $CODEX_BIN"
+  log "installing Codex $CODEX_VERSION → /usr/local/bin/codex"
+  sudo install -D -m 0755 "$CODEX_BIN" "$MNT/usr/local/bin/codex"
+  FEATURES="$FEATURES,codex"
+  ok "Codex baked ($CODEX_VERSION)"
+fi
+
+# Make sure the chroot binds are released before the unmount below.
+unbind_chroot
+
 # /etc/proteos-release — provenance the guest (and humans) can read.
 BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
@@ -288,6 +461,10 @@ PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_GUESTAGENT_VERSION=$VERSION
 PROTEOS_GUESTAGENT_FEATURES=$FEATURES
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
+PROTEOS_NODE_VERSION=${NODE_VERSION:-none}
+PROTEOS_GEMINI_VERSION=${GEMINI_VERSION:-none}
+PROTEOS_CODEX_VERSION=${CODEX_VERSION:-none}
+PROTEOS_PI_VERSION=${PI_VERSION:-none}
 PROTEOS_BUILD_AT=$BUILD_STAMP
 EOF
 
@@ -310,6 +487,12 @@ guestagent     = $VERSION
 features       = $FEATURES
 claude_version = ${CLAUDE_VERSION:-none}
 claude_sha256  = ${CLAUDE_SHA256:-none}
+node_version   = ${NODE_VERSION:-none}
+node_sha256    = ${NODE_SHA256:-none}
+gemini_version = ${GEMINI_VERSION:-none}
+codex_version  = ${CODEX_VERSION:-none}
+codex_sha256   = ${CODEX_SHA256:-none}
+pi_version     = ${PI_VERSION:-none}
 built_at       = $BUILD_STAMP
 EOF
 ok "wrote $MANIFEST"

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -12,16 +13,23 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 )
 
-// maxAPIKeyLen bounds an accepted provider key (defensive; real keys are ~100B).
-const maxAPIKeyLen = 8192
+// secretFieldView is one declared input of a provider, rendered into
+// GET /api/providers so the settings UI can build a form from data (Phase 6
+// decision #5). Names/labels/env vars are not secret — only values are.
+type secretFieldView struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	Env   string `json:"env"`
+}
 
 // providerView is one row of GET /api/providers. It deliberately exposes no
-// secret material — only whether the user has set a key (key_set).
+// secret material — only the field metadata and whether the user has set a key.
 type providerView struct {
-	Key         string `json:"key"`
-	DisplayName string `json:"display_name"`
-	Enabled     bool   `json:"enabled"`
-	KeySet      bool   `json:"key_set"`
+	Key          string            `json:"key"`
+	DisplayName  string            `json:"display_name"`
+	Enabled      bool              `json:"enabled"`
+	KeySet       bool              `json:"key_set"`
+	SecretFields []secretFieldView `json:"secret_fields"`
 }
 
 // handleListProviders returns the registry plus the caller's key_set status per
@@ -42,11 +50,16 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]providerView, 0, len(list))
 	for _, p := range list {
+		fields := make([]secretFieldView, 0, len(p.SecretFields))
+		for _, f := range p.SecretFields {
+			fields = append(fields, secretFieldView{Name: f.Name, Label: f.Label, Env: f.Env})
+		}
 		out = append(out, providerView{
-			Key:         p.Key,
-			DisplayName: p.DisplayName,
-			Enabled:     p.Enabled,
-			KeySet:      s.providerKeySet(uid, p.Key),
+			Key:          p.Key,
+			DisplayName:  p.DisplayName,
+			Enabled:      p.Enabled,
+			KeySet:       s.providerKeySet(uid, p.Key),
+			SecretFields: fields,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -63,12 +76,15 @@ func (s *Server) providerKeySet(uid, key string) bool {
 }
 
 // setProviderKeyRequest is the write-only body of PUT /api/secrets/providers/{key}.
+// Fields maps each declared field name to its value; the values are stored under
+// the user's provider secret path and never echoed.
 type setProviderKeyRequest struct {
-	APIKey string `json:"api_key"`
+	Fields map[string]string `json:"fields"`
 }
 
-// handleSetProviderKey writes (never echoes) a provider API key to the user's
-// secret path after validating the provider is registered + enabled.
+// handleSetProviderKey writes (never echoes) a provider's secret fields to the
+// user's secret path after validating the provider is registered + enabled and
+// the supplied fields match its declared schema.
 func (s *Server) handleSetProviderKey(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
@@ -87,15 +103,19 @@ func (s *Server) handleSetProviderKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	apiKey := strings.TrimSpace(req.APIKey)
-	if apiKey == "" || len(apiKey) > maxAPIKeyLen {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_key")
+	if err := prov.Validate(req.Fields); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, fieldErrorCode(err))
 		return
 	}
 
+	// Store trimmed values keyed by field name (the injector reads them by name).
+	stored := make(map[string]string, len(req.Fields))
+	for _, f := range prov.SecretFields {
+		stored[f.Name] = strings.TrimSpace(req.Fields[f.Name])
+	}
+
 	uid := uuidString(user.ID)
-	field := secretFieldFor(prov)
-	if err := s.Secrets.Put(secrets.UserProviderPath(uid, key), map[string]string{field: apiKey}); err != nil {
+	if err := s.Secrets.Put(secrets.UserProviderPath(uid, key), stored); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
@@ -106,6 +126,20 @@ func (s *Server) handleSetProviderKey(w http.ResponseWriter, r *http.Request) {
 		Target: secrets.UserProviderPath(uid, key),
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// fieldErrorCode maps a providers validation error to a stable API error code.
+func fieldErrorCode(err error) string {
+	switch {
+	case errors.Is(err, providers.ErrUnknownField):
+		return "unknown_field"
+	case errors.Is(err, providers.ErrMissingField):
+		return "missing_field"
+	case errors.Is(err, providers.ErrFieldTooLong):
+		return "field_too_long"
+	default:
+		return "invalid_fields"
+	}
 }
 
 // handleDeleteProviderKey removes the user's stored key for a provider.
@@ -133,16 +167,6 @@ func (s *Server) handleDeleteProviderKey(w http.ResponseWriter, r *http.Request)
 		Target: secrets.UserProviderPath(uid, key),
 	})
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// secretFieldFor returns the secret field the provider's single API key is
-// stored under: the one distinct field referenced by secret_env (claude →
-// "api_key"). Falls back to "api_key" if the registry has no mapping.
-func secretFieldFor(p providers.Provider) string {
-	for _, field := range p.SecretEnv {
-		return field
-	}
-	return "api_key"
 }
 
 // uuidString renders a pgtype.UUID as its canonical 36-char form (empty if the

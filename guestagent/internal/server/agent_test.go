@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -109,4 +110,47 @@ func TestPlainShellSessionUntouched(t *testing.T) {
 	readHello(t, c)
 	sendInput(t, c, "echo plain-shell-ok\n")
 	readBinaryUntil(t, c, "plain-shell-ok", 5*time.Second)
+}
+
+// TestAgentSessionDegradedClosesSetupFailed proves that when a provider's
+// setup_command failed (it is injected but degraded), launching its agent
+// session closes with CloseProviderUnavailable and the setup_failed reason —
+// distinct from the not-injected case (Phase 6 decision #3).
+func TestAgentSessionDegradedClosesSetupFailed(t *testing.T) {
+	dir := t.TempDir()
+	sec, err := secrets.New(filepath.Join(dir, "env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sec.Replace(map[string]guestwire.ProviderDef{
+		"openai": {Command: "/bin/sh", SetupCommand: "exit 3", Env: map[string]string{"OPENAI_API_KEY": "sk"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sec.AwaitSetup()
+	if !sec.Degraded("openai") {
+		t.Fatal("precondition: openai should be degraded")
+	}
+
+	mgr := term.NewManager(term.Config{Shell: "/bin/sh", ScrollbackKiB: 64})
+	t.Cleanup(mgr.Shutdown)
+	ts := httptest.NewServer(New(mgr, nil, sec).Handler())
+	t.Cleanup(ts.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, wsURL(ts, "agent-openai"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close(websocket.StatusInternalError, "")
+
+	_, _, err = c.Read(ctx)
+	if code := websocket.CloseStatus(err); code != guestwire.CloseProviderUnavailable {
+		t.Fatalf("close code = %d, want %d (err=%v)", code, guestwire.CloseProviderUnavailable, err)
+	}
+	var ce websocket.CloseError
+	if !errors.As(err, &ce) || ce.Reason != guestwire.CloseReasonSetupFailed {
+		t.Fatalf("close reason = %q, want %q (err=%v)", ce.Reason, guestwire.CloseReasonSetupFailed, err)
+	}
 }
