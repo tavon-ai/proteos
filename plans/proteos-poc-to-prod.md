@@ -474,12 +474,12 @@ of them via the gateway.
 
 ### Acceptance criteria
 
-- [ ] `providers` registry drives the available-agent list (DB-backed, no hardcoding).
-- [ ] All four providers (`claude`, `gemini`, `openai`, `pi`) are registered with their
+- [x] `providers` registry drives the available-agent list (DB-backed, no hardcoding).
+- [x] All four providers (`claude`, `gemini`, `openai`, `pi`) are registered with their
       required secret keys and launch commands.
-- [ ] Each provider's key is stored/injected via the OpenBao path from Phase 5.
-- [ ] User can launch each of the four agents in their machine from the UI.
-- [ ] Adding a hypothetical 5th provider requires only a registry entry + template,
+- [x] Each provider's key is stored/injected via the OpenBao path from Phase 5.
+- [x] User can launch each of the four agents in their machine from the UI.
+- [x] Adding a hypothetical 5th provider requires only a registry entry + template,
       no control-plane code change (verified by design/review).
 
 ---
