@@ -25,10 +25,10 @@ type MachineSummary struct {
 	CreatedAt    string          `json:"created_at"`
 
 	// Phase 4: persistent disk + hibernate/resume.
-	Boot     *string          `json:"boot"`              // "cold" | "resumed" | null
-	DiskID   *string          `json:"disk_id"`           // null if not yet provisioned
-	DiskMiB  *int             `json:"disk_mib"`          // attached disk size
-	Snapshot *SnapshotSummary `json:"snapshot"`          // present only when hibernated
+	Boot     *string          `json:"boot"`     // "cold" | "resumed" | null
+	DiskID   *string          `json:"disk_id"`  // null if not yet provisioned
+	DiskMiB  *int             `json:"disk_mib"` // attached disk size
+	Snapshot *SnapshotSummary `json:"snapshot"` // present only when hibernated
 }
 
 // SnapshotSummary is the current hibernation snapshot metadata in the API.
