@@ -210,11 +210,17 @@ npm_global() {
 
 # install_git MNT — ensure git is present in the image (Phase 7). The guest needs
 # a real git binary for clone/commit/push; the ProteOS credential helper is the
-# guestagent binary, wired via gitconfig at runtime (no secret is baked). This is
-# idempotent: if the base already ships git it records the version and returns;
-# otherwise it installs it via apt inside the chroot (needs the /dev,/proc,/sys
-# binds the caller set up and the baked resolv.conf for registry DNS). Sets
-# GIT_VERSION.
+# guestagent binary, wired via gitconfig at runtime (no secret is baked).
+#
+# The firecracker-CI base is slimmed and carries NO dpkg metadata, so a plain
+# `apt-get install git` thinks nothing is installed and reinstalls git's entire
+# dependency closure — libc6, perl, dpkg, tar … — over files that already exist,
+# running every maintainer script (ldconfig, systemd timers, triggers). That
+# perturbation destabilises the image and breaks the Phase 4 hibernate/resume
+# cycle (observed on the KVM gate). So instead we let apt only DOWNLOAD the
+# closure, then lay down — with `dpkg-deb -x`, running no scripts — only the
+# packages whose files are genuinely missing from the base. Idempotent: if the
+# base already ships git it records the version and returns. Sets GIT_VERSION.
 install_git() {
   local mnt="$1"
   if sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v git' >/dev/null 2>&1; then
@@ -222,24 +228,57 @@ install_git() {
     ok "git already present in base (${GIT_VERSION:-unknown})"
     return
   fi
-  log "installing git via apt (chroot)"
+  command -v dpkg-deb >/dev/null || die "dpkg-deb required on the build host to lay down git"
+
+  log "installing git (apt download + extract-only; avoids reinstalling base packages)"
   # apt drops privileges to the _apt sandbox user to fetch, but in a loop-mounted
   # chroot that user often cannot create temp files under /tmp — which breaks
   # apt-key and makes every repo look "not signed". Disable the sandbox so apt
-  # runs as root (APT::Sandbox::User=root) and retry transient network errors.
+  # runs as root, and recreate the apt cache/list/log dirs the slimmed base
+  # stripped (else apt fails on a missing ".../partial" or "/var/log/apt/").
   local apt_opts='-o APT::Sandbox::User=root -o Acquire::Retries=3'
-  # The CI base squashfs is slimmed: its apt cache/list dirs (incl. the partial/
-  # subdirs apt downloads into) AND /var/log are stripped. Recreate them, plus
-  # /tmp, before fetching — otherwise apt/dpkg fail on a missing
-  # ".../partial" dir, and apt exits non-zero at the end on a missing
-  # "/var/log/apt/" even after the packages install cleanly.
   sudo chroot "$mnt" /usr/bin/env \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
     sh -c "mkdir -p /tmp /var/log /var/log/apt /var/cache/apt/archives/partial /var/lib/apt/lists/partial && \
-      apt-get $apt_opts update -qq && apt-get $apt_opts install -y --no-install-recommends git ca-certificates" \
-    || die "apt-get install git failed (the base image needs working apt sources + network; set proteos_git_install=false / pass --no-git to skip)"
+      apt-get $apt_opts update -qq && apt-get $apt_opts -d install -y --no-install-recommends git ca-certificates" \
+    || die "apt-get download of git failed (the base image needs working apt sources + network; set proteos_git_install=false / pass --no-git to skip)"
+
+  # Lay down only the missing packages, running no maintainer scripts.
+  local cache="$mnt/var/cache/apt/archives" laid=0
+  for deb in "$cache"/*.deb; do
+    [[ -e $deb ]] || continue
+    # Core packages that are guaranteed present in any bootable base and must
+    # never be overwritten (their reinstall is what breaks resume).
+    case "$(basename "$deb")" in
+      libc6_* | libc-bin_* | libcrypt1_* | libgcc-s1_* | gcc-*-base_* | \
+        perl_* | perl-base_* | perl-modules-* | debconf_* | dpkg_* | tar_*)
+        continue
+        ;;
+    esac
+    # For the rest, probe a binary/library the package ships; if it already
+    # exists in the base the package is effectively present, so skip it.
+    local probe
+    probe="$(dpkg-deb -c "$deb" | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1)"
+    probe="${probe#.}"
+    if [[ -n $probe && -e "$mnt$probe" ]]; then
+      continue
+    fi
+    sudo dpkg-deb -x "$deb" "$mnt"
+    laid=$((laid + 1))
+  done
+  sudo rm -f "$cache"/*.deb
+  log "git: laid down $laid package(s) missing from the base"
+
+  # ca-certificates extract-only ships the cert sources but not the merged bundle
+  # git uses for HTTPS; build it once (touches only /etc/ssl/certs, no scripts).
+  if [[ -x "$mnt/usr/sbin/update-ca-certificates" && ! -s "$mnt/etc/ssl/certs/ca-certificates.crt" ]]; then
+    sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      update-ca-certificates >/dev/null 2>&1 || true
+  fi
+
   GIT_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin git --version 2>/dev/null | awk '{print $3}')"
-  ok "git installed (${GIT_VERSION:-unknown})"
+  [[ -n $GIT_VERSION ]] || die "git extract-only install failed: git not runnable in the image (try a base that ships git, or proteos_git_install=false)"
+  ok "git installed (${GIT_VERSION})"
 }
 
 # npm_spec PKG VERSION — "pkg@version" if pinned, else "pkg" (npm resolves latest).
