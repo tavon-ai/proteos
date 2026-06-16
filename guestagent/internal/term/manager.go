@@ -23,21 +23,31 @@ func NewManager(defaults Config) *Manager {
 
 // Get returns the live session for name, creating it (and its shell) if absent.
 // The returned session is guaranteed live at return; if its shell exits later,
-// it is auto-removed and the following Get spawns a fresh one.
-func (m *Manager) Get(name string) (*Session, error) {
+// it is auto-removed and the following Get spawns a fresh one. A non-empty dir
+// overrides the default working directory for a freshly-created session (Phase 9
+// decision #3); it is ignored when name already has a live session (the working
+// directory is fixed at spawn time).
+func (m *Manager) Get(name, dir string) (*Session, error) {
 	cfg := m.defaults
 	cfg.Name = name
+	if dir != "" {
+		cfg.Dir = dir
+	}
 	return m.getOrCreate(name, cfg)
 }
 
 // GetAgent returns the live agent session for name, creating it if absent by
 // spawning command (argv) with env overlaid on the manager's base environment
 // instead of the login shell (Phase 5 decision #9). Like Get, the session
-// outlives connections and is auto-removed when the command exits.
-func (m *Manager) GetAgent(name string, command []string, env []string) (*Session, error) {
+// outlives connections and is auto-removed when the command exits. A non-empty
+// dir overrides the default working directory for a freshly-created session.
+func (m *Manager) GetAgent(name string, command []string, env []string, dir string) (*Session, error) {
 	cfg := m.defaults
 	cfg.Name = name
 	cfg.Command = command
+	if dir != "" {
+		cfg.Dir = dir
+	}
 	// Overlay the provider env on top of the base (home) env; later entries win.
 	cfg.Env = append(append([]string{}, m.defaults.Env...), env...)
 	return m.getOrCreate(name, cfg)

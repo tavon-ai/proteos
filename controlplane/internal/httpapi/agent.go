@@ -57,6 +57,14 @@ func (s *Server) handleGatewayAgent(w http.ResponseWriter, r *http.Request) {
 
 	machineID := machine.UUIDString(m.ID)
 
+	// Working directory (Phase 9 decision #3): validate ?cwd= against the
+	// machine's listable projects so the agent CLI launches in the repo folder.
+	cwd, errCode := s.resolveSessionCwd(r.Context(), machineID, r.URL.Query().Get(guestwire.QueryParamCwd))
+	if errCode != "" {
+		writeError(w, cwdErrorStatus(errCode), errCode)
+		return
+	}
+
 	// Idempotent push before launch, so the guest has the latest key even if the
 	// poller's start-time injection has not run (or failed) yet. Synchronous here
 	// because the agent session about to spawn depends on it; a failure aborts the
@@ -75,10 +83,21 @@ func (s *Server) handleGatewayAgent(w http.ResponseWriter, r *http.Request) {
 		Target: providerKey,
 	})
 
+	// The session name is now an opaque per-window id (decision #3); the provider
+	// travels as its own handshake parameter rather than being encoded into the
+	// session name. An absent ?session= falls back to the legacy "agent-<key>"
+	// name so a pre-Phase-9 client still reconnects to its session.
+	session := r.URL.Query().Get(guestwire.QueryParamSession)
+	if session == "" {
+		session = agentSessionName(providerKey)
+	}
+
 	s.Gateway.Serve(w, r, gateway.ServeOpts{
 		MachineID: machineID,
 		SessionID: sessionID,
-		Session:   agentSessionName(providerKey),
+		Session:   session,
+		Provider:  providerKey,
+		Cwd:       cwd,
 		Refresh: func(ctx context.Context) (bool, error) {
 			mm, err := s.Machines.GetByID(ctx, m.ID)
 			if err != nil {

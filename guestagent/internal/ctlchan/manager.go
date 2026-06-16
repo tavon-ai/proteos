@@ -29,6 +29,16 @@ const credCacheTTL = 60 * time.Second
 // cloneTimeout bounds a single git clone.
 const cloneTimeout = 10 * time.Minute
 
+// KV is the machine-SQLite key/value surface the control channel exposes over
+// kv.get/kv.set (Phase 9 decision #6). *persist.Persist satisfies it; nil ⇒ the
+// machine has no persistent disk, so kv.get reports absent and kv.set is a no-op
+// (layout simply does not persist on a diskless stack — same gating note as the
+// projects/clone criteria).
+type KV interface {
+	Get(key string) (value string, ok bool)
+	Set(key, value string) error
+}
+
 // Manager owns the single live control channel for this guest and serves the
 // credential lookups the local helper socket relays. The control plane dials
 // HandleControl; while connected, Credential can resolve git tokens over it.
@@ -36,6 +46,7 @@ type Manager struct {
 	homeDir string
 	workDir string
 	owner   runas.Identity // unprivileged user that clones run as / owns ~/.gitconfig
+	kv      KV             // machine SQLite kv (Phase 9); nil ⇒ no persistence
 
 	mu     sync.Mutex
 	active *conn
@@ -51,11 +62,12 @@ type credEntry struct {
 
 // New builds a Manager. env is the guest shell environment (persist.ShellEnv):
 // HOME=... and PROTEOS_WORKSPACE=... determine where ~/.gitconfig is written and
-// where clones land. Sensible defaults apply when either is absent.
-func New(env []string, owner runas.Identity) *Manager {
+// where clones land. Sensible defaults apply when either is absent. kv is the
+// machine SQLite key/value store backing kv.get/kv.set (nil ⇒ no persistence).
+func New(env []string, owner runas.Identity, kv KV) *Manager {
 	home, work := "/root", "/workspace"
-	for _, kv := range env {
-		k, v, ok := strings.Cut(kv, "=")
+	for _, kvp := range env {
+		k, v, ok := strings.Cut(kvp, "=")
 		if !ok {
 			continue
 		}
@@ -66,7 +78,7 @@ func New(env []string, owner runas.Identity) *Manager {
 			work = v
 		}
 	}
-	return &Manager{homeDir: home, workDir: work, owner: owner, cache: map[string]credEntry{}}
+	return &Manager{homeDir: home, workDir: work, owner: owner, kv: kv, cache: map[string]credEntry{}}
 }
 
 // HandleControl upgrades GET /control and serves the control channel until the
@@ -137,6 +149,43 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		}
 		go m.runClone(p)
 		return nil, nil // immediate ack; completion arrives as git.clone.done
+
+	case guestwire.OpProjectsList:
+		projects, err := m.listProjects(ctx)
+		if err != nil {
+			slog.Error("control: projects.list failed", "err", err)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "list failed"}
+		}
+		return mustJSON(guestwire.ProjectsListResponse{Projects: projects}), nil
+
+	case guestwire.OpKVGet:
+		var p guestwire.KVGetPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Key == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "bad payload"}
+		}
+		var resp guestwire.KVGetResponse
+		if m.kv != nil {
+			if v, ok := m.kv.Get(p.Key); ok {
+				resp.Value = &v
+			}
+		}
+		return mustJSON(resp), nil
+
+	case guestwire.OpKVSet:
+		var p guestwire.KVSetPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Key == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "bad payload"}
+		}
+		// A nil kv (no disk) is a deliberate no-op: layout does not persist on a
+		// diskless stack, but the write must still ack so the desktop's debounced
+		// save does not surface an error every keystroke.
+		if m.kv != nil {
+			if err := m.kv.Set(p.Key, p.Value); err != nil {
+				slog.Error("control: kv.set failed", "key", p.Key, "err", err)
+				return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "set failed"}
+			}
+		}
+		return mustJSON(guestwire.KVSetResponse{OK: true}), nil
 
 	default:
 		slog.Warn("control: unknown op", "op", op)

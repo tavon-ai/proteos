@@ -8,7 +8,20 @@ import (
 	"net/url"
 
 	"github.com/coder/websocket"
+
+	guestwire "github.com/tavon/proteos/guestagent/api"
 )
+
+// guestHandshake carries the per-session parameters the gateway forwards to the
+// guest /terminal endpoint: the opaque session name, the validated working
+// directory (cwd), and — for agent sessions — the provider key. All are
+// forwarded verbatim from the browser request (after the control plane has
+// validated them); the guest re-validates cwd before use (Phase 9 decision #3).
+type guestHandshake struct {
+	session  string
+	cwd      string
+	provider string
+}
 
 // dialGuestWS speaks the WebSocket client handshake to the guest agent's
 // /terminal endpoint over an already-established raw tunnel conn (the
@@ -16,10 +29,10 @@ import (
 // transport returns the tunnel for its single connection, with keep-alives off
 // so the client never tries to reuse or re-dial it.
 //
-// The session name is forwarded opaquely from the browser request; the guest
-// validates it. A handshake failure (e.g. the guest rejected the session)
-// surfaces as an error the caller maps to an internal close.
-func dialGuestWS(ctx context.Context, tunnel net.Conn, session string) (*websocket.Conn, error) {
+// The handshake parameters are forwarded opaquely from the browser request; the
+// guest validates them. A handshake failure (e.g. the guest rejected the
+// session or cwd) surfaces as an error the caller maps to an internal close.
+func dialGuestWS(ctx context.Context, tunnel net.Conn, hs guestHandshake) (*websocket.Conn, error) {
 	used := false
 	transport := &http.Transport{
 		DisableKeepAlives: true,
@@ -33,9 +46,19 @@ func dialGuestWS(ctx context.Context, tunnel net.Conn, session string) (*websock
 	}
 	httpClient := &http.Client{Transport: transport}
 
+	q := url.Values{}
+	if hs.session != "" {
+		q.Set(guestwire.QueryParamSession, hs.session)
+	}
+	if hs.cwd != "" {
+		q.Set(guestwire.QueryParamCwd, hs.cwd)
+	}
+	if hs.provider != "" {
+		q.Set(guestwire.QueryParamProvider, hs.provider)
+	}
 	u := "ws://guest/terminal"
-	if session != "" {
-		u += "?session=" + url.QueryEscape(session)
+	if len(q) > 0 {
+		u += "?" + q.Encode()
 	}
 	c, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: httpClient})
 	if err != nil {

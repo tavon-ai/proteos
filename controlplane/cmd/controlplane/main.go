@@ -240,6 +240,8 @@ func run(migrate, migrateOnly bool) error {
 		srv.GitChannel = guestCtl
 		srv.GitHost = cfg.GitHost
 		srv.GitHubAppSlug = cfg.GitHubAppSlug
+		// Phase 9: the same control-channel manager backs projects.list + kv.*.
+		srv.Projects = guestCtl
 	}
 
 	httpServer := &http.Server{

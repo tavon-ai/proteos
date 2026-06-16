@@ -341,6 +341,62 @@ func (m *Manager) Clone(ctx context.Context, machineID, url, dest, opID string) 
 	return err
 }
 
+// ListProjects asks the guest to scan its workspace and return the cloned repos
+// (Phase 9 decision #4). The disk is the source of truth; the CP holds no
+// project table. ErrNoChannel if the machine has no live channel.
+func (m *Manager) ListProjects(ctx context.Context, machineID string) ([]guestwire.Project, error) {
+	c := m.getConn(machineID)
+	if c == nil {
+		return nil, ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	raw, err := c.request(rctx, guestwire.OpProjectsList, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var resp guestwire.ProjectsListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Projects, nil
+}
+
+// KVGet reads a value from the machine's SQLite kv table over the channel
+// (Phase 9 decision #6). A nil return with nil error means the key is unset.
+// ErrNoChannel if the machine has no live channel.
+func (m *Manager) KVGet(ctx context.Context, machineID, key string) (*string, error) {
+	c := m.getConn(machineID)
+	if c == nil {
+		return nil, ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	raw, err := c.request(rctx, guestwire.OpKVGet, guestwire.KVGetPayload{Key: key})
+	if err != nil {
+		return nil, err
+	}
+	var resp guestwire.KVGetResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Value, nil
+}
+
+// KVSet writes a value into the machine's SQLite kv table over the channel. On a
+// diskless stack the guest acks but does not persist (the desktop's debounced
+// save must not error). ErrNoChannel if the machine has no live channel.
+func (m *Manager) KVSet(ctx context.Context, machineID, key, value string) error {
+	c := m.getConn(machineID)
+	if c == nil {
+		return ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	_, err := c.request(rctx, guestwire.OpKVSet, guestwire.KVSetPayload{Key: key, Value: value})
+	return err
+}
+
 // HasChannel reports whether a live channel exists for the machine.
 func (m *Manager) HasChannel(machineID string) bool { return m.getConn(machineID) != nil }
 

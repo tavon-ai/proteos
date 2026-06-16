@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	guestwire "github.com/tavon/proteos/guestagent/api"
 	agentapi "github.com/tavon/proteos/nodeagent/api"
 )
 
@@ -217,7 +218,17 @@ func (mw *MachineWeb) handleAuth(w http.ResponseWriter, r *http.Request, machine
 		Partitioned: true,
 		Expires:     time.Now().Add(machineCookieTTL),
 	})
-	http.Redirect(w, r, "/", http.StatusFound)
+	// Phase 9: open code-server directly on the project folder when the token
+	// carries one (decision #5). The folder was validated against the listable
+	// project set at mint time; re-check the /workspace prefix as cheap defence
+	// before reflecting it into the redirect.
+	target := "/"
+	if tok.Folder != "" {
+		if clean, ok := guestwire.CleanWorkdir(tok.Folder); ok {
+			target = "/?" + url.Values{"folder": {clean}}.Encode()
+		}
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // handleProxy re-validates the cookie, parent session, and ownership on every
@@ -356,12 +367,13 @@ func (c *registeredConn) Close() error {
 // MintWebSessionURL builds the m-<uuid>.<domain>/__proteos/auth?token=… URL the
 // SPA navigates the editor frame to. scheme is the external scheme of the main
 // origin. It is the gateway's half of POST /api/machine/web-session.
-func (mw *MachineWeb) MintWebSessionURL(scheme, machineID, sessionID, userID string) string {
+func (mw *MachineWeb) MintWebSessionURL(scheme, machineID, sessionID, userID, folder string) string {
 	tok := signMachineToken(mw.cfg.SigningKey, machineToken{
 		MachineID: machineID,
 		UserID:    userID,
 		SessionID: sessionID,
 		Exp:       time.Now().Add(webTokenTTL).Unix(),
+		Folder:    folder,
 	})
 	u := url.URL{
 		Scheme:   scheme,

@@ -16,7 +16,9 @@ package guestwire
 
 import (
 	"encoding/json"
+	"path"
 	"regexp"
+	"strings"
 )
 
 // FrameType is the discriminator of a text (JSON) control frame.
@@ -151,7 +153,58 @@ const (
 	OpGitClone      = "git.clone"      // CP → guest (acked; completion via OpGitCloneDone)
 	OpGitCloneDone  = "git.clone.done" // guest → CP (completion notification)
 	OpGitCredential = "git.credential" // guest → CP
+
+	// Phase 9 (CP → guest). projects.list scans the workspace for git repos;
+	// kv.get/kv.set read and write the machine SQLite kv table (the desktop
+	// layout). All three act only on THIS machine's own disk — the authorization
+	// context is the machine id from the dial, never the payload (decision #4/#6).
+	OpProjectsList = "projects.list" // CP → guest (resp: ProjectsListResponse)
+	OpKVGet        = "kv.get"        // CP → guest (resp: KVGetResponse)
+	OpKVSet        = "kv.set"        // CP → guest (resp: KVSetResponse)
 )
+
+// Project is one cloned repository under WorkspaceRoot, as returned by
+// projects.list. Times are RFC3339 (empty when unknown, e.g. an empty repo).
+type Project struct {
+	Name          string `json:"name"`                      // directory name under WorkspaceRoot
+	Path          string `json:"path"`                      // absolute path (WorkspaceRoot/Name)
+	Remote        string `json:"remote,omitempty"`          // origin remote URL (no credential)
+	Branch        string `json:"branch,omitempty"`          // current branch (or detached HEAD sha)
+	Dirty         bool   `json:"dirty"`                     // working tree has uncommitted changes
+	LastCommitAt  string `json:"last_commit_at,omitempty"`  // RFC3339 of HEAD commit
+	LastCommitMsg string `json:"last_commit_msg,omitempty"` // HEAD commit subject line
+}
+
+// ProjectsListResponse is the resp payload of projects.list.
+type ProjectsListResponse struct {
+	Projects []Project `json:"projects"`
+}
+
+// KVGetPayload is the req payload of kv.get.
+type KVGetPayload struct {
+	Key string `json:"key"`
+}
+
+// KVGetResponse is the resp payload of kv.get. Value is nil (JSON null) when the
+// key is absent, distinguishing "unset" from an empty-string value.
+type KVGetResponse struct {
+	Value *string `json:"value"`
+}
+
+// KVSetPayload is the req payload of kv.set.
+type KVSetPayload struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// KVSetResponse is the resp payload of kv.set.
+type KVSetResponse struct {
+	OK bool `json:"ok"`
+}
+
+// KeyDesktopLayout is the kv key under which the React desktop stores its
+// serialized window layout (Phase 9 decision #6).
+const KeyDesktopLayout = "desktop.layout"
 
 // ControlError codes (the Code field of an err frame's ControlErrorPayload).
 const (
@@ -319,4 +372,53 @@ var sessionNameRe = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 // validating.
 func ValidSessionName(name string) bool {
 	return sessionNameRe.MatchString(name)
+}
+
+// Terminal/agent WebSocket query parameters (Phase 9 decision #3). The session
+// name is an opaque per-window identifier; the working directory and (for agent
+// sessions) the provider travel as their own handshake parameters rather than
+// being encoded into the session name. The control-plane gateway forwards these
+// verbatim from the browser leg to the guest leg.
+const (
+	// QueryParamSession is the opaque per-window session id (^[a-z0-9-]{1,32}$).
+	QueryParamSession = "session"
+	// QueryParamCwd is the absolute working directory a session starts in; it
+	// must be WorkspaceRoot or nested under it. Absent ⇒ the session user $HOME.
+	QueryParamCwd = "cwd"
+	// QueryParamProvider names the provider whose injected launch command an
+	// agent session should spawn. Absent ⇒ a plain login shell (a terminal). It
+	// replaces the legacy "agent-<provider>" session-name encoding so the session
+	// name can stay opaque (decision #3).
+	QueryParamProvider = "provider"
+)
+
+// WorkspaceRoot is the directory under which cloned projects live and the only
+// subtree a session's working directory (cwd) may point into. A session's cwd
+// is validated against this prefix by both the control plane (against the
+// listable project set) and the guest (prefix + existence) — defence in depth.
+const WorkspaceRoot = "/workspace"
+
+// CleanWorkdir validates a requested session working directory against the
+// production WorkspaceRoot. See CleanWorkdirUnder.
+func CleanWorkdir(dir string) (string, bool) {
+	return CleanWorkdirUnder(dir, WorkspaceRoot)
+}
+
+// CleanWorkdirUnder validates a requested session working directory against an
+// arbitrary root. It returns the lexically cleaned path and whether it is
+// acceptable: a non-empty path that cleans to root or a path nested under it. It
+// performs NO filesystem access (it is shared with the control plane, which must
+// not stat the guest's disk); the guest additionally checks the directory exists
+// before use. The root parameter exists so tests can validate against a temp
+// tree; production callers use WorkspaceRoot via CleanWorkdir.
+func CleanWorkdirUnder(dir, root string) (string, bool) {
+	if dir == "" {
+		return "", false
+	}
+	root = path.Clean(root)
+	clean := path.Clean(dir)
+	if clean == root || strings.HasPrefix(clean, root+"/") {
+		return clean, true
+	}
+	return "", false
 }

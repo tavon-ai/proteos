@@ -22,6 +22,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -85,6 +86,11 @@ type Server struct {
 	persist Persister
 	sec     SecretStore
 	control Controller
+
+	// workspaceRoot is the directory tree a session's cwd must point into. Empty
+	// ⇒ guestwire.WorkspaceRoot (production). Tests set it to a temp dir to
+	// exercise cwd plumbing without a real /workspace.
+	workspaceRoot string
 }
 
 // New returns a Server backed by mgr and (optionally) persist + sec + control.
@@ -181,7 +187,8 @@ func writeJSONResp(w http.ResponseWriter, v any) {
 }
 
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
-	sessionName := r.URL.Query().Get("session")
+	q := r.URL.Query()
+	sessionName := q.Get(guestwire.QueryParamSession)
 	if sessionName == "" {
 		sessionName = guestwire.DefaultSession
 	}
@@ -189,6 +196,18 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid session name", http.StatusBadRequest)
 		return
 	}
+
+	// Working directory (Phase 9 decision #3). Absent ⇒ the session user $HOME
+	// (existing behavior). Present ⇒ canonicalize, require the /workspace prefix,
+	// and require an existing directory. The guest is not a trust boundary (it
+	// acts with the owner's authority), but this is cheap defence in depth atop
+	// the control plane's listable-project check.
+	cwd, err := s.resolveCwd(q.Get(guestwire.QueryParamCwd))
+	if err != nil {
+		http.Error(w, "invalid cwd", http.StatusBadRequest)
+		return
+	}
+	provider := q.Get(guestwire.QueryParamProvider)
 
 	// Not browser-facing (see package doc): skip Origin verification.
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
@@ -198,9 +217,33 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	c.SetReadLimit(readLimit)
 
-	if err := s.serve(r.Context(), c, sessionName); err != nil {
+	if err := s.serve(r.Context(), c, sessionName, provider, cwd); err != nil {
 		slog.Debug("terminal: session ended", "session", sessionName, "err", err)
 	}
+}
+
+// resolveCwd validates a requested working directory from the handshake. An
+// empty request yields an empty result (⇒ the manager's default dir). A
+// non-empty request must clean to a path under WorkspaceRoot (guestwire.
+// CleanWorkdir) and name an existing directory on the guest disk; otherwise it
+// is an error the caller maps to 400.
+func (s *Server) resolveCwd(req string) (string, error) {
+	if req == "" {
+		return "", nil
+	}
+	root := s.workspaceRoot
+	if root == "" {
+		root = guestwire.WorkspaceRoot
+	}
+	clean, ok := guestwire.CleanWorkdirUnder(req, root)
+	if !ok {
+		return "", errors.New("cwd outside workspace")
+	}
+	info, err := os.Stat(clean)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("cwd is not an existing directory")
+	}
+	return clean, nil
 }
 
 // errProviderUnavailable is returned by sessionFor when an agent session names a
@@ -214,17 +257,25 @@ var errProviderUnavailable = errors.New("provider unavailable")
 // CloseReasonSetupFailed reason so the browser can show an actionable message.
 var errSetupFailed = errors.New("provider setup failed")
 
-// sessionFor resolves a session name to a live Session. Plain names spawn the
-// login shell (Manager.Get); names with the agent- prefix spawn the named
-// provider's injected launch command with its secret env overlay. An agent
+// sessionFor resolves a session name to a live Session, starting it in dir (the
+// validated working directory; empty ⇒ the manager default). The session is an
+// agent session when provider is non-empty (Phase 9 decision #3) or — for
+// backward compatibility — when the opaque name still carries the legacy
+// "agent-<provider>" prefix; otherwise it is a plain login shell. An agent
 // session for an un-injected provider returns errProviderUnavailable; for a
 // degraded (setup-failed) provider it returns errSetupFailed. For providers with
 // a setup_command it first waits for that command to settle, so the launch
 // decision sees a deterministic outcome rather than racing the async setup.
-func (s *Server) sessionFor(ctx context.Context, name string) (*term.Session, error) {
-	key, isAgent := guestwire.ProviderKeyFromSession(name)
-	if !isAgent {
-		return s.mgr.Get(name)
+func (s *Server) sessionFor(ctx context.Context, name, provider, dir string) (*term.Session, error) {
+	key := provider
+	if key == "" {
+		// Legacy encoding: provider key in the session name (pre-Phase-9 clients).
+		if k, isAgent := guestwire.ProviderKeyFromSession(name); isAgent {
+			key = k
+		}
+	}
+	if key == "" {
+		return s.mgr.Get(name, dir)
 	}
 	if s.sec == nil {
 		return nil, errProviderUnavailable
@@ -242,16 +293,16 @@ func (s *Server) sessionFor(ctx context.Context, name string) (*term.Session, er
 		return nil, errProviderUnavailable
 	}
 	env, _ := s.sec.EnvList(key)
-	return s.mgr.GetAgent(name, command, env)
+	return s.mgr.GetAgent(name, command, env, dir)
 }
 
 // serve runs one attachment: hello → scrollback replay → live I/O until the
 // shell exits, the client disconnects, or an error occurs.
-func (s *Server) serve(ctx context.Context, c *websocket.Conn, sessionName string) error {
+func (s *Server) serve(ctx context.Context, c *websocket.Conn, sessionName, provider, cwd string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	sess, err := s.sessionFor(ctx, sessionName)
+	sess, err := s.sessionFor(ctx, sessionName, provider, cwd)
 	if err != nil {
 		switch {
 		case errors.Is(err, errSetupFailed):

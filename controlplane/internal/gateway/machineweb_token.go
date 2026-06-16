@@ -26,7 +26,8 @@ type machineToken struct {
 	MachineID string `json:"m"`
 	UserID    string `json:"u"`
 	SessionID string `json:"s"`
-	Exp       int64  `json:"e"` // unix seconds
+	Exp       int64  `json:"e"`           // unix seconds
+	Folder    string `json:"f,omitempty"` // Phase 9: validated open-folder path (/workspace/<repo>)
 }
 
 // machineCookie is the subdomain-scoped editor cookie value (signed). It carries

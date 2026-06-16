@@ -41,7 +41,7 @@ func TestSessionEcho(t *testing.T) {
 	m := testManager()
 	defer m.Shutdown()
 
-	s, err := m.Get("main")
+	s, err := m.Get("main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestDetachedOutputCaptured(t *testing.T) {
 	m := testManager()
 	defer m.Shutdown()
 
-	s, err := m.Get("main")
+	s, err := m.Get("main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestSessionResize(t *testing.T) {
 	m := testManager()
 	defer m.Shutdown()
 
-	s, err := m.Get("main")
+	s, err := m.Get("main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestSessionExitDetection(t *testing.T) {
 	m := testManager()
 	defer m.Shutdown()
 
-	s, err := m.Get("main")
+	s, err := m.Get("main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestConcurrentAttaches(t *testing.T) {
 	m := testManager()
 	defer m.Shutdown()
 
-	s, err := m.Get("main")
+	s, err := m.Get("main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestManagerRespawnsAfterExit(t *testing.T) {
 	m := testManager()
 	defer m.Shutdown()
 
-	s1, err := m.Get("main")
+	s1, err := m.Get("main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestManagerRespawnsAfterExit(t *testing.T) {
 	// Give the auto-remove goroutine a moment, then Get must return a fresh one.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		s2, err := m.Get("main")
+		s2, err := m.Get("main", "")
 		if err != nil {
 			t.Fatal(err)
 		}

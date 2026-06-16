@@ -197,6 +197,11 @@ func TestMachineWebAuthHandlerSetsCookie(t *testing.T) {
 	if set.SameSite != http.SameSiteNoneMode || !set.HttpOnly {
 		t.Errorf("cookie attrs = SameSite %v HttpOnly %v; want None + HttpOnly", set.SameSite, set.HttpOnly)
 	}
+	// No folder in the token ⇒ redirect to the editor root.
+	if loc := resp.Header.Get("Location"); loc != "/" {
+		t.Errorf("no-folder redirect = %q, want /", loc)
+	}
+
 	// A bad token is 403.
 	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/__proteos/auth?token=garbage", nil)
 	req2.Host = "m-" + testMachineID + ".localhost"
@@ -207,6 +212,50 @@ func TestMachineWebAuthHandlerSetsCookie(t *testing.T) {
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusForbidden {
 		t.Fatalf("bad-token status = %d, want 403", resp2.StatusCode)
+	}
+}
+
+// TestMachineWebAuthRedirectsToFolder verifies a token carrying a validated
+// project folder redirects code-server to /?folder=<path> (Phase 9 decision #5).
+func TestMachineWebAuthRedirectsToFolder(t *testing.T) {
+	mw, _ := newTestMachineWeb(t, stubBackend(t), fakeSessions{owner: "u1", alive: true}, fakeMachines{owner: "u1", running: true, exists: true})
+	srv := httptest.NewServer(mw)
+	defer srv.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	tok := signMachineToken(testKey, machineToken{
+		MachineID: testMachineID, UserID: "u1", SessionID: "s1",
+		Exp: time.Now().Add(30 * time.Second).Unix(), Folder: "/workspace/myrepo",
+	})
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/__proteos/auth?token="+tok, nil)
+	req.Host = "m-" + testMachineID + ".localhost"
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/?folder=%2Fworkspace%2Fmyrepo" {
+		t.Errorf("folder redirect = %q, want /?folder=%%2Fworkspace%%2Fmyrepo", loc)
+	}
+
+	// A folder outside /workspace in the token is ignored (defence in depth): the
+	// redirect falls back to the editor root rather than reflecting a bad path.
+	bad := signMachineToken(testKey, machineToken{
+		MachineID: testMachineID, UserID: "u1", SessionID: "s1",
+		Exp: time.Now().Add(30 * time.Second).Unix(), Folder: "/etc",
+	})
+	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/__proteos/auth?token="+bad, nil)
+	req2.Host = "m-" + testMachineID + ".localhost"
+	resp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if loc := resp2.Header.Get("Location"); loc != "/" {
+		t.Errorf("bad-folder redirect = %q, want / (ignored)", loc)
 	}
 }
 

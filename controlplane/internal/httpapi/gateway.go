@@ -6,6 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	guestwire "github.com/tavon/proteos/guestagent/api"
+
 	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -43,10 +45,20 @@ func (s *Server) handleGatewayTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineID := machine.UUIDString(m.ID)
+
+	// Working directory (Phase 9 decision #3): validate ?cwd= against the
+	// machine's listable projects before forwarding it to the guest handshake.
+	cwd, errCode := s.resolveSessionCwd(r.Context(), machineID, r.URL.Query().Get(guestwire.QueryParamCwd))
+	if errCode != "" {
+		writeError(w, cwdErrorStatus(errCode), errCode)
+		return
+	}
+
 	s.Gateway.Serve(w, r, gateway.ServeOpts{
 		MachineID: machineID,
 		SessionID: sessionID,
-		Session:   r.URL.Query().Get("session"),
+		Session:   r.URL.Query().Get(guestwire.QueryParamSession),
+		Cwd:       cwd,
 		Refresh: func(ctx context.Context) (bool, error) {
 			mm, err := s.Machines.GetByID(ctx, m.ID)
 			if err != nil {

@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/tavon/proteos/controlplane/internal/gateway"
@@ -35,8 +37,46 @@ func (s *Server) handleWebSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineID := machine.UUIDString(m.ID)
-	url := s.MachineWeb.MintWebSessionURL(externalScheme(r), machineID, sessionID, machine.UUIDString(user.ID))
+
+	// Phase 9 decision #5: an optional {folder} opens code-server directly on a
+	// project. It is validated against the machine's listable projects (the same
+	// check as a session cwd); absent ⇒ the workspace root (Phase 8 behavior).
+	folder, ok := s.webSessionFolder(w, r, machineID)
+	if !ok {
+		return
+	}
+
+	url := s.MachineWeb.MintWebSessionURL(externalScheme(r), machineID, sessionID, machine.UUIDString(user.ID), folder)
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+}
+
+// webSessionFolder decodes the optional {folder} from the request body and
+// validates it against the machine's listable projects. It returns the validated
+// folder ("" when absent) and ok=false (after writing 400 bad_folder) when a
+// supplied folder is not a listable project. A missing/empty body is fine.
+func (s *Server) webSessionFolder(w http.ResponseWriter, r *http.Request, machineID string) (string, bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	if err != nil || len(body) == 0 {
+		return "", true
+	}
+	var req struct {
+		Folder string `json:"folder"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return "", false
+	}
+	if req.Folder == "" {
+		return "", true
+	}
+	folder, errCode := s.resolveSessionCwd(r.Context(), machineID, req.Folder)
+	if errCode != "" {
+		// Surface the editor-specific code; a guest_unreachable still reads as a
+		// bad_folder from the SPA's perspective (it cannot open that folder now).
+		writeError(w, http.StatusBadRequest, "bad_folder")
+		return "", false
+	}
+	return folder, true
 }
 
 // externalScheme resolves the browser-facing scheme of the main origin, honoring

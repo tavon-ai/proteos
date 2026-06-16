@@ -64,7 +64,16 @@ type ServeOpts struct {
 	MachineID string
 	SessionID string
 	Session   string
-	Refresh   func(ctx context.Context) (running bool, err error)
+
+	// Cwd, when non-empty, is the validated absolute working directory the guest
+	// session should start in (Phase 9 decision #3). Provider, when non-empty,
+	// names the provider whose injected launch command the guest should spawn
+	// (an agent session); empty ⇒ a plain login shell. Both are forwarded to the
+	// guest in the WebSocket handshake.
+	Cwd      string
+	Provider string
+
+	Refresh func(ctx context.Context) (running bool, err error)
 }
 
 // Serve handles one /gw/terminal request: Origin check (pre-upgrade 403), then
@@ -106,7 +115,11 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, opts ServeOpts) {
 	defer tunnel.Close()
 
 	// 2. Speak the WebSocket handshake to the guest across the tunnel.
-	guestWS, err := dialGuestWS(dialCtx, tunnel, opts.Session)
+	guestWS, err := dialGuestWS(dialCtx, tunnel, guestHandshake{
+		session:  opts.Session,
+		cwd:      opts.Cwd,
+		provider: opts.Provider,
+	})
 	dialCancel()
 	if err != nil {
 		slog.Warn("gateway: guest ws handshake failed", "machine", opts.MachineID, "err", err)

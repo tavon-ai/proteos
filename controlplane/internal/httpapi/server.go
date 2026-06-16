@@ -61,6 +61,12 @@ type Server struct {
 	GitChannel    GitChannel
 	GitHost       string
 	GitHubAppSlug string
+
+	// Phase 9: the project/desktop control-channel surface (projects.list, kv.*).
+	// *guestctl.Manager satisfies it. Nil disables /api/projects and
+	// /api/machine/desktop and makes session cwd validation reject any non-empty
+	// cwd (no listable set to check against).
+	Projects ProjectChannel
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
@@ -112,6 +118,16 @@ func (s *Server) Handler() http.Handler {
 	if s.GitHub != nil && s.Tokens != nil && s.GitChannel != nil {
 		mux.Handle("GET /api/git/repos", s.requireAuth(http.HandlerFunc(s.handleGitRepos)))
 		mux.Handle("POST /api/git/clone", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitClone))))
+	}
+
+	// Projects + desktop layout (Phase 9). Projects is a read over the control
+	// channel; the desktop layout is a read/write of machine SQLite (PUT mutates
+	// so it also requires the CSRF header). Enabled only when the control channel
+	// surface is wired.
+	if s.Projects != nil {
+		mux.Handle("GET /api/projects", s.requireAuth(http.HandlerFunc(s.handleProjects)))
+		mux.Handle("GET /api/machine/desktop", s.requireAuth(http.HandlerFunc(s.handleGetDesktop)))
+		mux.Handle("PUT /api/machine/desktop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handlePutDesktop))))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check
