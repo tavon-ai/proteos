@@ -1,12 +1,14 @@
 # Phase 9 Implementation Plan: React desktop UX
 
 > Source: `plans/proteos-poc-to-prod.md` Phase 9, planned 2026-06-16.
-> Status: **9.0–9.6 landed, green on Mac** — backend (9.1/9.2/9.3 + 9.5b
-> web-session folder mint) and the full React desktop (window manager, shell,
-> taskbar, dock, project launcher, scoped terminal/agent/editor windows,
-> settings/logs windows, layout persistence). PoC `public/` + `server/` retired.
-> Remaining: the host acceptance gate (9.6b — firecracker KVM suite extension)
-> and live Proxmox acceptance (9.7).
+> Status: **9.0–9.6b landed** — backend (9.1/9.2/9.3 + 9.5b web-session folder
+> mint), the full React desktop (window manager, shell, taskbar, dock, project
+> launcher, scoped terminal/agent/editor windows, settings/logs windows, layout
+> persistence), PoC `public/` + `server/` retired, and the host acceptance gate
+> (9.6b: a firecracker KVM test asserting a cwd-scoped session + projects.list/kv
+> round-trip, driven by a dependency-free wsclient). Everything is green/verified
+> on Mac except the KVM test itself, which type-checks via cross-compile and runs
+> on the Proxmox KVM runner. Remaining: **live Proxmox acceptance (9.7)** only.
 > Prerequisites: Phases 1–8 landed. Phase 3 (terminal gateway + guest sessions),
 > Phase 5/6 (provider registry + agent sessions over `/gw/agent`), Phase 7
 > (control channel + clone + repos APIs), and Phase 8 (code-server through the

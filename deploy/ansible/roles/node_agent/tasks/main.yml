@@ -270,6 +270,10 @@
       changed_when: false
       failed_when: false
 
+    # Runs the WHOLE firecracker package, so every acceptance test in it gates the
+    # serve — including Phase 9's TestGuestProjectsCwdAndKV (9.6b: a cwd-scoped
+    # session + projects.list/kv round-trip). Adding a test file to that package is
+    # therefore the only change Phase 9 needs here; no new task/var is required.
     - name: Run the firecracker KVM integration suite (a red gate aborts the play)
       when:
         - proteos_run_acceptance_test | bool
