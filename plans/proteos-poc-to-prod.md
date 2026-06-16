@@ -527,11 +527,11 @@ The PoC's simple file-read endpoints are retired.
 
 ### Acceptance criteria
 
-- [ ] code-server runs in the VM and is reachable **only** via the authenticated gateway.
-- [ ] User can open, edit, and save files in their workspace through code-server.
-- [ ] Edits persist on the Phase 4 disk and are visible to terminal/agents and vice versa.
-- [ ] code-server is scoped to the user's workspace; no host/other-tenant access.
-- [ ] code-server (and any preview port) is served from a per-machine subdomain,
+- [x] code-server runs in the VM and is reachable **only** via the authenticated gateway.
+- [x] User can open, edit, and save files in their workspace through code-server.
+- [x] Edits persist on the Phase 4 disk and are visible to terminal/agents and vice versa.
+- [x] code-server is scoped to the user's workspace; no host/other-tenant access.
+- [x] code-server (and any preview port) is served from a per-machine subdomain,
       origin-isolated from the SPA/API per the "Web origin isolation" decision —
       workspace content can never script against the control-plane session.
 - [ ] Old PoC file-browser endpoints are removed.
@@ -541,7 +541,7 @@ The PoC's simple file-read endpoints are retired.
 ## Phase 9: React desktop UX
 
 **User stories**: As a user, I get a full desktop experience — multiple windows for
-terminals, the editor, agents, logs, and settings — on the new architecture.
+terminals, the editor, agents, logs, and settings — on the new architecture. Windows can be maximized, minimized and closed.
 
 ### What to build
 
