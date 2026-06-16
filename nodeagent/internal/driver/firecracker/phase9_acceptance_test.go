@@ -65,21 +65,41 @@ type guestDialer interface {
 // dialGuestWS opens a WebSocket to the guest's terminal port (which serves both
 // /terminal and /control) over the node-agent tunnel. The caller closes the
 // returned tunnel conn.
+//
+// api.StateRunning is the node-agent's VM lifecycle state and can precede the
+// in-guest agent actually listening on the terminal port — until then the vsock
+// CONNECT handshake EOFs ("vsock handshake read: EOF"). So, like the Phase 8 web
+// test, retry the dial+handshake until the guest is serving (or a deadline). Once
+// the first call succeeds the guest is up and later calls return immediately.
 func dialGuestWS(t *testing.T, d guestDialer, id, path string) (*wsclient.Conn, net.Conn) {
 	t.Helper()
-	dctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	tunnel, err := d.DialGuest(dctx, id, api.GuestTerminalPort)
-	if err != nil {
-		t.Fatalf("dial guest tunnel: %v", err)
+	deadline := time.Now().Add(90 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		tunnel, err := d.DialGuest(dctx, id, api.GuestTerminalPort)
+		cancel()
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Second)
+			continue
+		}
+		// Bound the WS handshake: DialGuest clears the conn deadline after the vsock
+		// handshake, so without this a guest that accepted the tunnel but is not yet
+		// serving HTTP would block the handshake read indefinitely.
+		_ = tunnel.SetDeadline(time.Now().Add(10 * time.Second))
+		c, err := wsclient.Dial(tunnel, "guest", path)
+		if err != nil {
+			_ = tunnel.Close()
+			lastErr = err
+			time.Sleep(time.Second)
+			continue
+		}
+		_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+		return c, tunnel
 	}
-	c, err := wsclient.Dial(tunnel, "guest", path)
-	if err != nil {
-		_ = tunnel.Close()
-		t.Fatalf("ws dial %s: %v", path, err)
-	}
-	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
-	return c, tunnel
+	t.Fatalf("ws dial %s never succeeded: %v", path, lastErr)
+	return nil, nil
 }
 
 // setupRepo creates an initialized git repository at repo via a login-shell
