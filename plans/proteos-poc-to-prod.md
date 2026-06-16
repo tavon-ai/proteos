@@ -552,11 +552,11 @@ wallpaper/theme/settings.
 
 ### Acceptance criteria
 
-- [ ] Multiple windows (terminals, code-server, agents, logs, settings) open concurrently.
-- [ ] Machine start/stop/status and the `machine_events` stream are surfaced in the UI.
-- [ ] Provider keys and GitHub connection are managed from a settings UI.
-- [ ] Window state (layout) persists via the machine SQLite where appropriate.
-- [ ] PoC `public/` desktop is fully replaced.
+- [x] Multiple windows (terminals, code-server, agents, logs, settings) open concurrently.
+- [x] Machine start/stop/status and the `machine_events` stream are surfaced in the UI.
+- [x] Provider keys and GitHub connection are managed from a settings UI.
+- [x] Window state (layout) persists via the machine SQLite where appropriate.
+- [x] PoC `public/` desktop is fully replaced.
 
 ---
 
