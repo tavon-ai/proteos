@@ -140,6 +140,30 @@ export interface WebSession {
   url: string;
 }
 
+// Project is one cloned repository under /workspace (Phase 9), as returned by
+// GET /api/projects. The filesystem is the source of truth; the list is fetched
+// live and refetched on the git.clone SSE event.
+export interface Project {
+  name: string;
+  path: string;
+  remote?: string;
+  branch?: string;
+  dirty: boolean;
+  last_commit_at?: string;
+  last_commit_msg?: string;
+}
+
+export interface ProjectsResponse {
+  projects: Project[];
+}
+
+// DesktopLayout is the opaque serialized window layout stored in machine SQLite
+// (Phase 9 decision #6). The control plane relays it verbatim; only the desktop
+// understands its shape. null ⇒ no layout saved yet.
+export interface DesktopResponse {
+  layout: unknown | null;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -189,7 +213,26 @@ export const api = {
   // Mint a one-shot editor URL for the running machine (Phase 8). 409
   // machine_not_running / 404 no_machine surface as ApiError. Only available when
   // the control plane has PROTEOS_MACHINE_DOMAIN set; otherwise the route 404s.
-  webSession: () => request<WebSession>("/api/machine/web-session", { method: "POST" }),
+  // An optional `folder` opens code-server directly on a project (Phase 9 #5);
+  // 400 bad_folder if it is not a listable project.
+  webSession: (folder?: string) =>
+    request<WebSession>("/api/machine/web-session", {
+      method: "POST",
+      headers: folder ? { "Content-Type": "application/json" } : {},
+      body: folder ? JSON.stringify({ folder }) : undefined,
+    }),
+
+  // Projects + desktop layout (Phase 9). listProjects 409s when the machine is
+  // not running. getDesktop/putDesktop relay the opaque layout to/from machine
+  // SQLite; putDesktop is a 204 (a no-op on a diskless stack).
+  listProjects: () => request<ProjectsResponse>("/api/projects"),
+  getDesktop: () => request<DesktopResponse>("/api/machine/desktop"),
+  putDesktop: (layout: unknown) =>
+    request<void>("/api/machine/desktop", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ layout }),
+    }),
 
   // Providers + write-only secret keys. setProviderKey/deleteProviderKey return
   // 204; values are never echoed back. fields maps each declared secret field

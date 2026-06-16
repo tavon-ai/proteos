@@ -142,18 +142,29 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
 }
 
 // terminalURL builds the same-origin gateway WebSocket URL. In dev, Vite proxies
-// /gw to the control plane with ws:true.
-export function terminalURL(machineID: string, session = "main"): string {
+// /gw to the control plane with ws:true. `session` is the opaque per-window id a
+// reconnect resumes (Phase 9 decision #3); `cwd`, when set, scopes the shell to a
+// project folder (/workspace/<repo>) — validated by the control plane.
+export function terminalURL(machineID: string, session = "main", cwd?: string): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const params = new URLSearchParams({ machine: machineID, session });
+  if (cwd) params.set("cwd", cwd);
   return `${proto}://${window.location.host}/gw/terminal?${params.toString()}`;
 }
 
 // agentURL builds the gateway WebSocket URL for a provider's agent session
 // (/gw/agent/{provider}). The guest spawns the provider's injected launch
-// command instead of a shell (Phase 5 decision #9).
-export function agentURL(machineID: string, provider: string): string {
+// command instead of a shell (Phase 5 decision #9). `session` is the opaque
+// per-window id; `cwd` scopes the agent to a project folder (Phase 9 #3).
+export function agentURL(
+  machineID: string,
+  provider: string,
+  session?: string,
+  cwd?: string,
+): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const params = new URLSearchParams({ machine: machineID });
+  if (session) params.set("session", session);
+  if (cwd) params.set("cwd", cwd);
   return `${proto}://${window.location.host}/gw/agent/${encodeURIComponent(provider)}?${params.toString()}`;
 }

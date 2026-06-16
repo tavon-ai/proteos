@@ -533,3 +533,214 @@ body {
   color: var(--text);
 }
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* === Phase 9: project-centric desktop ================================= */
+
+.desktop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1200px 600px at 70% -10%, rgba(47, 129, 247, 0.12), transparent),
+    var(--bg);
+  overflow: hidden;
+}
+
+/* Taskbar -------------------------------------------------------------- */
+.taskbar {
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 0.75rem;
+  background: rgba(22, 27, 34, 0.92);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  z-index: 100000;
+}
+.taskbar-left,
+.taskbar-right { display: flex; align-items: center; gap: 0.6rem; }
+.taskbar-apps { display: flex; gap: 0.25rem; margin: 0 auto; }
+.taskbar-app {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.taskbar-app:hover { background: var(--panel); border-color: var(--border); }
+.clock { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+.user-login { font-size: 0.85rem; }
+
+/* Window surface ------------------------------------------------------- */
+.desktop-surface { position: relative; flex: 1 1 auto; overflow: hidden; }
+
+.window-frame {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.window-header {
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.5rem 0 0.75rem;
+  background: #1c2230;
+  border-bottom: 1px solid var(--border);
+  cursor: move;
+  user-select: none;
+}
+.window-title {
+  flex: 1 1 auto;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.window-controls { display: flex; gap: 0.2rem; }
+.window-btn {
+  width: 26px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.window-btn:hover { background: var(--border); color: var(--text); }
+.window-btn-close:hover { background: var(--error); color: #fff; }
+.window-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.window-body .terminal-wrap,
+.window-body .editor-frame { height: 100%; }
+.window-body .editor-frame { width: 100%; border: 0; }
+
+/* Dock ----------------------------------------------------------------- */
+.dock {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  background: rgba(22, 27, 34, 0.92);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  z-index: 100000;
+}
+.dock-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 220px;
+  padding: 0.3rem 0.6rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dock-item-active { border-color: var(--accent); }
+.dock-item-min { opacity: 0.55; }
+.dock-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock-kind {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); flex: 0 0 auto;
+}
+.dock-kind-terminal { background: #3fb950; }
+.dock-kind-agent { background: #d29922; }
+.dock-kind-editor { background: #2f81f7; }
+.dock-kind-logs { background: #8b949e; }
+.dock-kind-settings { background: #a371f7; }
+.dock-kind-projects { background: #db61a2; }
+
+/* Projects launcher ---------------------------------------------------- */
+.launcher { padding: 0.9rem 1rem; }
+.launcher-head { display: flex; align-items: center; justify-content: space-between; }
+.launcher-head h2 { margin: 0; font-size: 1.05rem; }
+.launcher-empty { padding: 1.5rem; }
+.project-grid {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.7rem;
+}
+.project-tile {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.7rem;
+  background: #12161d;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.project-tile-head { display: flex; align-items: center; gap: 0.4rem; }
+.project-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-branch { background: #21262d; color: var(--muted); }
+.chip-dirty { color: var(--accent); }
+.project-commit { font-size: 0.78rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-actions { display: flex; gap: 0.35rem; margin-top: 0.2rem; }
+.agent-menu-wrap { position: relative; margin-left: auto; }
+.agent-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+  overflow: hidden;
+}
+.agent-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.agent-menu-item:hover { background: #1c2230; }
+
+/* Clone form ----------------------------------------------------------- */
+.clone-form { margin: 0.6rem 0; padding: 0.6rem; border: 1px solid var(--border); border-radius: 9px; }
+.clone-list { list-style: none; margin: 0; padding: 0; }
+.clone-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0; border-bottom: 1px solid #21262d; }
+.clone-row-action { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+.clone-footer { margin: 0.4rem 0 0; }
+
+/* Settings window ------------------------------------------------------ */
+.settings-window { display: flex; flex-direction: column; height: 100%; }
+.settings-tabs { display: flex; gap: 0.25rem; padding: 0.5rem 0.6rem 0; border-bottom: 1px solid var(--border); }
+.settings-tab {
+  background: transparent; color: var(--muted); border: none;
+  border-bottom: 2px solid transparent; padding: 0.45rem 0.7rem; cursor: pointer; font-size: 0.85rem;
+}
+.settings-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.settings-body { padding: 0.8rem; overflow: auto; }
+
+/* Logs window ---------------------------------------------------------- */
+.logs-list { list-style: none; margin: 0; padding: 0.5rem 0.75rem; font-size: 0.82rem; }
+.logs-row { display: flex; gap: 0.6rem; padding: 0.2rem 0; }
+.logs-empty { padding: 1rem; }
+.logs-error .event-desc { color: var(--error); }
+
+.placeholder-body { padding: 1rem; }

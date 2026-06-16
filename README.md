@@ -44,45 +44,34 @@
 - **Cross-Platform**: Works on Mac, Linux, Windows
 
 
-## 🚀 Quick Start
+## 🚀 Quick Start (local development)
 
-### Using Docker Compose (Recommended)
+ProteOS is a Go control plane + node-agent (Firecracker microVMs) with a React
+(Vite) single-page app. The original Node/Express + Docker proof-of-concept
+(`server/`, `public/`) was **retired in Phase 9** — the Go control plane and the
+React desktop are the whole application now.
 
 ```bash
-# 1. Clone the repository
-git clone <your-repo-url>
-cd ProteOS
+# 1. Bring up the dev database (Postgres).
+task dev:db          # or: docker compose -f compose.dev.yml up -d
 
-# 2. Configure API keys
-cp .env.example .env
-nano .env  # Add your API keys
+# 2. Run the stack (separate terminals): control plane, node-agent, web SPA.
+task na:run          # node-agent
+task cp:run          # control plane (depends on Postgres + node-agent)
+task web:dev         # Vite dev server (proxies /api and /gw to the control plane)
 
-# 3. Build and start ProteOS
-docker compose up --build
-
-# 4. Open your browser
-open http://localhost:3001
+# 3. Open the SPA.
+open http://localhost:5173
 ```
 
-**Note**: ProteOS runs on port **3001** by default to avoid conflicts with other services.
+Run `task --list` for every target (build, test, vet, fmt).
 
-## 🔑 API Keys
+See **DEPLOYMENT.md** for the production (Proxmox / app-stack) deployment and
+**RUNBOOK.md** for operations.
 
-ProteOS supports three AI providers. Configure the ones you want to use:
+## 🔑 API keys
 
-```env
-# Claude Code (Anthropic)
-ANTHROPIC_API_KEY=your-claude-key
-# Get from: https://console.anthropic.com/
-
-# Gemini CLI (Google)
-GEMINI_API_KEY=your-gemini-key
-# Get from: https://aistudio.google.com/apikey
-
-# OpenAI Codex
-OPENAI_API_KEY=your-openai-key
-# Get from: https://platform.openai.com/api-keys
-
-# Server configuration
-PORT=3000
-```
+Provider API keys (Claude, Gemini, OpenAI Codex) are no longer set via process
+environment. They are entered per-user in the desktop **Settings → AI providers**
+window, stored encrypted (OpenBao), and injected into the machine on demand. The
+GitHub connection is managed from the same Settings window.

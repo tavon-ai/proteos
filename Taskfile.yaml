@@ -217,11 +217,18 @@ tasks:
   # ---------------------------------------------------------------------------
 
   web:ci:
-    desc: "Web: install, typecheck, build (mirrors CI)"
+    desc: "Web: install, typecheck, test, build (mirrors CI)"
     cmds:
       - task: web:install:ci
       - task: web:typecheck
+      - task: web:test
       - task: web:build
+
+  web:test:
+    desc: "Web: unit tests (vitest)"
+    dir: web
+    cmds:
+      - npm run test
 
   web:install:
     desc: "Web: install deps (npm install)"

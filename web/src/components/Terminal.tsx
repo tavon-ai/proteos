@@ -20,8 +20,20 @@ const RESIZE_DEBOUNCE_MS = 100;
 // scrollback replay (see terminalSocket).
 //
 // With a `provider`, it connects to that provider's agent session
-// (/gw/agent/{provider}) instead of a plain shell.
-export function Terminal({ machineID, provider }: { machineID: string; provider?: string }) {
+// (/gw/agent/{provider}) instead of a plain shell. `session` is the opaque
+// per-window id a reconnect resumes; `cwd` scopes the shell/agent to a project
+// folder (Phase 9 decision #3).
+export function Terminal({
+  machineID,
+  provider,
+  session,
+  cwd,
+}: {
+  machineID: string;
+  provider?: string;
+  session?: string;
+  cwd?: string;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<TerminalStatus>({ kind: "connecting" });
 
@@ -61,7 +73,9 @@ export function Terminal({ machineID, provider }: { machineID: string; provider?
       /* ignore */
     }
 
-    const url = provider ? agentURL(machineID, provider) : terminalURL(machineID);
+    const url = provider
+      ? agentURL(machineID, provider, session, cwd)
+      : terminalURL(machineID, session ?? "main", cwd);
     socket = connectTerminal(url, {
       onData: (bytes) => term.write(bytes),
       onReset: () => term.reset(),
@@ -80,7 +94,7 @@ export function Terminal({ machineID, provider }: { machineID: string; provider?
       socket?.dispose();
       term.dispose();
     };
-  }, [machineID, provider]);
+  }, [machineID, provider, session, cwd]);
 
   return (
     <div className="terminal-wrap">

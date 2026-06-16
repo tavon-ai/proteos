@@ -8,6 +8,7 @@ import {
   type MachineEvent,
   type MachineEventData,
   type MachineSummary,
+  type ProjectsResponse,
   type ReposResponse,
   type SnapshotData,
 } from "./client";
@@ -118,6 +119,32 @@ export function useRepos() {
       return failureCount < 2;
     },
   });
+}
+
+// projectsKey is the query cache key for the machine's cloned projects.
+const projectsKey = ["projects"] as const;
+
+// useProjects loads the machine's cloned projects (Phase 9). Disabled until the
+// machine is running (the endpoint 409s otherwise); refetched imperatively on the
+// git.clone SSE event via invalidateProjects below.
+export function useProjects(enabled: boolean) {
+  return useQuery<ProjectsResponse>({
+    queryKey: projectsKey,
+    queryFn: api.listProjects,
+    enabled,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false; // 409 not-running: don't hammer
+      return failureCount < 2;
+    },
+  });
+}
+
+// useInvalidateProjects returns a function that forces a projects refetch — wired
+// to the git.clone machine event so a finished clone surfaces its new tile.
+export function useInvalidateProjects() {
+  const qc = useQueryClient();
+  return () => qc.invalidateQueries({ queryKey: projectsKey });
 }
 
 // useCloneRepo dispatches a clone. It returns the op_id immediately (202);

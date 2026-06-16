@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useMe } from "./api/hooks";
 import { SessionExpiredError } from "./api/client";
 import { Login } from "./routes/Login";
-import { Dashboard } from "./routes/Dashboard";
+import { Desktop } from "./desktop/Desktop";
 
 export function App() {
   return (
@@ -31,5 +31,5 @@ function RequireAuth() {
   if (!data) {
     return <Navigate to="/login" replace />;
   }
-  return <Dashboard me={data} />;
+  return <Desktop me={data} />;
 }
