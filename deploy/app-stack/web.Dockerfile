@@ -7,7 +7,7 @@
 #
 # Build context MUST be the repo root (needs web/ and deploy/app-stack/nginx.conf).
 
-FROM node:22-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
