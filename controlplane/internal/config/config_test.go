@@ -1,0 +1,253 @@
+package config
+
+import (
+	"os"
+	"testing"
+	"time"
+)
+
+// clearEnv blanks every environment variable Load consults so a test observes
+// pure defaults regardless of what the surrounding shell exported.
+func clearEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"PROTEOS_ADDR", "DATABASE_URL", "PROTEOS_BASE_URL",
+		"GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_SLUG",
+		"PROTEOS_GIT_HOST", "PROTEOS_SECRETS_BACKEND", "PROTEOS_SECRETS_FILE",
+		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_ROLE_ID",
+		"PROTEOS_OPENBAO_SECRET_ID_FILE", "ALLOWED_GITHUB_LOGINS", "PROTEOS_COOKIE_SECURE",
+		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN",
+		"PROTEOS_NODE_CA_FILE", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
+		"PROTEOS_MACHINE_DISK_MIB", "PROTEOS_KERNEL_REF", "PROTEOS_ROOTFS_REF",
+		"PROTEOS_MACHINE_DOMAIN", "PROTEOS_STATE_KEY",
+		"PROTEOS_ALLOWED_WS_ORIGINS",
+	} {
+		t.Setenv(k, "")
+	}
+	// PROTEOS_PROVIDERS_ENABLED is read with LookupEnv, so "present but empty"
+	// differs from "absent". Register restoration via Setenv, then remove it so
+	// the default case observes a truly absent var.
+	t.Setenv("PROTEOS_PROVIDERS_ENABLED", "")
+	_ = os.Unsetenv("PROTEOS_PROVIDERS_ENABLED")
+}
+
+func TestLoadDefaults(t *testing.T) {
+	clearEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if c.Addr != ":8080" {
+		t.Errorf("Addr = %q, want :8080", c.Addr)
+	}
+	if c.BaseURL != "http://localhost:8080" {
+		t.Errorf("BaseURL = %q", c.BaseURL)
+	}
+	if c.GitHost != "github.com" {
+		t.Errorf("GitHost = %q, want github.com", c.GitHost)
+	}
+	if c.SecretsBackend != "file" {
+		t.Errorf("SecretsBackend = %q, want file", c.SecretsBackend)
+	}
+	if c.OpenBaoMount != "secret" {
+		t.Errorf("OpenBaoMount = %q, want secret", c.OpenBaoMount)
+	}
+	if c.HostName != "local" {
+		t.Errorf("HostName = %q, want local", c.HostName)
+	}
+	if c.MachineVcpus != 2 || c.MachineMemMiB != 2048 || c.MachineDiskMiB != 10240 {
+		t.Errorf("machine spec = %d/%d/%d, want 2/2048/10240", c.MachineVcpus, c.MachineMemMiB, c.MachineDiskMiB)
+	}
+	if c.SessionTTL != 30*24*time.Hour {
+		t.Errorf("SessionTTL = %v", c.SessionTTL)
+	}
+	if !c.CookieSecure {
+		t.Error("CookieSecure should default true")
+	}
+	if c.ProvidersEnabledSet {
+		t.Error("ProvidersEnabledSet should be false when env var absent")
+	}
+	if c.StateSigningKey != nil {
+		t.Error("StateSigningKey should be nil when PROTEOS_STATE_KEY unset")
+	}
+}
+
+func TestLoadDefaultWSOriginsIncludesViteForLocalhost(t *testing.T) {
+	clearEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// BaseURL defaults to localhost, so the Vite dev origin must be appended.
+	want := map[string]bool{"http://localhost:8080": false, "http://localhost:5173": false}
+	for _, o := range c.AllowedWSOrigins {
+		if _, ok := want[o]; ok {
+			want[o] = true
+		}
+	}
+	for o, seen := range want {
+		if !seen {
+			t.Errorf("AllowedWSOrigins missing %q (got %v)", o, c.AllowedWSOrigins)
+		}
+	}
+}
+
+func TestLoadWSOriginsNoViteForNonLocal(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_BASE_URL", "https://proteos.example.com")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.AllowedWSOrigins) != 1 || c.AllowedWSOrigins[0] != "https://proteos.example.com" {
+		t.Errorf("AllowedWSOrigins = %v, want only the base origin", c.AllowedWSOrigins)
+	}
+}
+
+func TestLoadExplicitWSOriginsWin(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_ALLOWED_WS_ORIGINS", "https://a.test, https://b.test")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.AllowedWSOrigins) != 2 || c.AllowedWSOrigins[0] != "https://a.test" || c.AllowedWSOrigins[1] != "https://b.test" {
+		t.Errorf("AllowedWSOrigins = %v", c.AllowedWSOrigins)
+	}
+}
+
+func TestLoadOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_ADDR", ":9999")
+	t.Setenv("PROTEOS_COOKIE_SECURE", "false")
+	t.Setenv("PROTEOS_MACHINE_VCPUS", "8")
+	t.Setenv("PROTEOS_MACHINE_MEM_MIB", "not-a-number") // falls back to default
+	t.Setenv("PROTEOS_STATE_KEY", "hunter2")
+	t.Setenv("ALLOWED_GITHUB_LOGINS", "alice, bob ,")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Addr != ":9999" {
+		t.Errorf("Addr = %q", c.Addr)
+	}
+	if c.CookieSecure {
+		t.Error("CookieSecure should be false")
+	}
+	if c.MachineVcpus != 8 {
+		t.Errorf("MachineVcpus = %d, want 8", c.MachineVcpus)
+	}
+	if c.MachineMemMiB != 2048 {
+		t.Errorf("MachineMemMiB = %d, want default 2048 on bad input", c.MachineMemMiB)
+	}
+	if string(c.StateSigningKey) != "hunter2" {
+		t.Errorf("StateSigningKey = %q", c.StateSigningKey)
+	}
+	if len(c.AllowedGitHubLogins) != 2 || c.AllowedGitHubLogins[0] != "alice" || c.AllowedGitHubLogins[1] != "bob" {
+		t.Errorf("AllowedGitHubLogins = %v, want [alice bob] (trimmed, empties dropped)", c.AllowedGitHubLogins)
+	}
+}
+
+func TestLoadProvidersEnabledSetByPresence(t *testing.T) {
+	clearEnv(t)
+	// Empty value still sets the flag (disables every provider on reconcile).
+	t.Setenv("PROTEOS_PROVIDERS_ENABLED", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.ProvidersEnabledSet {
+		t.Error("ProvidersEnabledSet should be true when env var present, even if empty")
+	}
+	if len(c.ProvidersEnabled) != 0 {
+		t.Errorf("ProvidersEnabled = %v, want empty", c.ProvidersEnabled)
+	}
+}
+
+func TestLoadProvidersEnabledList(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_PROVIDERS_ENABLED", "claude, codex")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.ProvidersEnabledSet {
+		t.Error("ProvidersEnabledSet should be true")
+	}
+	if len(c.ProvidersEnabled) != 2 || c.ProvidersEnabled[0] != "claude" || c.ProvidersEnabled[1] != "codex" {
+		t.Errorf("ProvidersEnabled = %v", c.ProvidersEnabled)
+	}
+}
+
+func TestValidateOAuth(t *testing.T) {
+	good := &Config{
+		GitHubClientID:     "id",
+		GitHubClientSecret: "secret",
+		StateSigningKey:    []byte("key"),
+	}
+	if err := good.ValidateOAuth(); err != nil {
+		t.Errorf("complete config rejected: %v", err)
+	}
+
+	empty := &Config{}
+	err := empty.ValidateOAuth()
+	if err == nil {
+		t.Fatal("empty config should fail ValidateOAuth")
+	}
+	for _, want := range []string{"GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "PROTEOS_STATE_KEY"} {
+		if !contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+}
+
+func TestSplitList(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"a", []string{"a"}},
+		{" a , b ,, c ", []string{"a", "b", "c"}},
+		{",,,", nil},
+	}
+	for _, tc := range cases {
+		got := splitList(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("splitList(%q) = %v, want %v", tc.in, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("splitList(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+func TestGetenvInt(t *testing.T) {
+	t.Setenv("CFG_TEST_INT", "")
+	if got := getenvInt("CFG_TEST_INT", 42); got != 42 {
+		t.Errorf("empty => %d, want default 42", got)
+	}
+	t.Setenv("CFG_TEST_INT", "17")
+	if got := getenvInt("CFG_TEST_INT", 42); got != 17 {
+		t.Errorf("set => %d, want 17", got)
+	}
+	t.Setenv("CFG_TEST_INT", "abc")
+	if got := getenvInt("CFG_TEST_INT", 42); got != 42 {
+		t.Errorf("non-numeric => %d, want default 42", got)
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
