@@ -84,12 +84,39 @@ export function Terminal({
 
     const inputSub = term.onData((data) => socket?.send(data));
 
+    // Shift+Enter inserts a literal newline (LF) rather than submitting the
+    // line. xterm sends CR for Enter regardless of modifiers, so we intercept
+    // the keydown and send LF instead — the convention CLI agents like Claude
+    // Code use for multi-line input. Returning false suppresses xterm's default.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+        socket?.send('\n');
+        return false;
+      }
+      return true;
+    });
+
+    // Copy-on-select: highlighting text with the mouse copies it to the
+    // clipboard, like a native terminal emulator. mouseup is a user gesture, so
+    // the Clipboard API is permitted; it may still be unavailable in an insecure
+    // context, in which case we silently skip.
+    const copySelection = () => {
+      const selection = term.getSelection();
+      if (selection) {
+        void navigator.clipboard?.writeText(selection).catch(() => {
+          /* clipboard unavailable or denied */
+        });
+      }
+    };
+    container.addEventListener('mouseup', copySelection);
+
     const observer = new ResizeObserver(fitAndResize);
     observer.observe(container);
 
     return () => {
       observer.disconnect();
       if (resizeTimer) clearTimeout(resizeTimer);
+      container.removeEventListener('mouseup', copySelection);
       inputSub.dispose();
       socket?.dispose();
       term.dispose();
