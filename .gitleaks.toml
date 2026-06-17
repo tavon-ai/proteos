@@ -1,0 +1,12 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "ProteOS gitleaks config"
+
+[allowlist]
+  description = "Allowlist for ProteOS project"
+
+  # Allow test files with fake secrets for testing the secrets detection check
+  paths = [
+    '''controlplane/internal/machine/phase4_test.\go''',
+  ]
