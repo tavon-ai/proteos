@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { MachineState, MachineSummary, Me } from '../api/client';
 import { useMachineMutations } from '../api/hooks';
-import { useWindowManager } from './WindowManager';
+import { useWindowManager } from './windowManagerContext';
 import { openLogs, openProjects, openSettings } from './openers';
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([

@@ -8,7 +8,7 @@ import {
   useRepos,
 } from '../api/hooks';
 import { GitHubStatus } from '../components/GitHubStatus';
-import { useWindowManager } from './WindowManager';
+import { useWindowManager } from './windowManagerContext';
 import { openAgent, openEditor, openSettings, openTerminal } from './openers';
 
 // ProjectsLauncher is the desktop's primary surface (decision #1): each cloned

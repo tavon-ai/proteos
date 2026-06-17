@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import { Rnd } from 'react-rnd';
-import { useWindowManager } from './WindowManager';
+import { useWindowManager } from './windowManagerContext';
 import type { WindowState } from './windowState';
 
 // Window is the chrome around one window's content: a draggable/resizable frame

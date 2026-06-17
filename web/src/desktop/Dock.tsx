@@ -1,4 +1,4 @@
-import { useWindowManager } from './WindowManager';
+import { useWindowManager } from './windowManagerContext';
 
 // Dock is the bottom strip listing every open window (decision #1). Clicking an
 // item focuses it (raising its z-order) and restores it if minimized — the

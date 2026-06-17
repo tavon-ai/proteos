@@ -10,11 +10,8 @@ import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
-import {
-  WindowManagerProvider,
-  useWindowManager,
-  type WindowManagerContext,
-} from './WindowManager';
+import { WindowManagerProvider } from './WindowManager';
+import { useWindowManager, type WindowManagerContext } from './windowManagerContext';
 import { openProjects } from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';

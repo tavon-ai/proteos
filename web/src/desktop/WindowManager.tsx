@@ -1,45 +1,14 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useReducer,
-  useRef,
-  type ReactNode,
-} from 'react';
-import {
-  desktopReducer,
-  initialDesktop,
-  type DesktopState,
-  type Geometry,
-  type OpenSpec,
-  type PersistedWindow,
-  type WindowState,
-} from './windowState';
+import { useCallback, useMemo, useReducer, useRef, type ReactNode } from 'react';
+import { desktopReducer, initialDesktop, type DesktopState } from './windowState';
+import { WindowManagerCtx, type WindowManagerContext } from './windowManagerContext';
 
 // WindowManager is the React shell over the pure desktopReducer. It owns the
 // window registry and exposes imperative actions to the shell/windows; the heavy
 // lifting (z-order, cascade, min/max, layout (de)serialization) lives in
 // windowState so it stays testable. An `onChange` callback fires after every
 // structural mutation so the desktop can debounce-save the layout (Phase 9 #6).
-
-export interface WindowManagerContext {
-  windows: WindowState[];
-  topZ: number;
-  open: (spec: OpenSpec) => void;
-  close: (id: string) => void;
-  focus: (id: string) => void;
-  move: (id: string, x: number, y: number) => void;
-  resize: (id: string, geometry: Geometry) => void;
-  minimize: (id: string) => void;
-  toggleMaximize: (id: string, viewport?: { width: number; height: number }) => void;
-  restore: (id: string) => void;
-  hydrate: (windows: PersistedWindow[]) => void;
-  /** Current full state — used by the layout saver to serialize. */
-  state: DesktopState;
-}
-
-const Ctx = createContext<WindowManagerContext | null>(null);
+// The context object and useWindowManager hook live in windowManagerContext so
+// this file exports only the provider component (required for Fast Refresh).
 
 export function WindowManagerProvider({
   children,
@@ -105,11 +74,5 @@ export function WindowManagerProvider({
     [state, notify],
   );
 
-  return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
-}
-
-export function useWindowManager(): WindowManagerContext {
-  const ctx = useContext(Ctx);
-  if (!ctx) throw new Error('useWindowManager must be used within a WindowManagerProvider');
-  return ctx;
+  return <WindowManagerCtx.Provider value={ctx}>{children}</WindowManagerCtx.Provider>;
 }

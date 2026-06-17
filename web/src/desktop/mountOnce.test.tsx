@@ -3,7 +3,8 @@ import { useEffect } from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WindowManagerProvider, useWindowManager } from './WindowManager';
+import { WindowManagerProvider } from './WindowManager';
+import { useWindowManager } from './windowManagerContext';
 
 // React needs this flag to recognize our act(...) wrapping under vitest.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

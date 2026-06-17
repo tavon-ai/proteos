@@ -1,5 +1,5 @@
 import type { Project } from '../api/client';
-import type { WindowManagerContext } from './WindowManager';
+import type { WindowManagerContext } from './windowManagerContext';
 
 // openers builds the OpenSpec for each window kind and hands it to the window
 // manager. Centralizing this keeps the launcher, taskbar, and dock consistent:

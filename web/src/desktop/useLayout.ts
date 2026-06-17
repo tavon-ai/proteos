@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import { serializeLayout, type DesktopState } from './windowState';
-import type { WindowManagerContext } from './WindowManager';
+import type { WindowManagerContext } from './windowManagerContext';
 import { parseLayout } from './windowState';
 
 const SAVE_DEBOUNCE_MS = 1000;
