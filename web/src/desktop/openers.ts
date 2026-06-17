@@ -9,7 +9,7 @@ import type { WindowManagerContext } from './windowManagerContext';
 // freshSession returns an opaque per-window session id matching the guest's
 // ^[a-z0-9-]{1,32}$ constraint. It is stable for the window's lifetime (stored in
 // the layout) so a reload reconnects to the same live PTY.
-export function freshSession(): string {
+function freshSession(): string {
   return 'w-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
 }
 

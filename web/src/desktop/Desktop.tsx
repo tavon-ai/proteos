@@ -11,7 +11,7 @@ import { ProjectsLauncher } from './ProjectsLauncher';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
 import { WindowManagerProvider } from './WindowManager';
-import { useWindowManager, type WindowManagerContext } from './windowManagerContext';
+import { useWindowManager } from './windowManagerContext';
 import { openProjects } from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';
@@ -179,6 +179,3 @@ function useViewport(): { width: number; height: number } {
   }, []);
   return vp;
 }
-
-// Re-export for tests/consumers that want the context type.
-export type { WindowManagerContext };

@@ -48,7 +48,7 @@ export type MachineState =
 
 // SnapshotSummary is the current hibernation snapshot metadata (Phase 4),
 // present only while the machine is hibernated (stopped with a usable snapshot).
-export interface SnapshotSummary {
+interface SnapshotSummary {
   fc_version: string;
   mem_bytes: number;
   created_at: string;
@@ -96,7 +96,7 @@ export interface MachineEventData {
 // SecretField is one declared input a provider needs (Phase 6). The settings UI
 // renders a form from these — name is the field key, label is the prompt, env is
 // the variable it becomes inside the machine. None of these are secret.
-export interface SecretField {
+interface SecretField {
   name: string;
   label: string;
   env: string;

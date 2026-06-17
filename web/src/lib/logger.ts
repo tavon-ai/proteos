@@ -9,10 +9,10 @@
 // (LogLayer metadata) override bound fields of the same key.
 //
 // We deliberately do NOT write to the console. LogLayer routes every record
-// through a BlankTransport into the in-memory ring buffer below; recentLogs()
-// exposes it for in-app debugging, and setLogSink() lets a future build forward
-// records to the control plane (or let tests capture them). Nothing reaches
-// console.* — swap the sink to change where logs go.
+// through a BlankTransport to the active sink; the default sink drops records,
+// and setLogSink() lets tests capture them or a future build forward records to
+// the control plane. Nothing reaches console.* — swap the sink to change where
+// logs go.
 
 import { LogLayer, BlankTransport } from 'loglayer';
 
@@ -22,7 +22,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 // to <key> = message plus <key>_type = name (matching the control plane's habit
 // of logging an `err` string) so a thrown error logs usefully rather than as an
 // opaque object.
-export type LogFields = Record<string, unknown>;
+type LogFields = Record<string, unknown>;
 
 export interface LogRecord {
   time: string;
@@ -69,23 +69,9 @@ function serializeFields(fields: LogFields): LogFields {
   return out;
 }
 
-// The default sink: a bounded in-memory ring buffer. No console output. Kept
-// small so it is safe to retain for the life of the tab; recentLogs() returns a
-// snapshot for an in-app log view or an error report.
-const BUFFER_LIMIT = 500;
-const buffer: LogRecord[] = [];
-
-function bufferSink(record: LogRecord): void {
-  buffer.push(record);
-  if (buffer.length > BUFFER_LIMIT) buffer.shift();
-}
-
-// recentLogs returns a copy of the buffered records (oldest first).
-export function recentLogs(): LogRecord[] {
-  return buffer.slice();
-}
-
-let sink: LogSink = bufferSink;
+// The default sink drops records (no console output); call setLogSink to capture
+// or forward them.
+let sink: LogSink = () => {};
 
 // setLogLevel overrides the active threshold at runtime (e.g. from a dev toggle).
 export function setLogLevel(level: LogLevel): void {

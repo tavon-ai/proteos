@@ -9,7 +9,7 @@
 // content subtree is never remounted by a focus/raise — the mount-once invariant
 // the editor iframe and live terminals depend on.
 
-export type WindowKind =
+type WindowKind =
   | 'terminal'
   | 'agent'
   | 'editor'
@@ -18,7 +18,7 @@ export type WindowKind =
   | 'projects'
   | 'placeholder';
 
-export type WindowMode = 'normal' | 'minimized' | 'maximized';
+type WindowMode = 'normal' | 'minimized' | 'maximized';
 
 export interface Geometry {
   x: number;
