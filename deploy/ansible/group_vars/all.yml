@@ -9,12 +9,14 @@ proteos_ci_version: "v1.15"                                    # CI artifact buc
 proteos_ubuntu_version: "24.04"                                # rootfs flavour from the CI bucket
 proteos_kernel_key: "firecracker-ci/v1.15/x86_64/vmlinux-6.1.155"  # exact key from versions.lock
 proteos_go_version: "1.26.4"                                   # must satisfy nodeagent/go.mod (go 1.26.4)
+proteos_taskfile_version: "v3.40.0"                            # go-task release tag (host `task` CLI; bump freely)
 proteos_arch: "x86_64"
 proteos_go_arch: "amd64"
 
 proteos_fc_release_url: "https://github.com/firecracker-microvm/firecracker/releases/download"
 proteos_ci_bucket: "https://s3.amazonaws.com/spec.ccfc.min"
 proteos_go_dl_url: "https://go.dev/dl"
+proteos_taskfile_release_url: "https://github.com/go-task/task/releases/download"
 
 # ============================================================================
 # Host layout — MUST match deploy/node-agent/.env.example. These are the paths
@@ -121,6 +123,29 @@ proteos_git_install: true
 proteos_codeserver_install: true
 proteos_codeserver_version: ""        # empty ⇒ latest GitHub release; set to pin (e.g. 4.99.3)
 proteos_codeserver_sha256: ""         # optional sha256 pin for the release tarball
+
+# ----------------------------------------------------------------------------
+# Guest dev tooling baked into the rootfs: vim, the Go toolchain (unpacked into
+# /usr/local/go and put on PATH), and the Taskfile (`task`) CLI. All on by
+# default; set the matching *_install false to skip. Empty Go/Taskfile versions
+# fall back to build-rootfs.sh's pinned defaults. Like the other bakes, bumping
+# these on an already-baked host needs a FORCED rebuild (delete
+# {{ proteos_images_dir }}/manifest.lock — see README): the bake is guarded on
+# source changes, not on these vars. Go adds ~600 MiB to the image.
+#
+# proteos_guest_aliases: shell aliases baked into the guest's interactive shells
+# (root + the run-as user), a name⇒command map. Example:
+#   proteos_guest_aliases:
+#     ll: "ls -alF"
+#     gs: "git status"
+# (Alias values must not contain a single quote — they are passed as --alias 'k=v'.)
+# ----------------------------------------------------------------------------
+proteos_guest_vim_install: true
+proteos_guest_go_install: true
+proteos_guest_go_version: ""           # empty ⇒ build-rootfs.sh default (mirrors the host Go pin)
+proteos_guest_taskfile_install: true
+proteos_guest_taskfile_version: ""     # empty ⇒ build-rootfs.sh default
+proteos_guest_aliases: {}              # name ⇒ command map; baked into the guest .bashrc
 
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.

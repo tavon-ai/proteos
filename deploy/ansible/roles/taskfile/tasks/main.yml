@@ -1,0 +1,39 @@
+---
+# Install a pinned Taskfile (go-task) CLI from the official GitHub release
+# tarball. Mirrors the go/firecracker pattern: download a pinned tgz, extract,
+# drop the binary on PATH. Idempotent: skip if the right version is present.
+- name: Check installed Taskfile version
+  ansible.builtin.command: "{{ proteos_bin_dir }}/task --version"
+  register: task_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install pinned Taskfile {{ proteos_taskfile_version }}
+  when: proteos_taskfile_version | regex_replace('^v', '') not in (task_installed.stdout | default(''))
+  block:
+    - name: Download Taskfile release tarball
+      ansible.builtin.get_url:
+        url: "{{ proteos_taskfile_release_url }}/{{ proteos_taskfile_version }}/task_linux_{{ proteos_go_arch }}.tar.gz"
+        dest: "/tmp/task_linux_{{ proteos_go_arch }}.tar.gz"
+        mode: "0644"
+
+    - name: Create Taskfile extract dir
+      ansible.builtin.file:
+        path: "/tmp/taskfile-{{ proteos_taskfile_version }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract Taskfile release
+      ansible.builtin.unarchive:
+        src: "/tmp/task_linux_{{ proteos_go_arch }}.tar.gz"
+        dest: "/tmp/taskfile-{{ proteos_taskfile_version }}"
+        remote_src: true
+
+    - name: Install task binary onto PATH
+      ansible.builtin.copy:
+        src: "/tmp/taskfile-{{ proteos_taskfile_version }}/task"
+        dest: "{{ proteos_bin_dir }}/task"
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true

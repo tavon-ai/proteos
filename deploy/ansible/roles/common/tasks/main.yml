@@ -16,6 +16,7 @@
       - nftables              # nft — guest NAT rules (agent runtime)
       - cryptsetup            # per-machine LUKS volumes (Phase 4)
       - rsync                 # source sync from the control machine
+      - vim                   # editor for operators on the host
     state: present
     update_cache: true
     cache_valid_time: 3600

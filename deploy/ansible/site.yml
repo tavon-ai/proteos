@@ -12,7 +12,8 @@
   hosts: proteos_kvm
   become: true
   roles:
-    - common       # apt packages, /dev/kvm preflight, IP forwarding, dirs
-    - go           # pinned Go toolchain (to build the node-agent binary)
+    - common       # apt packages (incl. vim), /dev/kvm preflight, IP forwarding, dirs
+    - go           # pinned Go toolchain (to build the node-agent binary) + PATH
+    - taskfile     # pinned go-task `task` CLI on PATH
     - firecracker  # pinned firecracker + jailer binaries, kernel, ext4 rootfs
     - node_agent   # source sync, build binary, env file, systemd service

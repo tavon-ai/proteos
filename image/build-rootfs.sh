@@ -62,6 +62,18 @@
 # the chroot and is idempotent (skipped if the base already ships git). Pass
 # --no-git to skip (air-gapped builds, or a base that already includes git).
 #
+# Guest dev tooling: vim, the Go toolchain, and the Taskfile (`task`) CLI are
+# baked into the guest by default (--no-vim / --no-go / --no-taskfile opt out).
+# vim goes in extract-only via apt (like git); Go is unpacked into /usr/local/go
+# and put on PATH; Taskfile installs `task` onto /usr/local/bin. Pin versions with
+# --go-version X.Y.Z / --taskfile-version vX.Y.Z.
+#
+#   --alias 'name=command'   bake a shell alias into the guest's interactive
+#                            shells (root + run-as user); repeatable.
+#   --bashrc-file FILE       append FILE's contents to the managed bashrc snippet;
+#                            repeatable. Both land in /etc/profile.d/proteos-shell.sh
+#                            and are sourced from the relevant .bashrc files.
+#
 # The base must be a systemd image (the unit is installed for systemd); the
 # script asserts this and fails loudly otherwise.
 
@@ -436,6 +448,162 @@ npm_resolved() {
     | grep -oE "${2}@[0-9][0-9A-Za-z.-]*" | sed -E 's/.*@//' | head -1
 }
 
+# apt_extract_install MNT PKG... — download the named apt packages (+ their
+# missing deps) inside the chroot, then lay them down extract-only with
+# `dpkg-deb -x` (running NO maintainer scripts) — the same resume-safe discipline
+# install_git/provision_user use, because the slimmed firecracker-CI base has no
+# dpkg metadata and a normal install would reinstall the base closure and break
+# Phase 4 resume. Needs the chroot binds (caller brackets bind_chroot) + network.
+apt_extract_install() {
+  local mnt="$1"
+  shift
+  local pkgs="$*"
+  command -v dpkg-deb >/dev/null || die "dpkg-deb required on the build host to lay down: $pkgs"
+  log "installing $pkgs (apt download + extract-only)"
+  local apt_opts='-o APT::Sandbox::User=root -o Acquire::Retries=3'
+  sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
+    sh -c "mkdir -p /tmp /var/log /var/log/apt /var/cache/apt/archives/partial /var/lib/apt/lists/partial && \
+      apt-get $apt_opts update -qq && apt-get $apt_opts -d install -y --no-install-recommends $pkgs" \
+    || die "apt-get download of '$pkgs' failed (base needs working apt sources + network)"
+  local laid
+  laid="$(lay_down_cache "$mnt")"
+  log "$pkgs: laid down $laid package(s) missing from the base"
+}
+
+# install_vim MNT — install vim into the guest (extract-only, resume-safe).
+# Idempotent: skips if the base already ships vim.
+install_vim() {
+  local mnt="$1"
+  if sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v vim' >/dev/null 2>&1; then
+    ok "vim already present in base"
+    return
+  fi
+  apt_extract_install "$mnt" vim
+  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v vim' >/dev/null 2>&1 \
+    || die "vim extract-only install failed: vim not runnable in the image"
+  ok "vim installed"
+}
+
+# go_arch maps uname -m onto the go.dev dist arch tag.
+go_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo "amd64" ;;
+    arm64 | aarch64) echo "arm64" ;;
+    *) die "unsupported arch for Go: $(uname -m)" ;;
+  esac
+}
+
+# install_go MNT VERSION — fetch the pinned Go toolchain tarball from go.dev,
+# verify its sha256 against the published <tarball>.sha256, and unpack it into the
+# image's /usr/local/go (the tarball's own top-level dir). Go is put on PATH for
+# guest shells by install_shell_env. Sets GO_SHA256.
+install_go() {
+  local mnt="$1" version="$2"
+  local arch tarball url
+  arch="$(go_arch)"
+  tarball="go${version}.linux-${arch}.tar.gz"
+  url="https://go.dev/dl/${tarball}"
+  log "fetching Go ${version} (${arch})"
+  dl "$url" "$WORK/$tarball" || die "download Go $version"
+  local actual want
+  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
+  want="$(dl "${url}.sha256" 2>/dev/null | awk '{print $1}')" || true
+  if [[ -n $want ]]; then
+    [[ "$actual" == "$want" ]] || die "Go sha256 mismatch: expected $want, got $actual"
+    ok "Go tarball sha256 verified ($actual)"
+  else
+    log "WARNING: could not fetch Go checksum; pinning to the tarball's own sha256 ($actual)"
+  fi
+  GO_SHA256="$actual"
+  sudo rm -rf "$mnt/usr/local/go"
+  sudo tar -xzf "$WORK/$tarball" -C "$mnt/usr/local"
+  ok "Go ${version} unpacked into /usr/local/go"
+}
+
+# install_taskfile MNT VERSION — fetch the pinned go-task release tarball from
+# GitHub (VERSION is a tag like v3.40.0), verify its sha256 against the published
+# task_checksums.txt, and install the `task` binary onto /usr/local/bin. Sets
+# TASK_SHA256.
+install_taskfile() {
+  local mnt="$1" version="$2"
+  local arch tarball url
+  arch="$(go_arch)"   # go-task uses the same amd64/arm64 tags as Go
+  tarball="task_linux_${arch}.tar.gz"
+  url="https://github.com/go-task/task/releases/download/${version}/${tarball}"
+  log "fetching Taskfile ${version} (${arch})"
+  dl "$url" "$WORK/$tarball" || die "download Taskfile $version"
+  local actual want
+  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
+  want="$(dl "https://github.com/go-task/task/releases/download/${version}/task_checksums.txt" 2>/dev/null \
+    | grep " ${tarball}\$" | awk '{print $1}')" || true
+  if [[ -n $want ]]; then
+    [[ "$actual" == "$want" ]] || die "Taskfile sha256 mismatch: expected $want, got $actual"
+    ok "Taskfile tarball sha256 verified ($actual)"
+  else
+    log "WARNING: could not fetch Taskfile checksums; pinning to the tarball's own sha256 ($actual)"
+  fi
+  TASK_SHA256="$actual"
+  local tmp="$WORK/taskfile"
+  mkdir -p "$tmp"
+  tar -xzf "$WORK/$tarball" -C "$tmp"
+  sudo install -D -m 0755 "$tmp/task" "$mnt/usr/local/bin/task"
+  ok "Taskfile ${version} installed (/usr/local/bin/task)"
+}
+
+# emit_alias NAME=VALUE — print a shell `alias NAME='VALUE'` line, single-quoting
+# the value (embedded single-quotes escaped) so spaces/metachars survive.
+emit_alias() {
+  local spec="$1" name val q="'"
+  name="${spec%%=*}"
+  val="${spec#*=}"
+  val="${val//$q/$q\\$q$q}"   # replace each ' with the '\'' close-escape-reopen idiom
+  printf "alias %s='%s'\n" "$name" "$val"
+}
+
+# install_shell_env MNT — bake a managed shell snippet (Go on PATH + operator
+# aliases / appended bashrc files) into /etc/profile.d AND source it from the
+# interactive bashrc of root, /etc/skel, and the provisioned run-as user.
+# profile.d covers login shells; the bashrc include covers non-login interactive
+# shells (the ttyd PTYs the guest spawns). Idempotent via a marker line.
+install_shell_env() {
+  local mnt="$1"
+  local snip="$WORK/proteos-shell.sh"
+  {
+    echo "# Generated by image/build-rootfs.sh — do not edit (regenerated each bake)."
+    if [[ $GO_INSTALL -eq 1 ]]; then
+      echo '# Go toolchain on PATH (baked into /usr/local/go).'
+      echo 'export PATH="$PATH:/usr/local/go/bin:${GOPATH:-$HOME/go}/bin"'
+    fi
+    if [[ ${#ALIASES[@]} -gt 0 ]]; then
+      echo '# Operator aliases (--alias).'
+      local a
+      for a in "${ALIASES[@]}"; do emit_alias "$a"; done
+    fi
+    if [[ ${#BASHRC_FILES[@]} -gt 0 ]]; then
+      local f
+      for f in "${BASHRC_FILES[@]}"; do
+        echo "# --- appended from $(basename "$f") (--bashrc-file) ---"
+        cat "$f"
+      done
+    fi
+  } >"$snip"
+  sudo install -D -m 0644 "$snip" "$mnt/etc/profile.d/proteos-shell.sh"
+  ok "installed /etc/profile.d/proteos-shell.sh (Go PATH + aliases)"
+
+  local marker="# proteos-managed shell snippet"
+  local rcs=("$mnt/root/.bashrc" "$mnt/etc/skel/.bashrc")
+  [[ $USER_PROVISION -eq 1 ]] && rcs+=("$mnt/home/$RUN_AS_USER/.bashrc")
+  local rc
+  for rc in "${rcs[@]}"; do
+    sudo mkdir -p "$(dirname "$rc")"
+    [[ -e $rc ]] || sudo touch "$rc"
+    if sudo grep -qF "$marker" "$rc" 2>/dev/null; then continue; fi
+    printf '\n%s (aliases + Go PATH)\n[ -f /etc/profile.d/proteos-shell.sh ] && . /etc/profile.d/proteos-shell.sh\n' \
+      "$marker" | sudo tee -a "$rc" >/dev/null
+  done
+}
+
 # --- args -------------------------------------------------------------------
 BASE=""
 OUT_DIR=""
@@ -478,6 +646,22 @@ CODESERVER_VERSION=""
 CODESERVER_SHA256=""
 CS_VERSION=""
 CS_SHA256=""
+# Guest dev tooling: vim, the Go toolchain (unpacked into /usr/local/go and put
+# on PATH), and the Taskfile (`task`) CLI. All on by default — the operator wants
+# them on every machine; --no-vim/--no-go/--no-taskfile opt out. Versions are
+# pinned (Go mirrors the host toolchain pin; bump with --go-version/--taskfile-version).
+VIM_INSTALL=1
+GO_INSTALL=1
+GO_VERSION="1.26.4"
+GO_SHA256=""
+TASKFILE_INSTALL=1
+TASKFILE_VERSION="v3.40.0"
+TASK_SHA256=""
+# Operator shell customisation baked into the guest's interactive shells: aliases
+# (--alias 'name=command', repeatable) and/or whole files appended to the managed
+# bashrc snippet (--bashrc-file FILE, repeatable).
+ALIASES=()
+BASHRC_FILES=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE=$2; shift 2 ;;
@@ -489,6 +673,16 @@ while [[ $# -gt 0 ]]; do
     --no-codeserver) CODESERVER_INSTALL=0; shift ;;
     --codeserver-version) CODESERVER_VERSION=$2; shift 2 ;;
     --codeserver-sha256) CODESERVER_SHA256=$2; shift 2 ;;
+    --vim) VIM_INSTALL=1; shift ;;
+    --no-vim) VIM_INSTALL=0; shift ;;
+    --go) GO_INSTALL=1; shift ;;
+    --no-go) GO_INSTALL=0; shift ;;
+    --go-version) GO_INSTALL=1; GO_VERSION=$2; shift 2 ;;
+    --taskfile) TASKFILE_INSTALL=1; shift ;;
+    --no-taskfile) TASKFILE_INSTALL=0; shift ;;
+    --taskfile-version) TASKFILE_INSTALL=1; TASKFILE_VERSION=$2; shift 2 ;;
+    --alias) ALIASES+=("$2"); shift 2 ;;
+    --bashrc-file) [[ -f $2 ]] || die "--bashrc-file not found: $2"; BASHRC_FILES+=("$2"); shift 2 ;;
     --out-dir) OUT_DIR=$2; shift 2 ;;
     --grow-mib) GROW_MIB=$2; shift 2 ;;
     --claude-binary) CLAUDE_BIN=$2; shift 2 ;;
@@ -594,6 +788,22 @@ if [[ $CODESERVER_INSTALL -eq 1 ]]; then
   CS_NEED=$((GROW_MIB + 450))
   log "baking code-server — bumping grow ${GROW_MIB}→${CS_NEED}MiB headroom"
   GROW_MIB=$CS_NEED
+fi
+# Guest dev tooling: vim's apt closure, the Go SDK (~600MiB extracted), Taskfile.
+if [[ $VIM_INSTALL -eq 1 ]]; then
+  VIM_NEED=$((GROW_MIB + 96))
+  log "baking vim — bumping grow ${GROW_MIB}→${VIM_NEED}MiB headroom"
+  GROW_MIB=$VIM_NEED
+fi
+if [[ $GO_INSTALL -eq 1 ]]; then
+  GO_NEED=$((GROW_MIB + 700))
+  log "baking Go — bumping grow ${GROW_MIB}→${GO_NEED}MiB headroom"
+  GROW_MIB=$GO_NEED
+fi
+if [[ $TASKFILE_INSTALL -eq 1 ]]; then
+  TASK_NEED=$((GROW_MIB + 32))
+  log "baking Taskfile — bumping grow ${GROW_MIB}→${TASK_NEED}MiB headroom"
+  GROW_MIB=$TASK_NEED
 fi
 log "copying base image → $OUT_IMG (+${GROW_MIB}MiB headroom)"
 cp "$BASE" "$OUT_IMG"
@@ -732,6 +942,23 @@ if [[ $CODESERVER_INSTALL -eq 1 ]]; then
   FEATURES="$FEATURES,codeserver"
 fi
 
+# Guest dev tooling. vim goes in via apt (needs the chroot binds); Go + Taskfile
+# are self-contained tarballs unpacked onto /usr/local (no chroot needed).
+if [[ $VIM_INSTALL -eq 1 ]]; then
+  bind_chroot
+  install_vim "$MNT"
+  unbind_chroot
+  FEATURES="$FEATURES,vim"
+fi
+if [[ $GO_INSTALL -eq 1 ]]; then
+  install_go "$MNT" "$GO_VERSION"
+  FEATURES="$FEATURES,go"
+fi
+if [[ $TASKFILE_INSTALL -eq 1 ]]; then
+  install_taskfile "$MNT" "$TASKFILE_VERSION"
+  FEATURES="$FEATURES,taskfile"
+fi
+
 if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
   FEATURES="$FEATURES,node"
@@ -759,13 +986,27 @@ if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   unbind_chroot
 fi
 
+# Bake the managed shell snippet (Go on PATH + operator aliases / appended bashrc
+# files) once everything is installed and the run-as user's home exists. A no-op
+# unless Go is baked or aliases/bashrc files were given.
+if [[ $GO_INSTALL -eq 1 || ${#ALIASES[@]} -gt 0 || ${#BASHRC_FILES[@]} -gt 0 ]]; then
+  install_shell_env "$MNT"
+  FEATURES="$FEATURES,shellenv"
+fi
+
 # /etc/proteos-release — provenance the guest (and humans) can read.
 BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+GO_REL="none"; [[ $GO_INSTALL -eq 1 ]] && GO_REL="$GO_VERSION"
+TASK_REL="none"; [[ $TASKFILE_INSTALL -eq 1 ]] && TASK_REL="$TASKFILE_VERSION"
+VIM_REL="no"; [[ $VIM_INSTALL -eq 1 ]] && VIM_REL="yes"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_GUESTAGENT_VERSION=$VERSION
 PROTEOS_GUESTAGENT_FEATURES=$FEATURES
 PROTEOS_GIT_VERSION=${GIT_VERSION:-none}
+PROTEOS_VIM=$VIM_REL
+PROTEOS_GO_VERSION=$GO_REL
+PROTEOS_TASKFILE_VERSION=$TASK_REL
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
 PROTEOS_CODESERVER_VERSION=${CS_VERSION:-none}
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
@@ -799,6 +1040,11 @@ base_rootfs    = $BASE_NAME
 guestagent     = $VERSION
 features       = $FEATURES
 git_version    = ${GIT_VERSION:-none}
+vim            = $VIM_REL
+go_version     = $GO_REL
+go_sha256      = ${GO_SHA256:-none}
+taskfile_version = $TASK_REL
+taskfile_sha256  = ${TASK_SHA256:-none}
 codeserver_version = ${CS_VERSION:-none}
 codeserver_sha256  = ${CS_SHA256:-none}
 claude_version = ${CLAUDE_VERSION:-none}

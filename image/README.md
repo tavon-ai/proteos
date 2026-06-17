@@ -50,6 +50,35 @@ approval persists across stop/start. Pre-answering that approval fully is verifi
 on the live host (RUNBOOK Part E / Phase 5 task 5.7) — it is exactly the CLI detail
 the plan flags as drift-prone.
 
+**Guest dev tooling (vim, Go, Taskfile) + shell customisation.** The build also
+bakes a small dev toolchain into the guest, all **on by default** (`--no-vim` /
+`--no-go` / `--no-taskfile` opt out):
+
+- **vim** — installed extract-only via apt (the same resume-safe `dpkg-deb -x`
+  discipline as git: the slimmed base has no dpkg metadata, so a normal install
+  would reinstall the base closure and break Phase 4 resume).
+- **Go** — the pinned toolchain tarball from go.dev (sha256-verified), unpacked
+  into `/usr/local/go`. Pinned to the host Go version; override with
+  `--go-version X.Y.Z`. Adds ~600 MiB to the image.
+- **Taskfile** — the pinned `go-task` release (sha256-verified), installed as
+  `/usr/local/bin/task`. Override the tag with `--taskfile-version vX.Y.Z`.
+- `/etc/profile.d/proteos-shell.sh` — a managed snippet that puts Go on `PATH`
+  (`/usr/local/go/bin` + `$GOPATH/bin`) and defines any operator aliases. It is
+  sourced from `/root/.bashrc`, `/etc/skel/.bashrc`, and the run-as user's
+  `~/.bashrc`, so it applies to both login and non-login interactive shells.
+
+Bake shell aliases / extra `.bashrc` content with the repeatable flags:
+
+```sh
+image/build-rootfs.sh --base … \
+  --alias 'll=ls -alF' --alias 'gs=git status' \
+  --bashrc-file ./extra.bashrc
+```
+
+Through Ansible these map to `proteos_guest_{vim,go,taskfile}_install`,
+`proteos_guest_{go,taskfile}_version`, and `proteos_guest_aliases` (a
+name⇒command map) in `deploy/ansible/group_vars/all.yml`.
+
 Output: `proteos-rootfs-<base>-ga<gitshort>.ext4` and `manifest.lock` (the
 sha256 + provenance + feature set + Claude pin — committed).
 
@@ -100,7 +129,7 @@ After the node-agent boots a VM from this rootfs:
 ```sh
 # inside the guest (serial console):
 systemctl status proteos-guestagent     # active (running)
-cat /etc/proteos-release                 # FEATURES lists persist,resume,providers[,claude]
+cat /etc/proteos-release                 # FEATURES lists persist,resume,providers[,claude][,vim,go,taskfile]
 findmnt /persist                         # the disk is mounted (Phase 4)
 findmnt /root                            # bind-mounted from /persist/home
 ls /persist                              # home/ workspace/ machine.db
@@ -112,6 +141,12 @@ ls /etc/profile.d/proteos-providers.sh   # the providers snippet is present
 mkdir -p /run/proteos/env && printf "export ANTHROPIC_API_KEY=sk-demo\n" > /run/proteos/env/claude.env
 bash -lc 'echo $ANTHROPIC_API_KEY'       # → sk-demo (profile.d sourced it)
 rm /run/proteos/env/claude.env
+
+# Guest dev tooling:
+vim --version | head -1                  # vim is installed
+bash -lc 'go version'                     # Go on PATH (/usr/local/go/bin)
+task --version                            # Taskfile CLI
+bash -ic 'alias'                          # any baked --alias entries are present
 
 # from the host: DialGuest reaches it through the jailed uds — see the
 # `-tags=firecracker` integration test (nodeagent .../firecracker) and Task 3.7.

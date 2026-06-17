@@ -35,3 +35,16 @@
     src: "{{ proteos_go_root }}/bin/go"
     dest: "{{ proteos_bin_dir }}/go"
     state: link
+
+# Put the whole Go toolchain on PATH for interactive/login shells: the symlink
+# above only covers `go` itself, this adds gofmt and `go install` targets
+# ($GOPATH/bin, defaulting to $HOME/go/bin).
+- name: Put Go on PATH for login shells
+  ansible.builtin.copy:
+    dest: /etc/profile.d/proteos-go.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ProteOS ansible (roles/go) — do not edit.
+      export PATH="$PATH:{{ proteos_go_root }}/bin:${GOPATH:-$HOME/go}/bin"

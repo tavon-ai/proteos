@@ -177,6 +177,13 @@
     update_cache: true
   when: proteos_codeserver_install | bool
 
+- name: Guest dev tooling — ensure bake prerequisites are present (Go/Taskfile fetch)
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, tar, gzip]
+    state: present
+    update_cache: true
+  when: (proteos_guest_go_install | bool) or (proteos_guest_taskfile_install | bool)
+
 - name: Bake the guest agent (and, if configured, the provider CLIs) into the base rootfs
   ansible.builtin.command:
     cmd: >-
@@ -190,6 +197,10 @@
       {% if proteos_npm_providers | bool and proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}
       {% if not (proteos_git_install | bool) %} --no-git{% endif %}
       {% if not (proteos_codeserver_install | bool) %} --no-codeserver{% else %}{% if proteos_codeserver_version | length > 0 %} --codeserver-version {{ proteos_codeserver_version }}{% endif %}{% if proteos_codeserver_sha256 | length > 0 %} --codeserver-sha256 {{ proteos_codeserver_sha256 }}{% endif %}{% endif %}
+      {% if not (proteos_guest_vim_install | bool) %} --no-vim{% endif %}
+      {% if not (proteos_guest_go_install | bool) %} --no-go{% else %}{% if proteos_guest_go_version | length > 0 %} --go-version {{ proteos_guest_go_version }}{% endif %}{% endif %}
+      {% if not (proteos_guest_taskfile_install | bool) %} --no-taskfile{% else %}{% if proteos_guest_taskfile_version | length > 0 %} --taskfile-version {{ proteos_guest_taskfile_version }}{% endif %}{% endif %}
+      {% for k, v in proteos_guest_aliases.items() %} --alias '{{ k }}={{ v }}'{% endfor %}
   environment:
     PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
     # Carries the real commit SHA into the image name on the rsync path (the

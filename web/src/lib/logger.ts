@@ -1,22 +1,27 @@
-// Structured logging for the web UI.
+// Structured logging for the web UI, built on LogLayer (https://loglayer.dev).
 //
 // The control plane logs structured JSON via Go's log/slog (level, msg, and
 // key/value fields). This is the browser-side counterpart: every record is a
-// level, a short stable message, and a bag of fields — never interpolated
-// prose — so logs stay greppable and machine-parseable in the same shape as the
+// level, a short stable message, and a bag of fields — never interpolated prose
+// — so logs stay greppable and machine-parseable in the same shape as the
 // server's. A component binds its own context once with logger.child({...}) and
-// the fields ride along on every line.
+// the fields ride along on every line (LogLayer context); per-call fields
+// (LogLayer metadata) override bound fields of the same key.
 //
-// The default sink writes to the browser console (console.debug/info/warn/error
-// by level), passing the human prefix and the structured record as separate
-// arguments so devtools renders the fields as an expandable object. Tests and
-// future log shippers can swap the sink with setLogSink.
+// We deliberately do NOT write to the console. LogLayer routes every record
+// through a BlankTransport into the in-memory ring buffer below; recentLogs()
+// exposes it for in-app debugging, and setLogSink() lets a future build forward
+// records to the control plane (or let tests capture them). Nothing reaches
+// console.* — swap the sink to change where logs go.
+
+import { LogLayer, BlankTransport } from 'loglayer';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-// Fields is the key/value bag attached to a record. Error values are serialized
-// to { message, type } by the sink so a thrown error logs usefully rather than
-// as "[object Object]".
+// Fields is the key/value bag attached to a record. Error values are flattened
+// to <key> = message plus <key>_type = name (matching the control plane's habit
+// of logging an `err` string) so a thrown error logs usefully rather than as an
+// opaque object.
 export type LogFields = Record<string, unknown>;
 
 export interface LogRecord {
@@ -29,7 +34,8 @@ export interface LogRecord {
 export type LogSink = (record: LogRecord) => void;
 
 // Ascending severity; a record is emitted only when its level is at or above the
-// active threshold.
+// active threshold. Filtering here (rather than in the transport) keeps it cheap
+// and deterministic — sub-threshold calls never touch LogLayer at all.
 const LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 10,
   info: 20,
@@ -48,8 +54,8 @@ function envLevel(): LogLevel {
 
 let threshold: LogLevel = envLevel();
 
-// serializeFields turns Error values into a plain { message, type } shape so the
-// sink (console or a shipper) never stringifies an Error to "[object Object]".
+// serializeFields flattens Error values so neither the buffer nor a downstream
+// shipper has to stringify an Error to "[object Object]".
 function serializeFields(fields: LogFields): LogFields {
   const out: LogFields = {};
   for (const [k, v] of Object.entries(fields)) {
@@ -63,26 +69,23 @@ function serializeFields(fields: LogFields): LogFields {
   return out;
 }
 
-const consoleMethod: Record<LogLevel, (...args: unknown[]) => void> = {
-  debug: (...a) => console.debug(...a),
-  info: (...a) => console.info(...a),
-  warn: (...a) => console.warn(...a),
-  error: (...a) => console.error(...a),
-};
+// The default sink: a bounded in-memory ring buffer. No console output. Kept
+// small so it is safe to retain for the life of the tab; recentLogs() returns a
+// snapshot for an in-app log view or an error report.
+const BUFFER_LIMIT = 500;
+const buffer: LogRecord[] = [];
 
-// consoleSink renders a compact prefix ("12:00:00.123 INFO terminal.connect")
-// followed by the structured fields object, which devtools shows expandable.
-function consoleSink(record: LogRecord): void {
-  const prefix = `${record.time.slice(11, 23)} ${record.level.toUpperCase()} ${record.msg}`;
-  const emit = consoleMethod[record.level];
-  if (Object.keys(record.fields).length > 0) {
-    emit(prefix, record.fields);
-  } else {
-    emit(prefix);
-  }
+function bufferSink(record: LogRecord): void {
+  buffer.push(record);
+  if (buffer.length > BUFFER_LIMIT) buffer.shift();
 }
 
-let sink: LogSink = consoleSink;
+// recentLogs returns a copy of the buffered records (oldest first).
+export function recentLogs(): LogRecord[] {
+  return buffer.slice();
+}
+
+let sink: LogSink = bufferSink;
 
 // setLogLevel overrides the active threshold at runtime (e.g. from a dev toggle).
 export function setLogLevel(level: LogLevel): void {
@@ -102,6 +105,34 @@ export function setLogSink(next: LogSink): LogSink {
   return prev;
 }
 
+// The LogLayer transport. shipToLogger receives the level, the message array
+// (we always pass a single string), and `data` — LogLayer's merge of context +
+// metadata (see _processLog: { ...context, ...metadata }, so per-call fields
+// win). We turn that into a LogRecord and hand it to the active sink.
+const transport = new BlankTransport({
+  shipToLogger: ({ logLevel, messages, data, hasData }) => {
+    sink({
+      time: new Date().toISOString(),
+      level: logLevel as LogLevel,
+      msg: messages.join(' '),
+      fields: hasData && data ? data : {},
+    });
+    return messages;
+  },
+});
+
+// Minimal structural view of a LogLayer / ILogBuilder for dynamic level dispatch
+// and metadata staging, without leaning on `any`.
+interface Emitter {
+  debug(msg: string): void;
+  info(msg: string): void;
+  warn(msg: string): void;
+  error(msg: string): void;
+  withMetadata(meta: LogFields): Emitter;
+}
+
+const root = new LogLayer({ transport });
+
 export interface Logger {
   debug(msg: string, fields?: LogFields): void;
   info(msg: string, fields?: LogFields): void;
@@ -112,25 +143,25 @@ export interface Logger {
   child(fields: LogFields): Logger;
 }
 
-function makeLogger(bound: LogFields): Logger {
+function wrap(ll: LogLayer): Logger {
   function emit(level: LogLevel, msg: string, fields?: LogFields): void {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[threshold]) return;
-    sink({
-      time: new Date().toISOString(),
-      level,
-      msg,
-      fields: serializeFields({ ...bound, ...fields }),
-    });
+    let entry = ll as unknown as Emitter;
+    if (fields && Object.keys(fields).length > 0) {
+      entry = entry.withMetadata(serializeFields(fields));
+    }
+    entry[level](msg);
   }
   return {
     debug: (msg, fields) => emit('debug', msg, fields),
     info: (msg, fields) => emit('info', msg, fields),
     warn: (msg, fields) => emit('warn', msg, fields),
     error: (msg, fields) => emit('error', msg, fields),
-    child: (fields) => makeLogger({ ...bound, ...fields }),
+    // child() copies context; withContext binds this scope's persistent fields.
+    child: (fields) => wrap(ll.child().withContext(serializeFields(fields))),
   };
 }
 
 // logger is the root. Call logger.child({ component: 'terminal' }) to scope a
 // module's lines, mirroring slog.With on the server.
-export const logger: Logger = makeLogger({});
+export const logger: Logger = wrap(root);
