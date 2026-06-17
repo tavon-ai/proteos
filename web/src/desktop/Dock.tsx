@@ -1,4 +1,4 @@
-import { useWindowManager } from "./WindowManager";
+import { useWindowManager } from './WindowManager';
 
 // Dock is the bottom strip listing every open window (decision #1). Clicking an
 // item focuses it (raising its z-order) and restores it if minimized — the
@@ -10,14 +10,14 @@ export function Dock() {
   return (
     <div className="dock" role="toolbar" aria-label="Open windows">
       {wm.windows.map((w) => {
-        const top = w.zIndex === wm.topZ && w.mode !== "minimized";
+        const top = w.zIndex === wm.topZ && w.mode !== 'minimized';
         return (
           <button
             key={w.id}
             className={
-              "dock-item" +
-              (w.mode === "minimized" ? " dock-item-min" : "") +
-              (top ? " dock-item-active" : "")
+              'dock-item' +
+              (w.mode === 'minimized' ? ' dock-item-min' : '') +
+              (top ? ' dock-item-active' : '')
             }
             title={w.title}
             // focus both un-minimizes and raises (see desktopReducer "focus").

@@ -1,23 +1,23 @@
-import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import type { MachineEvent, MachineState, MachineSummary, Me, Provider } from "../api/client";
-import { useLogout, useMachine, useMachineEvents, useProviders } from "../api/hooks";
-import { Terminal } from "../components/Terminal";
-import { EditorWindow } from "../windows/EditorWindow";
-import { LogsWindow } from "../windows/LogsWindow";
-import { SettingsWindow } from "../windows/SettingsWindow";
-import { Dock } from "./Dock";
-import { ProjectsLauncher } from "./ProjectsLauncher";
-import { Taskbar } from "./Taskbar";
-import { Window } from "./Window";
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import type { MachineEvent, MachineState, MachineSummary, Me, Provider } from '../api/client';
+import { useLogout, useMachine, useMachineEvents, useProviders } from '../api/hooks';
+import { Terminal } from '../components/Terminal';
+import { EditorWindow } from '../windows/EditorWindow';
+import { LogsWindow } from '../windows/LogsWindow';
+import { SettingsWindow } from '../windows/SettingsWindow';
+import { Dock } from './Dock';
+import { ProjectsLauncher } from './ProjectsLauncher';
+import { Taskbar } from './Taskbar';
+import { Window } from './Window';
 import {
   WindowManagerProvider,
   useWindowManager,
   type WindowManagerContext,
-} from "./WindowManager";
-import { openProjects } from "./openers";
-import { useLayoutLoader, useLayoutSaver } from "./useLayout";
-import type { WindowState } from "./windowState";
+} from './WindowManager';
+import { openProjects } from './openers';
+import { useLayoutLoader, useLayoutSaver } from './useLayout';
+import type { WindowState } from './windowState';
 
 // Desktop is the Phase 9 product shell that replaces the flat dashboard: a
 // project-centric, multi-window desktop. It owns the live machine + event +
@@ -28,18 +28,13 @@ export function Desktop({ me }: { me: Me }) {
   const { data: machine } = useMachine(me.machine);
   const events = useMachineEvents();
   const { data: providers } = useProviders();
-  const running = machine?.state === "running";
+  const running = machine?.state === 'running';
 
   const saveLayout = useLayoutSaver(running);
 
   return (
     <WindowManagerProvider onChange={saveLayout}>
-      <DesktopShell
-        me={me}
-        machine={machine ?? null}
-        events={events}
-        providers={providers ?? []}
-      />
+      <DesktopShell me={me} machine={machine ?? null} events={events} providers={providers ?? []} />
     </WindowManagerProvider>
   );
 }
@@ -58,7 +53,7 @@ function DesktopShell({
   const wm = useWindowManager();
   const navigate = useNavigate();
   const logout = useLogout();
-  const running = machine?.state === "running";
+  const running = machine?.state === 'running';
   const viewport = useViewport();
 
   // Restore the saved layout once the machine is running (reconnects live PTYs by
@@ -75,7 +70,7 @@ function DesktopShell({
 
   const onLogout = () => {
     logout.mutate(undefined, {
-      onSettled: () => navigate("/login", { replace: true }),
+      onSettled: () => navigate('/login', { replace: true }),
     });
   };
 
@@ -89,7 +84,7 @@ function DesktopShell({
             <WindowBody
               win={win}
               machine={machine}
-              machineState={machine?.state ?? "stopped"}
+              machineState={machine?.state ?? 'stopped'}
               events={events}
               providers={providers}
             />
@@ -119,17 +114,15 @@ function WindowBody({
   providers: Provider[];
 }) {
   switch (win.kind) {
-    case "projects":
-      return (
-        <ProjectsLauncher machineState={machineState} providers={providers} events={events} />
-      );
-    case "terminal":
+    case 'projects':
+      return <ProjectsLauncher machineState={machineState} providers={providers} events={events} />;
+    case 'terminal':
       return machine ? (
         <Terminal machineID={machine.id} session={win.session} cwd={win.cwd} />
       ) : (
         <StoppedBody />
       );
-    case "agent":
+    case 'agent':
       return machine ? (
         <Terminal
           machineID={machine.id}
@@ -140,13 +133,13 @@ function WindowBody({
       ) : (
         <StoppedBody />
       );
-    case "editor":
+    case 'editor':
       return <EditorWindow machineState={machineState} folder={win.folder} />;
-    case "logs":
+    case 'logs':
       return <LogsWindow events={events} />;
-    case "settings":
+    case 'settings':
       return <SettingsWindow />;
-    case "placeholder":
+    case 'placeholder':
       return <Placeholder win={win} />;
     default:
       return null;
@@ -184,8 +177,8 @@ function useViewport(): { width: number; height: number } {
   }));
   useEffect(() => {
     const onResize = () => setVp({ width: window.innerWidth, height: window.innerHeight - 44 });
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
   return vp;
 }

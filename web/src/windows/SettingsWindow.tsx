@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { ProvidersPanel } from "../components/ProvidersPanel";
-import { GitHubStatus } from "../components/GitHubStatus";
-import { reconnectRequired, useRepos } from "../api/hooks";
+import { useState } from 'react';
+import { ProvidersPanel } from '../components/ProvidersPanel';
+import { GitHubStatus } from '../components/GitHubStatus';
+import { reconnectRequired, useRepos } from '../api/hooks';
 
-type Tab = "providers" | "github";
+type Tab = 'providers' | 'github';
 
 // SettingsWindow folds the Phase 5–7 panels into one window with tabs
 // (decision #7): the Providers tab manages each provider's write-only API key
@@ -11,29 +11,29 @@ type Tab = "providers" | "github";
 // a reconnect action when the grant is stale, and a link to manage which repos
 // the App can see. The clone form itself lives on the Projects launcher.
 export function SettingsWindow() {
-  const [tab, setTab] = useState<Tab>("providers");
+  const [tab, setTab] = useState<Tab>('providers');
   return (
     <div className="settings-window">
       <div className="settings-tabs" role="tablist">
         <button
           role="tab"
-          aria-selected={tab === "providers"}
-          className={tab === "providers" ? "settings-tab active" : "settings-tab"}
-          onClick={() => setTab("providers")}
+          aria-selected={tab === 'providers'}
+          className={tab === 'providers' ? 'settings-tab active' : 'settings-tab'}
+          onClick={() => setTab('providers')}
         >
           AI providers
         </button>
         <button
           role="tab"
-          aria-selected={tab === "github"}
-          className={tab === "github" ? "settings-tab active" : "settings-tab"}
-          onClick={() => setTab("github")}
+          aria-selected={tab === 'github'}
+          className={tab === 'github' ? 'settings-tab active' : 'settings-tab'}
+          onClick={() => setTab('github')}
         >
           GitHub
         </button>
       </div>
       <div className="settings-body">
-        {tab === "providers" ? <ProvidersPanel /> : <GitHubTab />}
+        {tab === 'providers' ? <ProvidersPanel /> : <GitHubTab />}
       </div>
     </div>
   );
@@ -50,8 +50,8 @@ function GitHubTab() {
       </div>
       {!reconnect && (
         <p className="muted">
-          ProteOS clones and pushes using your GitHub identity. Tokens are fetched
-          on demand and never written to disk inside the machine.
+          ProteOS clones and pushes using your GitHub identity. Tokens are fetched on demand and
+          never written to disk inside the machine.
         </p>
       )}
       {data?.grants_url && (

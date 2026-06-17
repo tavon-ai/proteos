@@ -10,15 +10,15 @@
 // the editor iframe and live terminals depend on.
 
 export type WindowKind =
-  | "terminal"
-  | "agent"
-  | "editor"
-  | "logs"
-  | "settings"
-  | "projects"
-  | "placeholder";
+  | 'terminal'
+  | 'agent'
+  | 'editor'
+  | 'logs'
+  | 'settings'
+  | 'projects'
+  | 'placeholder';
 
-export type WindowMode = "normal" | "minimized" | "maximized";
+export type WindowMode = 'normal' | 'minimized' | 'maximized';
 
 export interface Geometry {
   x: number;
@@ -89,15 +89,15 @@ export interface OpenSpec {
 }
 
 export type DesktopAction =
-  | { type: "open"; spec: OpenSpec }
-  | { type: "close"; id: string }
-  | { type: "focus"; id: string }
-  | { type: "move"; id: string; x: number; y: number }
-  | { type: "resize"; id: string; geometry: Geometry }
-  | { type: "minimize"; id: string }
-  | { type: "toggleMaximize"; id: string; viewport?: { width: number; height: number } }
-  | { type: "restore"; id: string }
-  | { type: "hydrate"; windows: PersistedWindow[] };
+  | { type: 'open'; spec: OpenSpec }
+  | { type: 'close'; id: string }
+  | { type: 'focus'; id: string }
+  | { type: 'move'; id: string; x: number; y: number }
+  | { type: 'resize'; id: string; geometry: Geometry }
+  | { type: 'minimize'; id: string }
+  | { type: 'toggleMaximize'; id: string; viewport?: { width: number; height: number } }
+  | { type: 'restore'; id: string }
+  | { type: 'hydrate'; windows: PersistedWindow[] };
 
 // raise returns the next zIndex and bumps topZ.
 function withTop(state: DesktopState): { z: number; topZ: number } {
@@ -125,11 +125,11 @@ function dedupeMatch(state: DesktopState, spec: OpenSpec): WindowState | undefin
 // dedupe by folder, settings/projects by kind alone (singletons).
 function dedupeKeyOf(w: WindowState): string | undefined {
   switch (w.kind) {
-    case "editor":
-      return w.folder ?? w.projectId ?? "";
-    case "settings":
-    case "projects":
-    case "logs":
+    case 'editor':
+      return w.folder ?? w.projectId ?? '';
+    case 'settings':
+    case 'projects':
+    case 'logs':
       return w.kind;
     default:
       return undefined;
@@ -138,11 +138,11 @@ function dedupeKeyOf(w: WindowState): string | undefined {
 
 export function desktopReducer(state: DesktopState, action: DesktopAction): DesktopState {
   switch (action.type) {
-    case "open": {
+    case 'open': {
       const existing = dedupeMatch(state, action.spec);
       if (existing) {
         // Collapse onto the existing window: focus + un-minimize it.
-        return desktopReducer(state, { type: "focus", id: existing.id });
+        return desktopReducer(state, { type: 'focus', id: existing.id });
       }
       const size = DEFAULT_SIZE[action.spec.kind];
       const place = cascadePlacement(state.cascade);
@@ -164,43 +164,41 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         folder: action.spec.folder,
         geometry,
         zIndex: z,
-        mode: "normal",
+        mode: 'normal',
       };
       return { windows: [...state.windows, win], topZ, cascade: place.next };
     }
 
-    case "close":
+    case 'close':
       return { ...state, windows: state.windows.filter((w) => w.id !== action.id) };
 
-    case "focus": {
+    case 'focus': {
       const win = state.windows.find((w) => w.id === action.id);
       if (!win) return state;
       // Already on top and not minimized ⇒ nothing changes (avoid a needless
       // re-render and zIndex churn).
-      if (win.zIndex === state.topZ && win.mode !== "minimized") return state;
+      if (win.zIndex === state.topZ && win.mode !== 'minimized') return state;
       const { z, topZ } = withTop(state);
       return {
         ...state,
         topZ,
         windows: state.windows.map((w) =>
           w.id === action.id
-            ? { ...w, zIndex: z, mode: w.mode === "minimized" ? "normal" : w.mode }
+            ? { ...w, zIndex: z, mode: w.mode === 'minimized' ? 'normal' : w.mode }
             : w,
         ),
       };
     }
 
-    case "move":
+    case 'move':
       return {
         ...state,
         windows: state.windows.map((w) =>
-          w.id === action.id
-            ? { ...w, geometry: { ...w.geometry, x: action.x, y: action.y } }
-            : w,
+          w.id === action.id ? { ...w, geometry: { ...w.geometry, x: action.x, y: action.y } } : w,
         ),
       };
 
-    case "resize":
+    case 'resize':
       return {
         ...state,
         windows: state.windows.map((w) =>
@@ -208,29 +206,27 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         ),
       };
 
-    case "minimize":
+    case 'minimize':
       return {
         ...state,
-        windows: state.windows.map((w) =>
-          w.id === action.id ? { ...w, mode: "minimized" } : w,
-        ),
+        windows: state.windows.map((w) => (w.id === action.id ? { ...w, mode: 'minimized' } : w)),
       };
 
-    case "restore":
+    case 'restore':
       return {
         ...state,
         windows: state.windows.map((w) =>
           w.id === action.id
-            ? { ...w, mode: "normal", geometry: w.restore ?? w.geometry, restore: undefined }
+            ? { ...w, mode: 'normal', geometry: w.restore ?? w.geometry, restore: undefined }
             : w,
         ),
       };
 
-    case "toggleMaximize": {
+    case 'toggleMaximize': {
       const win = state.windows.find((w) => w.id === action.id);
       if (!win) return state;
       const { z, topZ } = withTop(state);
-      if (win.mode === "maximized") {
+      if (win.mode === 'maximized') {
         return {
           ...state,
           topZ,
@@ -238,7 +234,7 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
             w.id === action.id
               ? {
                   ...w,
-                  mode: "normal",
+                  mode: 'normal',
                   zIndex: z,
                   geometry: w.restore ?? w.geometry,
                   restore: undefined,
@@ -256,13 +252,13 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         topZ,
         windows: state.windows.map((w) =>
           w.id === action.id
-            ? { ...w, mode: "maximized", zIndex: z, restore: w.geometry, geometry: maxedGeometry }
+            ? { ...w, mode: 'maximized', zIndex: z, restore: w.geometry, geometry: maxedGeometry }
             : w,
         ),
       };
     }
 
-    case "hydrate":
+    case 'hydrate':
       return hydrate(state, action.windows);
 
     default:
@@ -299,7 +295,7 @@ export interface PersistedLayout {
 // placeholder are reopened by the shell, not the saved layout).
 export function serializeLayout(state: DesktopState): PersistedLayout {
   const windows = state.windows
-    .filter((w) => w.kind !== "placeholder" && w.kind !== "projects")
+    .filter((w) => w.kind !== 'placeholder' && w.kind !== 'projects')
     .map<PersistedWindow>((w) => ({
       id: w.id,
       kind: w.kind,
@@ -310,8 +306,8 @@ export function serializeLayout(state: DesktopState): PersistedLayout {
       cwd: w.cwd,
       folder: w.folder,
       // A maximized window persists at its restore geometry, not full-screen.
-      geometry: w.mode === "maximized" ? (w.restore ?? w.geometry) : w.geometry,
-      mode: w.mode === "minimized" ? "minimized" : "normal",
+      geometry: w.mode === 'maximized' ? (w.restore ?? w.geometry) : w.geometry,
+      mode: w.mode === 'minimized' ? 'minimized' : 'normal',
     }));
   return { version: 1, windows };
 }
@@ -326,7 +322,7 @@ export function serializeLayout(state: DesktopState): PersistedLayout {
 function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopState {
   const restoredIds = new Set(windows.map((w) => w.id));
   const kept = current.windows.filter(
-    (w) => (w.kind === "projects" || w.kind === "placeholder") && !restoredIds.has(w.id),
+    (w) => (w.kind === 'projects' || w.kind === 'placeholder') && !restoredIds.has(w.id),
   );
   const restored = windows.map<WindowState>((w, i) => ({
     id: w.id,
@@ -339,7 +335,7 @@ function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopStat
     folder: w.folder,
     geometry: w.geometry,
     zIndex: kept.length + i + 1,
-    mode: w.mode === "minimized" ? "minimized" : "normal",
+    mode: w.mode === 'minimized' ? 'minimized' : 'normal',
   }));
   // Re-number kept transients beneath the restored stack.
   const keptRenum = kept.map((w, i) => ({ ...w, zIndex: i + 1 }));
@@ -352,28 +348,28 @@ function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopStat
 export function parseLayout(raw: unknown): PersistedLayout | null {
   if (raw == null) return null;
   let obj: unknown = raw;
-  if (typeof raw === "string") {
+  if (typeof raw === 'string') {
     try {
       obj = JSON.parse(raw);
     } catch {
       return null;
     }
   }
-  if (typeof obj !== "object" || obj === null) return null;
+  if (typeof obj !== 'object' || obj === null) return null;
   const layout = obj as Partial<PersistedLayout>;
   if (layout.version !== 1 || !Array.isArray(layout.windows)) return null;
   // Keep only structurally valid window entries.
   const windows = layout.windows.filter(
     (w): w is PersistedWindow =>
       !!w &&
-      typeof w.id === "string" &&
-      typeof w.kind === "string" &&
-      typeof w.title === "string" &&
+      typeof w.id === 'string' &&
+      typeof w.kind === 'string' &&
+      typeof w.title === 'string' &&
       !!w.geometry &&
-      typeof w.geometry.x === "number" &&
-      typeof w.geometry.y === "number" &&
-      typeof w.geometry.width === "number" &&
-      typeof w.geometry.height === "number",
+      typeof w.geometry.x === 'number' &&
+      typeof w.geometry.y === 'number' &&
+      typeof w.geometry.width === 'number' &&
+      typeof w.geometry.height === 'number',
   );
   return { version: 1, windows };
 }

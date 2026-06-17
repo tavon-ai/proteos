@@ -12,6 +12,7 @@ language:
     source_dir:
       - ./controlplane
       - ./nodeagent
+      - ./guestagent
 
   typescript:
     source_dir: ./web
@@ -34,7 +35,8 @@ checks:
     - common:api_docs
     - "security:*"
     - common:dockerfile
-    - devops:*
+    - devops:terraform
+    - devops:k8s
     - common:changelog
     - common:contributing
     - common:duplication
@@ -42,5 +44,11 @@ checks:
     - go:deps_freshness
     - go:cyclomatic
   typescript:
+    disabled:
+      - common:metrics
+  go:
+    source_dir:
+      - ./nodeagent
+      - ./guestagent
     disabled:
       - common:metrics

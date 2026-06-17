@@ -1,8 +1,8 @@
-import { Navigate, Route, Routes } from "react-router-dom";
-import { useMe } from "./api/hooks";
-import { SessionExpiredError } from "./api/client";
-import { Login } from "./routes/Login";
-import { Desktop } from "./desktop/Desktop";
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { useMe } from './api/hooks';
+import { SessionExpiredError } from './api/client';
+import { Login } from './routes/Login';
+import { Desktop } from './desktop/Desktop';
 
 export function App() {
   return (

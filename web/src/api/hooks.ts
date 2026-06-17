@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
   ApiError,
@@ -11,13 +11,13 @@ import {
   type ProjectsResponse,
   type ReposResponse,
   type SnapshotData,
-} from "./client";
+} from './client';
 
 // useMe loads the current user. A 401 (SessionExpiredError) is NOT retried —
 // it is the normal "not logged in" signal, consumed by the route guard.
 export function useMe() {
   return useQuery({
-    queryKey: ["me"],
+    queryKey: ['me'],
     queryFn: api.me,
     retry: (failureCount, error) => {
       if (error instanceof SessionExpiredError) return false;
@@ -37,7 +37,7 @@ export function useLogout() {
 }
 
 // machineKey is the query cache key for the user's machine.
-const machineKey = ["machine"] as const;
+const machineKey = ['machine'] as const;
 
 // useMachine loads the user's machine (null if none). Seeded from /api/me on
 // first paint so the dashboard renders without a second round-trip; the SSE
@@ -68,7 +68,7 @@ export function useMachineMutations() {
 }
 
 // providersKey is the query cache key for the provider registry + key_set view.
-const providersKey = ["providers"] as const;
+const providersKey = ['providers'] as const;
 
 // useProviders loads the provider registry with the caller's key_set status.
 export function useProviders() {
@@ -102,7 +102,7 @@ export function useProviderMutations() {
 }
 
 // reposKey is the query cache key for the user's accessible repos.
-const reposKey = ["repos"] as const;
+const reposKey = ['repos'] as const;
 
 // useRepos loads the repos the user has granted the GitHub App access to (Phase
 // 7). A 409 reconnect_github (ApiError) is surfaced — not retried — so the UI can
@@ -122,7 +122,7 @@ export function useRepos() {
 }
 
 // projectsKey is the query cache key for the machine's cloned projects.
-const projectsKey = ["projects"] as const;
+const projectsKey = ['projects'] as const;
 
 // useProjects loads the machine's cloned projects (Phase 9). Disabled until the
 // machine is running (the endpoint 409s otherwise); refetched imperatively on the
@@ -158,7 +158,7 @@ export function useCloneRepo() {
 
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
 export function reconnectRequired(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 409 && error.code === "reconnect_github";
+  return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';
 }
 
 // useMachineEvents subscribes to the SSE stream. It writes live machine state
@@ -181,14 +181,14 @@ export function useMachineEvents(): MachineEvent[] {
       setEvents((prev) => [ev, ...prev].slice(0, 100));
     };
 
-    es.addEventListener("snapshot", (e) => {
+    es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
       qc.setQueryData(machineKey, data.machine);
       // Snapshot events arrive oldest-first; show newest-first.
       for (const ev of data.events) pushEvent(ev);
     });
 
-    es.addEventListener("machine", (e) => {
+    es.addEventListener('machine', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as MachineEventData;
       qc.setQueryData(machineKey, data.machine);
       pushEvent(data.event);

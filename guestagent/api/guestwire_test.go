@@ -20,7 +20,7 @@ func TestCleanWorkdir(t *testing.T) {
 		{"/workspace/..", "", false},
 		{"/etc/passwd", "", false},
 		{"/root", "", false},
-		{"workspace/repo", "", false}, // relative
+		{"workspace/repo", "", false},  // relative
 		{"/workspaceother", "", false}, // prefix-only, not nested
 	}
 	for _, c := range cases {

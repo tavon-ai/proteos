@@ -1,4 +1,4 @@
-import type { MachineEvent } from "../api/client";
+import type { MachineEvent } from '../api/client';
 
 // LogsWindow streams the machine_events SSE log (decision #7): the same rolling
 // activity feed the retired MachineCard carried, now a first-class window. It is
@@ -22,17 +22,17 @@ export function LogsWindow({ events }: { events: MachineEvent[] }) {
 function describe(e: MachineEvent): string {
   if (e.from_state && e.to_state) {
     const base = `${e.from_state} → ${e.to_state}`;
-    return e.type === "error" && reasonOf(e.payload) ? `${base}: ${reasonOf(e.payload)}` : base;
+    return e.type === 'error' && reasonOf(e.payload) ? `${base}: ${reasonOf(e.payload)}` : base;
   }
-  if (e.type === "git.clone") {
+  if (e.type === 'git.clone') {
     const ok = Boolean((e.payload as Record<string, unknown>).ok);
-    const detail = String((e.payload as Record<string, unknown>).detail ?? "");
-    return ok ? "clone complete" : `clone failed${detail ? `: ${detail}` : ""}`;
+    const detail = String((e.payload as Record<string, unknown>).detail ?? '');
+    return ok ? 'clone complete' : `clone failed${detail ? `: ${detail}` : ''}`;
   }
   return e.type;
 }
 
 function reasonOf(payload: Record<string, unknown>): string {
-  const r = payload?.["reason"];
-  return typeof r === "string" ? r : "";
+  const r = payload?.['reason'];
+  return typeof r === 'string' ? r : '';
 }

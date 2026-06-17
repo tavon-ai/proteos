@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
+import { useEffect, useRef, useState } from 'react';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 import {
   agentURL,
@@ -9,7 +9,7 @@ import {
   terminalURL,
   type TerminalSocket,
   type TerminalStatus,
-} from "../lib/terminalSocket";
+} from '../lib/terminalSocket';
 
 const RESIZE_DEBOUNCE_MS = 100;
 
@@ -35,7 +35,7 @@ export function Terminal({
   cwd?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [status, setStatus] = useState<TerminalStatus>({ kind: "connecting" });
+  const [status, setStatus] = useState<TerminalStatus>({ kind: 'connecting' });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -45,7 +45,7 @@ export function Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
-      theme: { background: "#0b0e14" },
+      theme: { background: '#0b0e14' },
       scrollback: 5000,
     });
     const fit = new FitAddon();
@@ -75,7 +75,7 @@ export function Terminal({
 
     const url = provider
       ? agentURL(machineID, provider, session, cwd)
-      : terminalURL(machineID, session ?? "main", cwd);
+      : terminalURL(machineID, session ?? 'main', cwd);
     socket = connectTerminal(url, {
       onData: (bytes) => term.write(bytes),
       onReset: () => term.reset(),
@@ -105,16 +105,16 @@ export function Terminal({
 }
 
 function StatusBanner({ status }: { status: TerminalStatus }) {
-  if (status.kind === "connected") return null;
+  if (status.kind === 'connected') return null;
   let text: string;
   switch (status.kind) {
-    case "connecting":
-      text = "Connecting…";
+    case 'connecting':
+      text = 'Connecting…';
       break;
-    case "reconnecting":
+    case 'reconnecting':
       text = `Reconnecting (attempt ${status.attempt})…`;
       break;
-    case "closed":
+    case 'closed':
       text = status.reason;
       break;
   }

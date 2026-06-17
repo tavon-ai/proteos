@@ -15,10 +15,10 @@
 // persistent rejection and we stop rather than hammer the gateway.
 
 export type TerminalStatus =
-  | { kind: "connecting" }
-  | { kind: "connected" }
-  | { kind: "reconnecting"; attempt: number }
-  | { kind: "closed"; reason: string };
+  | { kind: 'connecting' }
+  | { kind: 'connected' }
+  | { kind: 'reconnecting'; attempt: number }
+  | { kind: 'closed'; reason: string };
 
 export interface TerminalSocketHandlers {
   /** Raw PTY output to write into the terminal. */
@@ -51,10 +51,10 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   function open() {
-    handlers.onStatus(attempt === 0 ? { kind: "connecting" } : { kind: "reconnecting", attempt });
+    handlers.onStatus(attempt === 0 ? { kind: 'connecting' } : { kind: 'reconnecting', attempt });
 
     const socket = new WebSocket(url);
-    socket.binaryType = "arraybuffer";
+    socket.binaryType = 'arraybuffer';
     ws = socket;
 
     socket.onopen = () => {
@@ -64,11 +64,11 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
       // Reset before the guest replays its scrollback ring so reconnects don't
       // stack duplicate history in the viewport.
       handlers.onReset();
-      handlers.onStatus({ kind: "connected" });
+      handlers.onStatus({ kind: 'connected' });
     };
 
     socket.onmessage = (ev) => {
-      if (typeof ev.data === "string") {
+      if (typeof ev.data === 'string') {
         // Control frame (hello/exit). hello needs no action; exit is followed by
         // a 1000 close handled in onclose.
         return;
@@ -80,24 +80,24 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
       if (disposed) return;
       switch (ev.code) {
         case 1000:
-          handlers.onStatus({ kind: "closed", reason: "Session ended." });
+          handlers.onStatus({ kind: 'closed', reason: 'Session ended.' });
           return;
         case 4001:
-          handlers.onStatus({ kind: "closed", reason: "Session revoked — please sign in again." });
+          handlers.onStatus({ kind: 'closed', reason: 'Session revoked — please sign in again.' });
           return;
         case 4002:
-          handlers.onStatus({ kind: "closed", reason: "Machine stopped." });
+          handlers.onStatus({ kind: 'closed', reason: 'Machine stopped.' });
           return;
         case 4003:
           handlers.onStatus({
-            kind: "closed",
-            reason: "Provider unavailable — set its API key and try again.",
+            kind: 'closed',
+            reason: 'Provider unavailable — set its API key and try again.',
           });
           return;
       }
       attempt++;
       if (!everOpened && attempt > MAX_FAILED_OPENS) {
-        handlers.onStatus({ kind: "closed", reason: "Unable to connect to the terminal." });
+        handlers.onStatus({ kind: 'closed', reason: 'Unable to connect to the terminal.' });
         return;
       }
       scheduleReconnect();
@@ -109,7 +109,7 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
   }
 
   function scheduleReconnect() {
-    handlers.onStatus({ kind: "reconnecting", attempt });
+    handlers.onStatus({ kind: 'reconnecting', attempt });
     reconnectTimer = setTimeout(open, backoff);
     backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
   }
@@ -122,11 +122,11 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
       // PTY input MUST go as a binary frame: the guest reads binary frames as
       // raw PTY bytes and text frames as JSON control messages (resize), so a
       // string keystroke sent as text is parsed as JSON, fails, and is dropped.
-      ws.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
+      ws.send(typeof data === 'string' ? new TextEncoder().encode(data) : data);
     },
     resize(cols, rows) {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
     },
     dispose() {
@@ -145,10 +145,10 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
 // /gw to the control plane with ws:true. `session` is the opaque per-window id a
 // reconnect resumes (Phase 9 decision #3); `cwd`, when set, scopes the shell to a
 // project folder (/workspace/<repo>) — validated by the control plane.
-export function terminalURL(machineID: string, session = "main", cwd?: string): string {
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+export function terminalURL(machineID: string, session = 'main', cwd?: string): string {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const params = new URLSearchParams({ machine: machineID, session });
-  if (cwd) params.set("cwd", cwd);
+  if (cwd) params.set('cwd', cwd);
   return `${proto}://${window.location.host}/gw/terminal?${params.toString()}`;
 }
 
@@ -162,9 +162,9 @@ export function agentURL(
   session?: string,
   cwd?: string,
 ): string {
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const params = new URLSearchParams({ machine: machineID });
-  if (session) params.set("session", session);
-  if (cwd) params.set("cwd", cwd);
+  if (session) params.set('session', session);
+  if (cwd) params.set('cwd', cwd);
   return `${proto}://${window.location.host}/gw/agent/${encodeURIComponent(provider)}?${params.toString()}`;
 }

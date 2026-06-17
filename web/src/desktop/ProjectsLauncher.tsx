@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
-import type { MachineEvent, MachineState, Project, Provider, Repo } from "../api/client";
+import { useEffect, useState } from 'react';
+import type { MachineEvent, MachineState, Project, Provider, Repo } from '../api/client';
 import {
   reconnectRequired,
   useCloneRepo,
   useInvalidateProjects,
   useProjects,
   useRepos,
-} from "../api/hooks";
-import { GitHubStatus } from "../components/GitHubStatus";
-import { useWindowManager } from "./WindowManager";
-import { openAgent, openEditor, openSettings, openTerminal } from "./openers";
+} from '../api/hooks';
+import { GitHubStatus } from '../components/GitHubStatus';
+import { useWindowManager } from './WindowManager';
+import { openAgent, openEditor, openSettings, openTerminal } from './openers';
 
 // ProjectsLauncher is the desktop's primary surface (decision #1): each cloned
 // repo under /workspace is a tile with actions that open the editor, a terminal,
@@ -25,7 +25,7 @@ export function ProjectsLauncher({
   providers: Provider[];
   events: MachineEvent[];
 }) {
-  const running = machineState === "running";
+  const running = machineState === 'running';
   const { data, isLoading, error } = useProjects(running);
   const invalidateProjects = useInvalidateProjects();
   const [showClone, setShowClone] = useState(false);
@@ -33,7 +33,7 @@ export function ProjectsLauncher({
   // A finished clone (git.clone event) refetches the project list so its tile
   // appears without a manual refresh (decision #4).
   useEffect(() => {
-    if (events.some((e) => e.type === "git.clone")) invalidateProjects();
+    if (events.some((e) => e.type === 'git.clone')) invalidateProjects();
   }, [events, invalidateProjects]);
 
   if (!running) {
@@ -47,7 +47,7 @@ export function ProjectsLauncher({
       <div className="launcher-head">
         <h2>Projects</h2>
         <button className="btn-secondary" onClick={() => setShowClone((s) => !s)}>
-          {showClone ? "Close" : "+ Clone repo"}
+          {showClone ? 'Close' : '+ Clone repo'}
         </button>
       </div>
 
@@ -57,8 +57,7 @@ export function ProjectsLauncher({
       {error && <p className="muted">Could not load projects.</p>}
       {!isLoading && projects.length === 0 && (
         <p className="muted">
-          No projects yet. Use <strong>+ Clone repo</strong> to clone one into your
-          workspace.
+          No projects yet. Use <strong>+ Clone repo</strong> to clone one into your workspace.
         </p>
       )}
 
@@ -117,8 +116,8 @@ function ProjectTile({ project, providers }: { project: Project; providers: Prov
                   }}
                 >
                   {enabled.length === 0
-                    ? "No providers configured — open Settings"
-                    : "Set an API key in Settings…"}
+                    ? 'No providers configured — open Settings'
+                    : 'Set an API key in Settings…'}
                 </button>
               )}
               {launchable.map((p) => (
@@ -143,7 +142,7 @@ function ProjectTile({ project, providers }: { project: Project; providers: Prov
 
 // --- Clone form (Phase 7 ReposPanel logic, recomposed for the launcher) ------
 
-type CloneStatus = "cloning" | "done" | "failed";
+type CloneStatus = 'cloning' | 'done' | 'failed';
 interface CloneState {
   opId: string;
   status: CloneStatus;
@@ -161,13 +160,13 @@ function CloneForm({ events }: { events: MachineEvent[] }) {
       let changed = false;
       const next = { ...prev };
       for (const ev of events) {
-        if (ev.type !== "git.clone") continue;
-        const opId = String((ev.payload as Record<string, unknown>).op_id ?? "");
+        if (ev.type !== 'git.clone') continue;
+        const opId = String((ev.payload as Record<string, unknown>).op_id ?? '');
         const ok = Boolean((ev.payload as Record<string, unknown>).ok);
-        const detail = String((ev.payload as Record<string, unknown>).detail ?? "");
+        const detail = String((ev.payload as Record<string, unknown>).detail ?? '');
         for (const [fullName, st] of Object.entries(next)) {
-          if (st.opId === opId && st.status === "cloning") {
-            next[fullName] = { opId, status: ok ? "done" : "failed", detail };
+          if (st.opId === opId && st.status === 'cloning') {
+            next[fullName] = { opId, status: ok ? 'done' : 'failed', detail };
             changed = true;
           }
         }
@@ -179,7 +178,7 @@ function CloneForm({ events }: { events: MachineEvent[] }) {
   const onClone = (fullName: string) => {
     clone.mutate(fullName, {
       onSuccess: (res) =>
-        setClones((prev) => ({ ...prev, [fullName]: { opId: res.op_id, status: "cloning" } })),
+        setClones((prev) => ({ ...prev, [fullName]: { opId: res.op_id, status: 'cloning' } })),
     });
   };
 
@@ -191,7 +190,7 @@ function CloneForm({ events }: { events: MachineEvent[] }) {
       {isLoading && <p className="muted">Loading repositories…</p>}
       {error && !reconnect && (
         <p className="muted">
-          Could not load repositories.{" "}
+          Could not load repositories.{' '}
           <button className="btn-ghost" onClick={() => refetch()}>
             Retry
           </button>
@@ -199,7 +198,7 @@ function CloneForm({ events }: { events: MachineEvent[] }) {
       )}
       {data && !reconnect && data.repos.length === 0 && (
         <p className="muted">
-          ProteOS can&apos;t see any repositories yet.{" "}
+          ProteOS can&apos;t see any repositories yet.{' '}
           {data.grants_url && (
             <a href={data.grants_url} target="_blank" rel="noreferrer">
               Choose which repos ProteOS can access
@@ -223,7 +222,7 @@ function CloneForm({ events }: { events: MachineEvent[] }) {
       {data && !reconnect && (
         <p className="muted clone-footer">
           <button className="btn-ghost" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? "Refreshing…" : "Refresh"}
+            {isFetching ? 'Refreshing…' : 'Refresh'}
           </button>
         </p>
       )}
@@ -242,20 +241,20 @@ function CloneRow({
   pending: boolean;
   onClone: () => void;
 }) {
-  const cloning = clone?.status === "cloning";
+  const cloning = clone?.status === 'cloning';
   return (
     <li className="clone-row">
       <span className="repo-name">{repo.full_name}</span>
       {repo.private && <span className="badge badge-private">private</span>}
       <span className="clone-row-action">
-        {clone?.status === "done" && <span className="repo-cloned">Cloned ✓</span>}
-        {clone?.status === "failed" && (
+        {clone?.status === 'done' && <span className="repo-cloned">Cloned ✓</span>}
+        {clone?.status === 'failed' && (
           <span className="repo-failed" title={clone.detail}>
             Failed
           </span>
         )}
         <button className="btn-secondary" disabled={cloning || pending} onClick={onClone}>
-          {cloning ? "Cloning…" : clone?.status === "done" ? "Clone again" : "Clone"}
+          {cloning ? 'Cloning…' : clone?.status === 'done' ? 'Clone again' : 'Clone'}
         </button>
       </span>
     </li>

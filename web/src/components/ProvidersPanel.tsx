@@ -1,6 +1,6 @@
-import { useState } from "react";
-import type { Provider } from "../api/client";
-import { useProviderMutations, useProviders } from "../api/hooks";
+import { useState } from 'react';
+import type { Provider } from '../api/client';
+import { useProviderMutations, useProviders } from '../api/hooks';
 
 // ProvidersPanel lists the AI providers and lets the user set (write-only),
 // replace, or delete their API key per provider. The key is never rendered back:
@@ -14,16 +14,14 @@ export function ProvidersPanel() {
     <section className="providers-panel">
       <h2>AI providers</h2>
       <p className="muted">
-        Paste an API key to enable a coding agent. Keys are stored encrypted and
-        injected into your machine at runtime — they are never shown again.
+        Paste an API key to enable a coding agent. Keys are stored encrypted and injected into your
+        machine at runtime — they are never shown again.
       </p>
 
       {isLoading && <p className="muted">Loading providers…</p>}
       {isError && <p className="error-banner">Could not load providers.</p>}
 
-      {providers && providers.length === 0 && (
-        <p className="muted">No providers are registered.</p>
-      )}
+      {providers && providers.length === 0 && <p className="muted">No providers are registered.</p>}
 
       <ul className="provider-list">
         {providers?.map((p) => (
@@ -41,8 +39,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
   // from provider.secret_fields — no per-provider code (Phase 6 decision #5).
   const [values, setValues] = useState<Record<string, string>>({});
 
-  const setField = (name: string, v: string) =>
-    setValues((prev) => ({ ...prev, [name]: v }));
+  const setField = (name: string, v: string) => setValues((prev) => ({ ...prev, [name]: v }));
 
   const reset = () => {
     setValues({});
@@ -50,7 +47,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
   };
 
   // Every declared field must be non-empty before we submit.
-  const complete = provider.secret_fields.every((f) => (values[f.name] ?? "").trim() !== "");
+  const complete = provider.secret_fields.every((f) => (values[f.name] ?? '').trim() !== '');
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,15 +62,15 @@ function ProviderRow({ provider }: { provider: Provider }) {
     deleteKey.mutate(provider.key);
   };
 
-  const verb = provider.key_set ? "Replace" : "Set";
+  const verb = provider.key_set ? 'Replace' : 'Set';
 
   return (
     <li className="provider-row">
       <div className="provider-row-head">
         <span className="provider-name">{provider.display_name}</span>
         {!provider.enabled && <span className="chip">disabled</span>}
-        <span className={`badge ${provider.key_set ? "badge-running" : "badge-stopped"}`}>
-          {provider.key_set ? "Key set" : "No key"}
+        <span className={`badge ${provider.key_set ? 'badge-running' : 'badge-stopped'}`}>
+          {provider.key_set ? 'Key set' : 'No key'}
         </span>
       </div>
 
@@ -86,7 +83,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
                 type="password"
                 className="provider-key-input"
                 placeholder={field.label}
-                value={values[field.name] ?? ""}
+                value={values[field.name] ?? ''}
                 autoFocus={i === 0}
                 autoComplete="off"
                 spellCheck={false}
@@ -96,7 +93,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
           ))}
           <div className="provider-row-actions">
             <button className="btn" type="submit" disabled={!complete || setKey.isPending}>
-              {setKey.isPending ? "Saving…" : "Save"}
+              {setKey.isPending ? 'Saving…' : 'Save'}
             </button>
             <button className="btn-ghost" type="button" onClick={reset}>
               Cancel
@@ -111,7 +108,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
           </button>
           {provider.key_set && (
             <button className="btn-ghost" onClick={onDelete} disabled={deleteKey.isPending}>
-              {deleteKey.isPending ? "Removing…" : "Remove"}
+              {deleteKey.isPending ? 'Removing…' : 'Remove'}
             </button>
           )}
         </div>

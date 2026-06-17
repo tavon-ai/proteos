@@ -1,5 +1,5 @@
-import type { Project } from "../api/client";
-import type { WindowManagerContext } from "./WindowManager";
+import type { Project } from '../api/client';
+import type { WindowManagerContext } from './WindowManager';
 
 // openers builds the OpenSpec for each window kind and hands it to the window
 // manager. Centralizing this keeps the launcher, taskbar, and dock consistent:
@@ -10,7 +10,7 @@ import type { WindowManagerContext } from "./WindowManager";
 // ^[a-z0-9-]{1,32}$ constraint. It is stable for the window's lifetime (stored in
 // the layout) so a reload reconnects to the same live PTY.
 export function freshSession(): string {
-  return "w-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+  return 'w-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
 }
 
 // shortName trims a project name for a window title.
@@ -22,7 +22,7 @@ export function openTerminal(wm: WindowManagerContext, project: Project): void {
   const session = freshSession();
   wm.open({
     id: session,
-    kind: "terminal",
+    kind: 'terminal',
     title: `Terminal — ${projectLabel(project)}`,
     projectId: project.path,
     session,
@@ -30,11 +30,16 @@ export function openTerminal(wm: WindowManagerContext, project: Project): void {
   });
 }
 
-export function openAgent(wm: WindowManagerContext, project: Project, providerKey: string, providerName: string): void {
+export function openAgent(
+  wm: WindowManagerContext,
+  project: Project,
+  providerKey: string,
+  providerName: string,
+): void {
   const session = freshSession();
   wm.open({
     id: session,
-    kind: "agent",
+    kind: 'agent',
     title: `${providerName} — ${projectLabel(project)}`,
     projectId: project.path,
     session,
@@ -45,8 +50,8 @@ export function openAgent(wm: WindowManagerContext, project: Project, providerKe
 
 export function openEditor(wm: WindowManagerContext, project: Project): void {
   wm.open({
-    id: "editor-" + project.path,
-    kind: "editor",
+    id: 'editor-' + project.path,
+    kind: 'editor',
     title: `Editor — ${projectLabel(project)}`,
     projectId: project.path,
     folder: project.path,
@@ -55,13 +60,13 @@ export function openEditor(wm: WindowManagerContext, project: Project): void {
 }
 
 export function openSettings(wm: WindowManagerContext): void {
-  wm.open({ id: "settings", kind: "settings", title: "Settings", dedupeKey: "settings" });
+  wm.open({ id: 'settings', kind: 'settings', title: 'Settings', dedupeKey: 'settings' });
 }
 
 export function openLogs(wm: WindowManagerContext): void {
-  wm.open({ id: "logs", kind: "logs", title: "Activity", dedupeKey: "logs" });
+  wm.open({ id: 'logs', kind: 'logs', title: 'Activity', dedupeKey: 'logs' });
 }
 
 export function openProjects(wm: WindowManagerContext): void {
-  wm.open({ id: "projects", kind: "projects", title: "Projects", dedupeKey: "projects" });
+  wm.open({ id: 'projects', kind: 'projects', title: 'Projects', dedupeKey: 'projects' });
 }

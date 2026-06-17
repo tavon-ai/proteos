@@ -35,42 +35,52 @@ tasks:
   # ---------------------------------------------------------------------------
 
   ci:
-    desc: Run the full CI pipeline locally (control plane + node-agent + web)
+    desc: Run the full CI pipeline locally (control plane + node-agent + guest-agent + web)
     cmds:
       - task: cp:ci
       - task: na:ci
+      - task: ga:ci
       - task: web:ci
 
   build:
-    desc: Build all three deliverables
-    deps: [cp:build, na:build, web:build]
+    desc: Build all deliverables
+    deps: [cp:build, na:build, ga:build, web:build]
 
   test:
     desc: Run all Go + web tests (race detector on)
     cmds:
       - task: cp:test
       - task: na:test
+      - task: ga:test
       - task: web:typecheck
 
   vet:
-    desc: Vet both Go modules (incl. the linux firecracker build)
+    desc: Vet all Go modules (incl. the linux firecracker build)
     cmds:
       - task: cp:vet
       - task: na:vet
       - task: na:vet:fc
+      - task: ga:vet
 
   fmt:
-    desc: Format all Go code
+    desc: Format all code (Go + web)
     cmds:
-      - gofmt -w controlplane nodeagent
+      - gofmt -w controlplane nodeagent guestagent
+      - task: web:fmt
 
   fmt:check:
-    desc: Fail if any Go file is not gofmt-clean
+    desc: Fail if any Go or web file is not formatter-clean
     cmds:
       - |
-        unformatted=$(gofmt -l controlplane nodeagent)
+        unformatted=$(gofmt -l controlplane nodeagent guestagent)
         if [ -n "$unformatted" ]; then echo "needs gofmt:"; echo "$unformatted"; exit 1; fi
+      - task: web:fmt:check
     silent: true
+
+  lint:
+    desc: Lint the web app (ESLint); Go uses go vet (see the `vet` task)
+    cmds:
+      - task: web:lint
 
   clean:
     desc: Remove build artifacts and local data
@@ -79,6 +89,7 @@ tasks:
       - rm -rf controlplane/.data nodeagent/.data
       - go -C controlplane clean
       - go -C nodeagent clean
+      - go -C guestagent clean
 
   setup:
     desc: Install local tooling (sqlc) and web deps
@@ -213,16 +224,81 @@ tasks:
       - go run ./cmd/nodeagent
 
   # ---------------------------------------------------------------------------
+  # Guest-agent (Go) — ./guestagent (runs inside the firecracker VM)
+  # ---------------------------------------------------------------------------
+
+  ga:ci:
+    desc: "Guest-agent: vet, build, linux cross-build, test -race (mirrors CI)"
+    cmds:
+      - task: ga:vet
+      - task: ga:build
+      - task: ga:build:linux
+      - task: ga:test
+
+  ga:build:
+    desc: "Guest-agent: build"
+    dir: guestagent
+    cmds:
+      - go build ./...
+
+  ga:vet:
+    desc: "Guest-agent: go vet"
+    dir: guestagent
+    cmds:
+      - go vet ./...
+
+  ga:build:linux:
+    desc: "Guest-agent: cross-build the linux/amd64 target (checks the linux-tagged vsock listener)"
+    dir: guestagent
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build ./...
+
+  ga:test:
+    desc: "Guest-agent: tests (race)"
+    dir: guestagent
+    cmds:
+      - go test -race ./...
+
+  # ---------------------------------------------------------------------------
   # Web (React) — ./web
   # ---------------------------------------------------------------------------
 
   web:ci:
-    desc: "Web: install, typecheck, test, build (mirrors CI)"
+    desc: "Web: install, lint, format check, typecheck, test, build (mirrors CI)"
     cmds:
       - task: web:install:ci
+      - task: web:lint
+      - task: web:fmt:check
       - task: web:typecheck
       - task: web:test
       - task: web:build
+
+  web:lint:
+    desc: "Web: lint (ESLint)"
+    dir: web
+    cmds:
+      - npm run lint
+
+  web:lint:fix:
+    desc: "Web: lint and auto-fix (ESLint --fix)"
+    dir: web
+    cmds:
+      - npm run lint:fix
+
+  web:fmt:
+    desc: "Web: format with Prettier (writes changes)"
+    dir: web
+    cmds:
+      - npm run format
+
+  web:fmt:check:
+    desc: "Web: fail if any file is not Prettier-clean"
+    dir: web
+    cmds:
+      - npm run format:check
 
   web:test:
     desc: "Web: unit tests (vitest)"

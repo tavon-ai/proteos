@@ -170,6 +170,6 @@ func hashToken(token string) []byte {
 }
 
 // Equal reports whether two hashes match in constant time.
-func Equal(a, b []byte) bool {
+func qual(a, b []byte) bool {
 	return subtle.ConstantTimeCompare(a, b) == 1
 }

@@ -259,8 +259,8 @@ func (s *Session) ExitCode() int {
 	return s.exitCode
 }
 
-// Name is the session's registry name.
-func (s *Session) Name() string { return s.name }
+// // Name is the session's registry name.
+// func (s *Session) Name() string { return s.name }
 
 // close terminates the shell (used by Manager shutdown / tests).
 func (s *Session) close() {

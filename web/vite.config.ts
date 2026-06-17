@@ -1,5 +1,5 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 // The dev server proxies /api to the Go control plane so the SPA and API share
 // an origin in development (cookies + CSRF header behave as in production).
@@ -8,15 +8,15 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": {
-        target: "http://localhost:8080",
+      '/api': {
+        target: 'http://localhost:8080',
         changeOrigin: false,
       },
       // The terminal gateway WebSocket. ws:true upgrades the proxied connection;
       // changeOrigin:false preserves the browser Origin (http://localhost:5173)
       // so the gateway's Origin allowlist accepts it.
-      "/gw": {
-        target: "http://localhost:8080",
+      '/gw': {
+        target: 'http://localhost:8080',
         changeOrigin: false,
         ws: true,
       },

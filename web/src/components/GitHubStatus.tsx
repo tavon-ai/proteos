@@ -1,4 +1,4 @@
-import { loginUrl } from "../api/client";
+import { loginUrl } from '../api/client';
 
 // GitHubStatus renders the GitHub connection state. When the grant is healthy it
 // shows a small "connected" chip; when the control plane reports
@@ -11,8 +11,7 @@ export function GitHubStatus({ reconnect }: { reconnect: boolean }) {
     return (
       <div className="github-reconnect" role="alert">
         <span>
-          Your GitHub connection has expired or was revoked. Reconnect to keep
-          cloning and pushing.
+          Your GitHub connection has expired or was revoked. Reconnect to keep cloning and pushing.
         </span>
         {/* Full navigation (not fetch) so the browser follows GitHub's 302 and
             re-links the grant, clearing the revoked flag server-side. */}

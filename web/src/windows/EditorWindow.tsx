@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, type MachineState } from "../api/client";
+import { useCallback, useEffect, useState } from 'react';
+import { api, type MachineState } from '../api/client';
 
 // EditorWindow hosts the machine's code-server editor inside a desktop window
 // (Phase 9). It mints a one-shot web-session URL scoped to the window's project
@@ -21,14 +21,14 @@ export function EditorWindow({
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const running = machineState === "running";
+  const running = machineState === 'running';
 
   const mint = useCallback(() => {
     setError(null);
     api
       .webSession(folder)
       .then((s) => setUrl(s.url))
-      .catch(() => setError("Could not open the editor. Try again."));
+      .catch(() => setError('Could not open the editor. Try again.'));
   }, [folder]);
 
   // Mint once the machine is running (and re-mint if it returns to running after

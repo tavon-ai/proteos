@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
-import type { MachineState, MachineSummary, Me } from "../api/client";
-import { useMachineMutations } from "../api/hooks";
-import { useWindowManager } from "./WindowManager";
-import { openLogs, openProjects, openSettings } from "./openers";
+import { useEffect, useState } from 'react';
+import type { MachineState, MachineSummary, Me } from '../api/client';
+import { useMachineMutations } from '../api/hooks';
+import { useWindowManager } from './WindowManager';
+import { openLogs, openProjects, openSettings } from './openers';
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
-  "requested",
-  "provisioning",
-  "starting",
-  "stopping",
-  "hibernating",
+  'requested',
+  'provisioning',
+  'starting',
+  'stopping',
+  'hibernating',
 ]);
 
 // Taskbar is the top bar of the desktop: the brand, the machine state badge with
@@ -50,15 +50,15 @@ export function Taskbar({
         {state && TRANSITIONAL.has(state) && <span className="spinner" aria-label="working" />}
         {!machine && (
           <button className="btn-secondary" onClick={() => create.mutate()} disabled={busy}>
-            {create.isPending ? "Creating…" : "Create machine"}
+            {create.isPending ? 'Creating…' : 'Create machine'}
           </button>
         )}
-        {(state === "stopped" || state === "error") && (
+        {(state === 'stopped' || state === 'error') && (
           <button className="btn-secondary" onClick={() => start.mutate()} disabled={busy}>
             Start
           </button>
         )}
-        {state === "running" && (
+        {state === 'running' && (
           <button className="btn-secondary" onClick={() => stop.mutate()} disabled={busy}>
             Stop
           </button>
@@ -84,7 +84,7 @@ export function Taskbar({
         )}
         <span className="user-login">{me.user.login}</span>
         <button className="btn-ghost" onClick={onLogout} disabled={loggingOut}>
-          {loggingOut ? "Signing out…" : "Sign out"}
+          {loggingOut ? 'Signing out…' : 'Sign out'}
         </button>
       </div>
     </header>
@@ -97,5 +97,5 @@ function useClock(): string {
     const t = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(t);
   }, []);
-  return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

@@ -6,7 +6,7 @@ import {
   useReducer,
   useRef,
   type ReactNode,
-} from "react";
+} from 'react';
 import {
   desktopReducer,
   initialDesktop,
@@ -15,7 +15,7 @@ import {
   type OpenSpec,
   type PersistedWindow,
   type WindowState,
-} from "./windowState";
+} from './windowState';
 
 // WindowManager is the React shell over the pure desktopReducer. It owns the
 // window registry and exposes imperative actions to the shell/windows; the heavy
@@ -72,35 +72,35 @@ export function WindowManagerProvider({
       topZ: state.topZ,
       state,
       open: (spec) => {
-        dispatch({ type: "open", spec });
+        dispatch({ type: 'open', spec });
         notify();
       },
       close: (id) => {
-        dispatch({ type: "close", id });
+        dispatch({ type: 'close', id });
         notify();
       },
-      focus: (id) => dispatch({ type: "focus", id }),
+      focus: (id) => dispatch({ type: 'focus', id }),
       move: (id, x, y) => {
-        dispatch({ type: "move", id, x, y });
+        dispatch({ type: 'move', id, x, y });
         notify();
       },
       resize: (id, geometry) => {
-        dispatch({ type: "resize", id, geometry });
+        dispatch({ type: 'resize', id, geometry });
         notify();
       },
       minimize: (id) => {
-        dispatch({ type: "minimize", id });
+        dispatch({ type: 'minimize', id });
         notify();
       },
       toggleMaximize: (id, viewport) => {
-        dispatch({ type: "toggleMaximize", id, viewport });
+        dispatch({ type: 'toggleMaximize', id, viewport });
         notify();
       },
       restore: (id) => {
-        dispatch({ type: "restore", id });
+        dispatch({ type: 'restore', id });
         notify();
       },
-      hydrate: (windows) => dispatch({ type: "hydrate", windows }),
+      hydrate: (windows) => dispatch({ type: 'hydrate', windows }),
     }),
     [state, notify],
   );
@@ -110,6 +110,6 @@ export function WindowManagerProvider({
 
 export function useWindowManager(): WindowManagerContext {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useWindowManager must be used within a WindowManagerProvider");
+  if (!ctx) throw new Error('useWindowManager must be used within a WindowManagerProvider');
   return ctx;
 }

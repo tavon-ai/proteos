@@ -6,8 +6,8 @@
 
 export class SessionExpiredError extends Error {
   constructor() {
-    super("session expired");
-    this.name = "SessionExpiredError";
+    super('session expired');
+    this.name = 'SessionExpiredError';
   }
 }
 
@@ -16,7 +16,7 @@ export class ApiError extends Error {
   code: string;
   constructor(status: number, code: string) {
     super(`api error ${status}: ${code}`);
-    this.name = "ApiError";
+    this.name = 'ApiError';
     this.status = status;
     this.code = code;
   }
@@ -33,14 +33,14 @@ export interface Me {
 
 // MachineState mirrors the control-plane machines.state CHECK constraint.
 export type MachineState =
-  | "requested"
-  | "provisioning"
-  | "running"
-  | "starting"
-  | "stopping"
-  | "hibernating"
-  | "stopped"
-  | "error";
+  | 'requested'
+  | 'provisioning'
+  | 'running'
+  | 'starting'
+  | 'stopping'
+  | 'hibernating'
+  | 'stopped'
+  | 'error';
 
 // SnapshotSummary is the current hibernation snapshot metadata (Phase 4),
 // present only while the machine is hibernated (stopped with a usable snapshot).
@@ -61,7 +61,7 @@ export interface MachineSummary {
   created_at: string;
 
   // Phase 4: persistent disk + hibernate/resume.
-  boot: "cold" | "resumed" | null;
+  boot: 'cold' | 'resumed' | null;
   disk_id: string | null;
   disk_mib: number | null;
   snapshot: SnapshotSummary | null;
@@ -71,7 +71,7 @@ export interface MachineEvent {
   id: number;
   // "git.clone" is a Phase 7 info-style event carrying a clone completion
   // (payload: { op_id, ok, detail }).
-  type: "transition" | "error" | "info" | "git.clone";
+  type: 'transition' | 'error' | 'info' | 'git.clone';
   from_state: string | null;
   to_state: string | null;
   actor: string;
@@ -168,17 +168,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: {
-      "X-Requested-By": "proteos",
+      'X-Requested-By': 'proteos',
       ...(init.headers ?? {}),
     },
-    credentials: "same-origin",
+    credentials: 'same-origin',
   });
 
   if (res.status === 401) {
     throw new SessionExpiredError();
   }
   if (!res.ok) {
-    let code = "error";
+    let code = 'error';
     try {
       const body = (await res.json()) as { error?: string };
       if (body.error) code = body.error;
@@ -193,22 +193,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  me: () => request<Me>("/api/me"),
-  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  me: () => request<Me>('/api/me'),
+  logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
   // GET /api/machine returns the user's machine, or null when they have none
   // (the API answers 404 no_machine, which we translate to null here).
   getMachine: async (): Promise<MachineSummary | null> => {
     try {
-      return await request<MachineSummary>("/api/machine");
+      return await request<MachineSummary>('/api/machine');
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;
       throw err;
     }
   },
-  createMachine: () => request<MachineSummary>("/api/machine", { method: "POST" }),
-  startMachine: () => request<MachineSummary>("/api/machine/start", { method: "POST" }),
-  stopMachine: () => request<MachineSummary>("/api/machine/stop", { method: "POST" }),
+  createMachine: () => request<MachineSummary>('/api/machine', { method: 'POST' }),
+  startMachine: () => request<MachineSummary>('/api/machine/start', { method: 'POST' }),
+  stopMachine: () => request<MachineSummary>('/api/machine/stop', { method: 'POST' }),
 
   // Mint a one-shot editor URL for the running machine (Phase 8). 409
   // machine_not_running / 404 no_machine surface as ApiError. Only available when
@@ -216,53 +216,53 @@ export const api = {
   // An optional `folder` opens code-server directly on a project (Phase 9 #5);
   // 400 bad_folder if it is not a listable project.
   webSession: (folder?: string) =>
-    request<WebSession>("/api/machine/web-session", {
-      method: "POST",
-      headers: folder ? { "Content-Type": "application/json" } : {},
+    request<WebSession>('/api/machine/web-session', {
+      method: 'POST',
+      headers: folder ? { 'Content-Type': 'application/json' } : {},
       body: folder ? JSON.stringify({ folder }) : undefined,
     }),
 
   // Projects + desktop layout (Phase 9). listProjects 409s when the machine is
   // not running. getDesktop/putDesktop relay the opaque layout to/from machine
   // SQLite; putDesktop is a 204 (a no-op on a diskless stack).
-  listProjects: () => request<ProjectsResponse>("/api/projects"),
-  getDesktop: () => request<DesktopResponse>("/api/machine/desktop"),
+  listProjects: () => request<ProjectsResponse>('/api/projects'),
+  getDesktop: () => request<DesktopResponse>('/api/machine/desktop'),
   putDesktop: (layout: unknown) =>
-    request<void>("/api/machine/desktop", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
+    request<void>('/api/machine/desktop', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout }),
     }),
 
   // Providers + write-only secret keys. setProviderKey/deleteProviderKey return
   // 204; values are never echoed back. fields maps each declared secret field
   // name to its value (Phase 6 generalizes Phase 5's single api_key body).
-  listProviders: () => request<Provider[]>("/api/providers"),
+  listProviders: () => request<Provider[]>('/api/providers'),
   setProviderKey: (key: string, fields: Record<string, string>) =>
     request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields }),
     }),
   deleteProviderKey: (key: string) =>
-    request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: "DELETE" }),
+    request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // Git operations (Phase 7). listRepos may throw ApiError 409 reconnect_github
   // when the GitHub grant is revoked; cloneRepo returns an op_id and the clone
   // completes asynchronously (watch git.clone machine events).
-  listRepos: () => request<ReposResponse>("/api/git/repos"),
+  listRepos: () => request<ReposResponse>('/api/git/repos'),
   cloneRepo: (fullName: string) =>
-    request<CloneStarted>("/api/git/clone", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    request<CloneStarted>('/api/git/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name: fullName }),
     }),
 };
 
 // SSE endpoint for live machine state; consumed by useMachineEvents via the
 // browser EventSource API (cookie auth, no custom headers).
-export const machineEventsUrl = "/api/machine/events";
+export const machineEventsUrl = '/api/machine/events';
 
 // The login redirect is a full navigation (not fetch) so the browser follows
 // GitHub's 302 chain and cookies are set on the top-level document.
-export const loginUrl = "/api/auth/github/login";
+export const loginUrl = '/api/auth/github/login';

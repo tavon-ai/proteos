@@ -1,7 +1,7 @@
-import { memo, type ReactNode } from "react";
-import { Rnd } from "react-rnd";
-import { useWindowManager } from "./WindowManager";
-import type { WindowState } from "./windowState";
+import { memo, type ReactNode } from 'react';
+import { Rnd } from 'react-rnd';
+import { useWindowManager } from './WindowManager';
+import type { WindowState } from './windowState';
 
 // Window is the chrome around one window's content: a draggable/resizable frame
 // (react-rnd handles only the pointer math — decision #2) with our header
@@ -26,8 +26,8 @@ interface WindowProps {
 
 function WindowImpl({ win, children, viewport }: WindowProps) {
   const wm = useWindowManager();
-  const minimized = win.mode === "minimized";
-  const maximized = win.mode === "maximized";
+  const minimized = win.mode === 'minimized';
+  const maximized = win.mode === 'maximized';
 
   return (
     <Rnd
@@ -42,7 +42,7 @@ function WindowImpl({ win, children, viewport }: WindowProps) {
       enableResizing={!maximized}
       style={{
         zIndex: win.zIndex,
-        display: minimized ? "none" : "flex",
+        display: minimized ? 'none' : 'flex',
       }}
       onMouseDownCapture={() => wm.focus(win.id)}
       onDragStop={(_e, d) => wm.move(win.id, d.x, d.y)}
@@ -71,11 +71,11 @@ function WindowImpl({ win, children, viewport }: WindowProps) {
             </button>
             <button
               className="window-btn"
-              title={maximized ? "Restore" : "Maximize"}
-              aria-label={maximized ? "Restore" : "Maximize"}
+              title={maximized ? 'Restore' : 'Maximize'}
+              aria-label={maximized ? 'Restore' : 'Maximize'}
               onClick={() => wm.toggleMaximize(win.id, viewport)}
             >
-              {maximized ? "❐" : "▢"}
+              {maximized ? '❐' : '▢'}
             </button>
             <button
               className="window-btn window-btn-close"
