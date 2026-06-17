@@ -14,6 +14,8 @@
 // so a connection that never opens across several attempts is treated as a
 // persistent rejection and we stop rather than hammer the gateway.
 
+import { logger } from './logger';
+
 export type TerminalStatus =
   | { kind: 'connecting' }
   | { kind: 'connected' }
@@ -43,6 +45,9 @@ const BACKOFF_MAX_MS = 8000;
 const MAX_FAILED_OPENS = 5;
 
 export function connectTerminal(url: string, handlers: TerminalSocketHandlers): TerminalSocket {
+  // Log the path (machine/session params) but not the full URL, which on https
+  // carries no secret yet keeps logs tidy.
+  const log = logger.child({ component: 'terminal', path: new URL(url, location.href).pathname });
   let ws: WebSocket | null = null;
   let disposed = false;
   let backoff = BACKOFF_MIN_MS;
@@ -52,6 +57,7 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
 
   function open() {
     handlers.onStatus(attempt === 0 ? { kind: 'connecting' } : { kind: 'reconnecting', attempt });
+    log.debug(attempt === 0 ? 'connecting' : 'reconnecting', { attempt });
 
     const socket = new WebSocket(url);
     socket.binaryType = 'arraybuffer';
@@ -65,6 +71,7 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
       // stack duplicate history in the viewport.
       handlers.onReset();
       handlers.onStatus({ kind: 'connected' });
+      log.info('connected');
     };
 
     socket.onmessage = (ev) => {
@@ -78,17 +85,22 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
 
     socket.onclose = (ev) => {
       if (disposed) return;
+      // Terminal close codes (no reconnect) are expected lifecycle, not errors.
       switch (ev.code) {
         case 1000:
+          log.info('closed', { code: ev.code, reason: 'session_ended' });
           handlers.onStatus({ kind: 'closed', reason: 'Session ended.' });
           return;
         case 4001:
+          log.info('closed', { code: ev.code, reason: 'revoked' });
           handlers.onStatus({ kind: 'closed', reason: 'Session revoked — please sign in again.' });
           return;
         case 4002:
+          log.info('closed', { code: ev.code, reason: 'machine_stopped' });
           handlers.onStatus({ kind: 'closed', reason: 'Machine stopped.' });
           return;
         case 4003:
+          log.info('closed', { code: ev.code, reason: 'provider_unavailable' });
           handlers.onStatus({
             kind: 'closed',
             reason: 'Provider unavailable — set its API key and try again.',
@@ -97,9 +109,11 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
       }
       attempt++;
       if (!everOpened && attempt > MAX_FAILED_OPENS) {
+        log.error('giving up', { code: ev.code, attempt });
         handlers.onStatus({ kind: 'closed', reason: 'Unable to connect to the terminal.' });
         return;
       }
+      log.warn('connection dropped', { code: ev.code, attempt });
       scheduleReconnect();
     };
 
@@ -131,6 +145,7 @@ export function connectTerminal(url: string, handlers: TerminalSocketHandlers): 
     },
     dispose() {
       disposed = true;
+      log.debug('dispose');
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (ws) {
         ws.onclose = null;

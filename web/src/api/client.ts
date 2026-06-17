@@ -4,6 +4,10 @@
 // with SameSite=Lax cookies), and a 401 is surfaced as a typed
 // SessionExpiredError so the app can redirect to /login globally.
 
+import { logger } from '../lib/logger';
+
+const log = logger.child({ component: 'api' });
+
 export class SessionExpiredError extends Error {
   constructor() {
     super('session expired');
@@ -165,16 +169,26 @@ export interface DesktopResponse {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      'X-Requested-By': 'proteos',
-      ...(init.headers ?? {}),
-    },
-    credentials: 'same-origin',
-  });
+  const method = init.method ?? 'GET';
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: {
+        'X-Requested-By': 'proteos',
+        ...(init.headers ?? {}),
+      },
+      credentials: 'same-origin',
+    });
+  } catch (err) {
+    // Network failure (offline, DNS, CORS) — fetch rejects without a Response.
+    log.error('request failed', { method, path, err: err as Error });
+    throw err;
+  }
 
   if (res.status === 401) {
+    // Routine "not signed in" signal, not an error; logged at debug.
+    log.debug('session expired', { method, path });
     throw new SessionExpiredError();
   }
   if (!res.ok) {
@@ -185,6 +199,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // non-JSON error body; keep the generic code
     }
+    log.warn('request error', { method, path, status: res.status, code });
     throw new ApiError(res.status, code);
   }
   // 204 / empty body tolerance.

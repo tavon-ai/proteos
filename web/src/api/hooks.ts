@@ -12,6 +12,9 @@ import {
   type ReposResponse,
   type SnapshotData,
 } from './client';
+import { logger } from '../lib/logger';
+
+const log = logger.child({ component: 'machine-events' });
 
 // useMe loads the current user. A 401 (SessionExpiredError) is NOT retried —
 // it is the normal "not logged in" signal, consumed by the route guard.
@@ -181,20 +184,29 @@ export function useMachineEvents(): MachineEvent[] {
       setEvents((prev) => [ev, ...prev].slice(0, 100));
     };
 
+    es.addEventListener('open', () => log.info('stream open'));
+
     es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
       qc.setQueryData(machineKey, data.machine);
       // Snapshot events arrive oldest-first; show newest-first.
       for (const ev of data.events) pushEvent(ev);
+      log.debug('snapshot', { state: data.machine?.state ?? null, events: data.events.length });
     });
 
     es.addEventListener('machine', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as MachineEventData;
       qc.setQueryData(machineKey, data.machine);
       pushEvent(data.event);
+      log.debug('event', { type: data.event.type, to: data.event.to_state });
     });
 
-    // On error EventSource auto-reconnects; nothing to do but let it.
+    // EventSource auto-reconnects on error; surface it so a flapping stream is
+    // visible (readyState 2 = closed, e.g. auth lost).
+    es.addEventListener('error', () => {
+      log.warn('stream error', { readyState: es.readyState });
+    });
+
     return () => es.close();
   }, [qc]);
 
