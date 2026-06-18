@@ -70,12 +70,13 @@ func (s *Server) handleGatewayTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveTerminalMachine returns the machine the user may attach to. An empty
-// ?machine= resolves to the user's single machine; a provided id must exist and
-// be owned by the user (otherwise ErrNoMachine, which the caller maps to 404 to
-// avoid leaking whether the id exists).
+// ?machine= resolves to the user's machine only when they own exactly one
+// (ErrAmbiguous otherwise, so a multi-machine caller must name an id); a provided
+// id must exist and be owned by the user (otherwise ErrNoMachine, which the
+// caller maps to 404 to avoid leaking whether the id exists).
 func (s *Server) resolveTerminalMachine(ctx context.Context, user store.User, machineParam string) (store.Machine, error) {
 	if machineParam == "" {
-		return s.Machines.Get(ctx, user.ID)
+		return s.Machines.OnlyMachine(ctx, user.ID)
 	}
 	id, err := machine.ParseUUID(machineParam)
 	if err != nil || !id.Valid {

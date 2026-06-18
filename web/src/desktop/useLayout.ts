@@ -7,43 +7,49 @@ import { parseLayout } from './windowState';
 const SAVE_DEBOUNCE_MS = 1000;
 
 // useLayoutSaver returns a debounced save callback wired to the window manager's
-// onChange. It serializes the live desktop and PUTs it to machine SQLite
-// (decision #6). Saves are skipped while the machine is not running (the endpoint
-// 409s and there is nothing to persist to); a diskless stack accepts the PUT as a
-// no-op. Failures are swallowed — a dropped layout save must never disrupt the UI.
-export function useLayoutSaver(running: boolean): (state: DesktopState) => void {
+// onChange. It serializes the live desktop and PUTs it to the active machine's
+// SQLite (decision #6). Saves are skipped while the machine is not running/known
+// (the endpoint 409s and there is nothing to persist to); a diskless stack
+// accepts the PUT as a no-op. Failures are swallowed — a dropped layout save must
+// never disrupt the UI.
+export function useLayoutSaver(
+  machineId: string | null,
+  running: boolean,
+): (state: DesktopState) => void {
   const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(timer.current), []);
   return useCallback(
     (state: DesktopState) => {
-      if (!running) return;
+      if (!running || !machineId) return;
       clearTimeout(timer.current);
       timer.current = setTimeout(() => {
-        api.putDesktop(serializeLayout(state)).catch(() => {
+        api.putDesktop(machineId, serializeLayout(state)).catch(() => {
           /* layout persistence is best-effort */
         });
       }, SAVE_DEBOUNCE_MS);
     },
-    [running],
+    [machineId, running],
   );
 }
 
-// useLayoutLoader hydrates the desktop from machine SQLite once per running
-// transition. Restored terminal/agent windows reconnect to their live PTYs by
-// the opaque session id stored in the layout (Phase 3 reconnect). A corrupt or
-// absent layout leaves the desktop empty (the launcher still opens).
-export function useLayoutLoader(wm: WindowManagerContext, running: boolean): void {
-  const loadedRef = useRef(false);
+// useLayoutLoader scopes the desktop to the active machine. On any machine switch
+// it resets to a clean desktop (hydrate([]) keeps the Projects launcher but
+// clears the previous machine's terminals/editors), then — once that machine is
+// running — hydrates its saved layout, reconnecting live PTYs by their opaque
+// session ids (Phase 3 reconnect). A corrupt or absent layout leaves the desktop
+// clean (the launcher still opens).
+export function useLayoutLoader(
+  wm: WindowManagerContext,
+  machineId: string | null,
+  running: boolean,
+): void {
   useEffect(() => {
-    if (!running) {
-      loadedRef.current = false; // re-hydrate after a stop/start
-      return;
-    }
-    if (loadedRef.current) return;
-    loadedRef.current = true;
+    // Reset to a clean desktop for the (possibly new) active machine.
+    wm.hydrate([]);
+    if (!running || !machineId) return;
     let cancelled = false;
     api
-      .getDesktop()
+      .getDesktop(machineId)
       .then((r) => {
         if (cancelled) return;
         const layout = parseLayout(r.layout);
@@ -55,5 +61,7 @@ export function useLayoutLoader(wm: WindowManagerContext, running: boolean): voi
     return () => {
       cancelled = true;
     };
-  }, [running, wm]);
+    // wm is stable (provider ref); keying on machineId+running drives re-scoping.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machineId, running]);
 }

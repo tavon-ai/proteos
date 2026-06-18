@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -16,6 +17,7 @@ import (
 // the `machine` field in /api/me and the body of the /api/machine endpoints.
 type MachineSummary struct {
 	ID           string          `json:"id"`
+	Name         string          `json:"name"`
 	State        string          `json:"state"`
 	GuestIP      *string         `json:"guest_ip"`
 	KernelRef    string          `json:"kernel_ref"`
@@ -43,6 +45,7 @@ type SnapshotSummary struct {
 func toSummary(m store.Machine, disk *store.Disk, snap *store.Snapshot) MachineSummary {
 	s := MachineSummary{
 		ID:           machine.UUIDString(m.ID),
+		Name:         m.Name,
 		State:        m.State,
 		KernelRef:    m.KernelRef,
 		RootfsRef:    m.RootfsRef,
@@ -87,43 +90,61 @@ func (s *Server) summary(ctx context.Context, m store.Machine) MachineSummary {
 	return toSummary(m, disk, snap)
 }
 
-// handleGetMachine returns the authenticated user's machine, or 404 no_machine.
+// handleListMachines returns all of the authenticated user's machines (possibly
+// empty). This is the multi-machine collection read.
+func (s *Server) handleListMachines(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	ms, err := s.Machines.List(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	out := make([]MachineSummary, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, s.summary(r.Context(), m))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGetMachine returns one of the user's machines by id, or 404 no_machine
+// (also for a machine the user does not own — existence is never leaked).
 func (s *Server) handleGetMachine(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	m, err := s.Machines.Get(r.Context(), user.ID)
-	if errors.Is(err, machine.ErrNoMachine) {
-		writeError(w, http.StatusNotFound, "no_machine")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal")
+	m, errCode := s.ownedMachine(r.Context(), user, r.PathValue("id"))
+	if errCode != "" {
+		writeError(w, http.StatusNotFound, errCode)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.summary(r.Context(), m))
 }
 
-// handleCreateMachine provisions the user's machine. 202 with the (provisioning)
-// summary, or 409 machine_exists if they already have one.
+// handleCreateMachine provisions a new machine for the user. 202 with the
+// (provisioning) summary, or 409 machine_limit when the per-user cap is reached.
+// An optional JSON body {"name": "..."} sets the display name; empty ⇒ auto-named.
 func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	m, err := s.Machines.Create(r.Context(), user.ID)
-	if errors.Is(err, machine.ErrMachineExists) {
-		writeError(w, http.StatusConflict, "machine_exists")
-		return
-	}
-	if err != nil {
+	name := decodeOptionalName(r)
+	m, err := s.Machines.Create(r.Context(), user.ID, name)
+	switch {
+	case errors.Is(err, machine.ErrMachineLimit):
+		writeError(w, http.StatusConflict, "machine_limit")
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal")
-		return
+	default:
+		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 	}
-	writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 }
 
 // handleStartMachine cold-boots a stopped/errored machine. 202 or 409 invalid_state.
@@ -136,16 +157,52 @@ func (s *Server) handleStopMachine(w http.ResponseWriter, r *http.Request) {
 	s.machineMutation(w, r, s.Machines.Stop)
 }
 
-// handleDestroyMachine tears down and removes the user's machine. 204 on
-// success, 404 no_machine if they have none. Irreversible: the persistent disk
-// is wiped (unlike stop, which hibernates).
+// handleRenameMachine sets a machine's display name from a JSON body
+// {"name": "..."}. 200 with the updated summary, 404 no_machine, 400 bad_request.
+func (s *Server) handleRenameMachine(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, ok := parseMachineID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "no_machine")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	m, err := s.Machines.Rename(r.Context(), user.ID, id, strings.TrimSpace(body.Name))
+	switch {
+	case errors.Is(err, machine.ErrNoMachine):
+		writeError(w, http.StatusNotFound, "no_machine")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal")
+	default:
+		writeJSON(w, http.StatusOK, s.summary(r.Context(), m))
+	}
+}
+
+// handleDestroyMachine tears down and removes one of the user's machines by id.
+// 204 on success, 404 no_machine. Irreversible: the persistent disk is wiped
+// (unlike stop, which hibernates).
 func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	err := s.Machines.Destroy(r.Context(), user.ID)
+	id, ok := parseMachineID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "no_machine")
+		return
+	}
+	err := s.Machines.Destroy(r.Context(), user.ID, id)
 	switch {
 	case errors.Is(err, machine.ErrNoMachine):
 		writeError(w, http.StatusNotFound, "no_machine")
@@ -156,15 +213,21 @@ func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// machineMutation factors the shared shape of start/stop: auth, run op, map
-// ErrNoMachine→404, ErrInvalidState→409, else 202 with the summary.
-func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func(context.Context, pgtype.UUID) (store.Machine, error)) {
+// machineMutation factors the shared shape of start/stop: auth, parse the {id}
+// path value, run op (which ownership-checks), map ErrNoMachine→404,
+// ErrInvalidState→409, else 202 with the summary.
+func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func(context.Context, pgtype.UUID, pgtype.UUID) (store.Machine, error)) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	m, err := op(r.Context(), user.ID)
+	id, ok := parseMachineID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "no_machine")
+		return
+	}
+	m, err := op(r.Context(), user.ID, id)
 	switch {
 	case errors.Is(err, machine.ErrNoMachine):
 		writeError(w, http.StatusNotFound, "no_machine")
@@ -175,4 +238,43 @@ func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func
 	default:
 		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 	}
+}
+
+// ownedMachine resolves a machine by its path id and verifies ownership,
+// returning a non-empty error code ("no_machine") the caller maps to 404.
+func (s *Server) ownedMachine(ctx context.Context, user store.User, idParam string) (store.Machine, string) {
+	id, ok := parseMachineID(idParam)
+	if !ok {
+		return store.Machine{}, "no_machine"
+	}
+	m, err := s.resolveTerminalMachine(ctx, user, machine.UUIDString(id))
+	if err != nil {
+		return store.Machine{}, "no_machine"
+	}
+	return m, ""
+}
+
+// parseMachineID parses a machine id path value into a UUID. A malformed value
+// yields ok=false (callers map that to 404 to avoid leaking existence).
+func parseMachineID(s string) (pgtype.UUID, bool) {
+	id, err := machine.ParseUUID(s)
+	if err != nil || !id.Valid {
+		return pgtype.UUID{}, false
+	}
+	return id, true
+}
+
+// decodeOptionalName reads an optional {"name": "..."} JSON body, tolerating an
+// empty/missing body (auto-naming then applies). A malformed body yields "".
+func decodeOptionalName(r *http.Request) string {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if r.Body == nil {
+		return ""
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.Name)
 }

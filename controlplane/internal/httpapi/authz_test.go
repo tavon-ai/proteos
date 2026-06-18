@@ -27,11 +27,13 @@ func TestProtectedRoutesRejectUnauthenticated(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/me"},
-		{http.MethodGet, "/api/machine"},
-		{http.MethodPost, "/api/machine"},
-		{http.MethodPost, "/api/machine/start"},
-		{http.MethodPost, "/api/machine/stop"},
-		{http.MethodDelete, "/api/machine"},
+		{http.MethodGet, "/api/machines"},
+		{http.MethodPost, "/api/machines"},
+		{http.MethodGet, "/api/machines/abc"},
+		{http.MethodPatch, "/api/machines/abc"},
+		{http.MethodPost, "/api/machines/abc/start"},
+		{http.MethodPost, "/api/machines/abc/stop"},
+		{http.MethodDelete, "/api/machines/abc"},
 		{http.MethodGet, "/api/machine/events"},
 	}
 

@@ -613,6 +613,91 @@ body {
   cursor: not-allowed;
 }
 
+/* === Machine switcher (multi-machine) ================================= */
+.machine-switcher {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.machine-switcher-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--border);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.machine-switcher-toggle:hover {
+  border-color: var(--muted);
+}
+.machine-switcher-name {
+  font-weight: 600;
+}
+.machine-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+.machine-menu {
+  position: absolute;
+  top: 110%;
+  left: 0;
+  z-index: 51;
+  min-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.3rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.machine-menu-item,
+.machine-menu-action {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.machine-menu-item:hover,
+.machine-menu-action:hover {
+  background: var(--border);
+}
+.machine-menu-item.is-selected {
+  border-color: var(--accent, #2f81f7);
+}
+.machine-menu-name {
+  font-weight: 600;
+}
+.machine-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 0.2rem 0;
+}
+.machine-menu-empty,
+.machine-menu-error {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.machine-menu-error {
+  color: var(--error);
+}
+
 /* === Phase 9: project-centric desktop ================================= */
 
 .desktop {

@@ -108,6 +108,16 @@ func setupTap(tap, gatewayCIDR, guestCIDR string) error {
 	if err := run("ip", "link", "set", tap, "up"); err != nil {
 		return err
 	}
+	// Pin a /32 route to THIS guest via THIS tap. Every machine shares the same
+	// gateway /24, so each tap gets an identical connected 172.30.0.0/24 route;
+	// with two+ taps the kernel would send a guest's return traffic out whichever
+	// tap was added first, so only the first machine could reach the internet
+	// (the 2nd+ machine's DNS/egress replies never arrive). The per-guest /32 is
+	// more specific than the /24 and disambiguates the return path. It is removed
+	// with the tap on teardown.
+	if err := run("ip", "route", "replace", guestCIDR, "dev", tap); err != nil {
+		return err
+	}
 	if err := run("sysctl", "-wq", "net.ipv4.ip_forward=1"); err != nil {
 		return err
 	}

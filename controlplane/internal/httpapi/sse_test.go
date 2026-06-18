@@ -216,7 +216,7 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 	ctx := context.Background()
 
 	// Create the machine first (writes the provisioning event).
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 	}
 
 	// Transition 2: running→hibernating.
-	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
+	if _, err := h.svc.Stop(ctx, h.userID, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	hibernatingID := h.lastEventID(t, m.ID)
@@ -267,14 +267,14 @@ func TestSSEReplaysFromLastEventID(t *testing.T) {
 	h := newSSEHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID) // provisioning event
+	m, err := h.svc.Create(ctx, h.userID, "") // provisioning event
 	if err != nil {
 		t.Fatal(err)
 	}
 	idStr := machine.UUIDString(m.ID)
 	h.agent.set(idStr, agentapi.StateRunning, "172.30.0.2")
 	h.poller.AdvanceTransitional(ctx) // running event
-	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
+	if _, err := h.svc.Stop(ctx, h.userID, m.ID); err != nil {
 		t.Fatal(err) // hibernating event
 	}
 

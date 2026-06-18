@@ -113,14 +113,11 @@ func (s *Server) handleGitClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The machine must exist and be running with a live channel.
-	mc, err := s.Machines.Get(r.Context(), user.ID)
-	if errors.Is(err, machine.ErrNoMachine) {
-		writeError(w, http.StatusConflict, "machine_not_running")
-		return
-	}
+	// The target machine (?machine=<id>) must exist, be owned by the user, and be
+	// running with a live channel.
+	mc, err := s.resolveTerminalMachine(r.Context(), user, r.URL.Query().Get("machine"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal")
+		writeError(w, http.StatusConflict, "machine_not_running")
 		return
 	}
 	machineID := machine.UUIDString(mc.ID)

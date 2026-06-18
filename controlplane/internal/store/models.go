@@ -59,6 +59,7 @@ type Machine struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	DiskID       pgtype.UUID        `json:"disk_id"`
 	Boot         *string            `json:"boot"`
+	Name         string             `json:"name"`
 }
 
 type MachineEvent struct {

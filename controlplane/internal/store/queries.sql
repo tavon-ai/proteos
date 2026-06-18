@@ -76,14 +76,31 @@ ON CONFLICT (name) DO UPDATE
 RETURNING *;
 
 -- name: CreateMachine :one
--- Create a user's (1:1) machine in the initial 'requested' state, pinning the
--- image refs and resource spec for the lifetime of the row.
-INSERT INTO machines (user_id, host_id, state, kernel_ref, rootfs_ref, resource_spec)
-VALUES ($1, $2, 'requested', $3, $4, $5)
+-- Create one of a user's machines in the initial 'requested' state, pinning the
+-- image refs and resource spec for the lifetime of the row. name is the display
+-- label (auto-named machine-N by the service; renameable later).
+INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec)
+VALUES ($1, $2, 'requested', $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetMachineByUserID :one
+-- The user's single machine. Retained only for the single-machine fallback in
+-- the gateway resolver; multi-machine callers use ListMachinesByUserID + an id.
 SELECT * FROM machines WHERE user_id = $1;
+
+-- name: ListMachinesByUserID :many
+-- All of a user's machines, oldest-first (stable order for the switcher).
+SELECT * FROM machines WHERE user_id = $1 ORDER BY created_at ASC, id ASC;
+
+-- name: CountMachinesByUserID :one
+-- Number of machines a user owns, for enforcing the per-user cap on create.
+SELECT count(*) FROM machines WHERE user_id = $1;
+
+-- name: RenameMachine :one
+-- Set a machine's display name. Ownership is enforced by the caller.
+UPDATE machines SET name = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
 
 -- name: GetMachineByID :one
 SELECT * FROM machines WHERE id = $1;
@@ -145,6 +162,26 @@ ORDER BY id ASC;
 SELECT * FROM machine_events
 WHERE machine_id = $1 AND id > $2
 ORDER BY id ASC;
+
+-- name: ListUserMachineEventsRecent :many
+-- Most-recent N events across ALL of a user's machines, oldest-first, for the
+-- multi-machine SSE snapshot.
+SELECT sub.* FROM (
+    SELECT me.* FROM machine_events me
+    JOIN machines m ON m.id = me.machine_id
+    WHERE m.user_id = $1
+    ORDER BY me.id DESC
+    LIMIT $2
+) sub
+ORDER BY sub.id ASC;
+
+-- name: ListUserMachineEventsAfter :many
+-- Events across ALL of a user's machines after a given id, oldest-first, for SSE
+-- Last-Event-ID replay (ids are a global sequence so cross-machine order holds).
+SELECT me.* FROM machine_events me
+JOIN machines m ON m.id = me.machine_id
+WHERE m.user_id = $1 AND me.id > $2
+ORDER BY me.id ASC;
 
 -- name: CreateDisk :one
 -- Provision a machine's persistent disk at create time (1:1 with the machine).

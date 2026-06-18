@@ -21,10 +21,15 @@ import (
 
 // Service errors mapped by the HTTP layer to status codes.
 var (
-	ErrMachineExists = errors.New("machine: already exists for user") // 409
-	ErrNoMachine     = errors.New("machine: none for user")           // 404
-	ErrInvalidState  = errors.New("machine: invalid state for op")    // 409
+	ErrNoMachine    = errors.New("machine: none for user")          // 404
+	ErrInvalidState = errors.New("machine: invalid state for op")   // 409
+	ErrMachineLimit = errors.New("machine: per-user limit reached") // 409
+	ErrAmbiguous    = errors.New("machine: which one (multiple)")   // 400 (resolver)
 )
+
+// defaultMaxPerUser caps how many machines a user may own when Spec.MaxPerUser
+// is unset (≤0). The cap protects the single fc-node host's RAM and guest-IP pool.
+const defaultMaxPerUser = 3
 
 // NodeClient is the subset of the node-agent client the lifecycle needs. Kept
 // as an interface so the service and poller are testable against a fake agent.
@@ -37,11 +42,12 @@ type NodeClient interface {
 
 // Spec is the resource shape and pinned image refs stamped on new machines.
 type Spec struct {
-	Vcpus     int
-	MemMiB    int
-	DiskMiB   int // Phase 4: persistent disk size (default 10240)
-	KernelRef string
-	RootfsRef string
+	Vcpus      int
+	MemMiB     int
+	DiskMiB    int // Phase 4: persistent disk size (default 10240)
+	KernelRef  string
+	RootfsRef  string
+	MaxPerUser int // per-user machine cap; ≤0 ⇒ defaultMaxPerUser
 }
 
 // Service owns machine lifecycle operations driven by the user-facing API. All
@@ -64,13 +70,55 @@ func NewService(pool *pgxpool.Pool, nodes NodeClient, broker *Broker, sec secret
 	return &Service{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, secrets: sec, hostID: hostID, spec: spec}
 }
 
-// Get returns the user's machine, or ErrNoMachine.
+// Get returns the user's machine, or ErrNoMachine. With multi-machine it returns
+// an arbitrary row if the user has several, so it is retained only for the
+// gateway resolver's single-machine fallback; id-based callers use getOwned.
 func (s *Service) Get(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
 	m, err := s.q.GetMachineByUserID(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.Machine{}, ErrNoMachine
 	}
 	return m, err
+}
+
+// List returns all of a user's machines, oldest-first. Empty slice if none.
+func (s *Service) List(ctx context.Context, userID pgtype.UUID) ([]store.Machine, error) {
+	return s.q.ListMachinesByUserID(ctx, userID)
+}
+
+// OnlyMachine returns the user's machine iff they own exactly one. ErrNoMachine
+// if they have none; ErrAmbiguous if they have more than one (the caller must
+// then require an explicit machine id). Backs the gateway resolver's empty-param
+// fallback so it never silently picks an arbitrary machine.
+func (s *Service) OnlyMachine(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
+	ms, err := s.q.ListMachinesByUserID(ctx, userID)
+	if err != nil {
+		return store.Machine{}, err
+	}
+	switch len(ms) {
+	case 0:
+		return store.Machine{}, ErrNoMachine
+	case 1:
+		return ms[0], nil
+	default:
+		return store.Machine{}, ErrAmbiguous
+	}
+}
+
+// getOwned resolves a machine by id and verifies the user owns it. A missing or
+// foreign machine yields ErrNoMachine (never leaking whether the id exists).
+func (s *Service) getOwned(ctx context.Context, userID, machineID pgtype.UUID) (store.Machine, error) {
+	m, err := s.q.GetMachineByID(ctx, machineID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.Machine{}, ErrNoMachine
+	}
+	if err != nil {
+		return store.Machine{}, err
+	}
+	if !m.UserID.Valid || !userID.Valid || m.UserID.Bytes != userID.Bytes {
+		return store.Machine{}, ErrNoMachine
+	}
+	return m, nil
 }
 
 // DiskFor returns the machine's persistent disk, or nil if none is provisioned.
@@ -113,13 +161,22 @@ func (s *Service) GetByID(ctx context.Context, id pgtype.UUID) (store.Machine, e
 // to provisioning → ask the agent to ensure-running. If the agent call fails
 // the machine is moved to error (with the reason), and the errored machine is
 // still returned (the create "succeeded" in that a machine row now exists; the
-// user can retry via Start). Returns ErrMachineExists if the user already has
-// one (1:1).
-func (s *Service) Create(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
-	if _, err := s.q.GetMachineByUserID(ctx, userID); err == nil {
-		return store.Machine{}, ErrMachineExists
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return store.Machine{}, fmt.Errorf("lookup existing machine: %w", err)
+// user can retry via Start). Returns ErrMachineLimit if the user is at their
+// per-user cap. name is the display label; empty ⇒ auto-named machine-<n>.
+func (s *Service) Create(ctx context.Context, userID pgtype.UUID, name string) (store.Machine, error) {
+	count, err := s.q.CountMachinesByUserID(ctx, userID)
+	if err != nil {
+		return store.Machine{}, fmt.Errorf("count machines: %w", err)
+	}
+	max := s.spec.MaxPerUser
+	if max <= 0 {
+		max = defaultMaxPerUser
+	}
+	if count >= int64(max) {
+		return store.Machine{}, ErrMachineLimit
+	}
+	if name == "" {
+		name = fmt.Sprintf("machine-%d", count+1)
 	}
 
 	diskMiB := s.spec.DiskMiB
@@ -130,6 +187,7 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID) (store.Machine
 	m, err := s.q.CreateMachine(ctx, store.CreateMachineParams{
 		UserID:       userID,
 		HostID:       s.hostID,
+		Name:         name,
 		KernelRef:    s.spec.KernelRef,
 		RootfsRef:    s.spec.RootfsRef,
 		ResourceSpec: specJSON,
@@ -162,9 +220,10 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID) (store.Machine
 }
 
 // Start cold-boots a stopped or errored machine: transition to starting → ask
-// the agent to ensure-running. Invalid current state ⇒ ErrInvalidState.
-func (s *Service) Start(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
-	m, err := s.Get(ctx, userID)
+// the agent to ensure-running. Invalid current state ⇒ ErrInvalidState; missing
+// or foreign machine ⇒ ErrNoMachine.
+func (s *Service) Start(ctx context.Context, userID, machineID pgtype.UUID) (store.Machine, error) {
+	m, err := s.getOwned(ctx, userID, machineID)
 	if err != nil {
 		return store.Machine{}, err
 	}
@@ -183,8 +242,8 @@ func (s *Service) Start(ctx context.Context, userID pgtype.UUID) (store.Machine,
 // transition running → hibernating → ask the agent to pause+snapshot. The agent
 // falls back to a cold poweroff internally if snapshotting fails; either way the
 // poller advances the machine to stopped. Invalid current state ⇒ ErrInvalidState.
-func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, error) {
-	m, err := s.Get(ctx, userID)
+func (s *Service) Stop(ctx context.Context, userID, machineID pgtype.UUID) (store.Machine, error) {
+	m, err := s.getOwned(ctx, userID, machineID)
 	if err != nil {
 		return store.Machine{}, err
 	}
@@ -209,9 +268,9 @@ func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, 
 // wiped, the LUKS volume key is dropped, and the machine row is hard-deleted
 // (cascading to its disk, snapshot, and event log). Allowed from any state — the
 // point is to wipe the machine regardless of where it is in its lifecycle.
-// ErrNoMachine if the user has none.
-func (s *Service) Destroy(ctx context.Context, userID pgtype.UUID) error {
-	m, err := s.Get(ctx, userID)
+// Missing or foreign machine ⇒ ErrNoMachine.
+func (s *Service) Destroy(ctx context.Context, userID, machineID pgtype.UUID) error {
+	m, err := s.getOwned(ctx, userID, machineID)
 	if err != nil {
 		return err
 	}
@@ -239,6 +298,29 @@ func (s *Service) Destroy(ctx context.Context, userID pgtype.UUID) error {
 	// so this carries the pre-delete row only for the user-id filter).
 	s.broker.Publish(Update{Machine: m, Deleted: true})
 	return nil
+}
+
+// Rename sets a machine's display name and publishes the change so the switcher
+// updates live. Missing or foreign machine ⇒ ErrNoMachine. The rename is a
+// metadata-only update (no state transition, no audit event).
+func (s *Service) Rename(ctx context.Context, userID, machineID pgtype.UUID, name string) (store.Machine, error) {
+	if _, err := s.getOwned(ctx, userID, machineID); err != nil {
+		return store.Machine{}, err
+	}
+	m, err := s.q.RenameMachine(ctx, store.RenameMachineParams{ID: machineID, Name: name})
+	if err != nil {
+		return store.Machine{}, fmt.Errorf("rename machine: %w", err)
+	}
+	// Record an info event so the change flows over the SSE stream with a real
+	// (bigserial) id — the live loop and Last-Event-ID replay both key off it.
+	// Best-effort: the rename is already durable if this insert fails.
+	payload, _ := json.Marshal(map[string]string{"name": name})
+	if ev, err := s.q.InsertMachineEvent(ctx, store.InsertMachineEventParams{
+		MachineID: machineID, Type: EventInfo, Actor: ActorUser(UUIDString(userID)), Payload: payload,
+	}); err == nil {
+		s.broker.Publish(Update{Machine: m, Event: ev})
+	}
+	return m, nil
 }
 
 // ensureOnAgent issues the agent ensure-running for a machine already moved to a

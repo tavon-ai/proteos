@@ -8,6 +8,7 @@ import {
   useRepos,
 } from '../api/hooks';
 import { GitHubStatus } from '../components/GitHubStatus';
+import { useSelectedMachine } from './selectedMachine';
 import { useWindowManager } from './windowManagerContext';
 import { openAgent, openEditor, openSettings, openTerminal } from './openers';
 
@@ -25,8 +26,9 @@ export function ProjectsLauncher({
   providers: Provider[];
   events: MachineEvent[];
 }) {
+  const { selectedId } = useSelectedMachine();
   const running = machineState === 'running';
-  const { data, isLoading, error } = useProjects(running);
+  const { data, isLoading, error } = useProjects(selectedId, running);
   const invalidateProjects = useInvalidateProjects();
   const [showClone, setShowClone] = useState(false);
 
@@ -150,8 +152,9 @@ interface CloneState {
 }
 
 function CloneForm({ events }: { events: MachineEvent[] }) {
+  const { selectedId } = useSelectedMachine();
   const { data, isLoading, error, refetch, isFetching } = useRepos();
-  const clone = useCloneRepo();
+  const clone = useCloneRepo(selectedId);
   const [clones, setClones] = useState<Record<string, CloneState>>({});
 
   // Correlate git.clone completion events back to in-flight clones by op_id.

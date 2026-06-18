@@ -1,17 +1,15 @@
 package httpapi
 
 import (
-	"errors"
 	"net/http"
-
-	"github.com/tavon/proteos/controlplane/internal/machine"
 )
 
-// meResponse is the shape returned by GET /api/me. The machine summary is the
-// user's machine, or null if they have none.
+// meResponse is the shape returned by GET /api/me. machines is all of the user's
+// machines (possibly empty), seeding the SPA's first paint without a second
+// round-trip; the SSE stream then keeps the list live.
 type meResponse struct {
-	User    meUser          `json:"user"`
-	Machine *MachineSummary `json:"machine"`
+	User     meUser           `json:"user"`
+	Machines []MachineSummary `json:"machines"`
 }
 
 type meUser struct {
@@ -34,17 +32,15 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			Email:     user.Email,
 			AvatarURL: user.AvatarUrl,
 		},
+		Machines: []MachineSummary{},
 	}
-	m, err := s.Machines.Get(r.Context(), user.ID)
-	switch {
-	case err == nil:
-		summary := s.summary(r.Context(), m)
-		resp.Machine = &summary
-	case errors.Is(err, machine.ErrNoMachine):
-		// leave Machine nil
-	default:
+	ms, err := s.Machines.List(r.Context(), user.ID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
+	}
+	for _, m := range ms {
+		resp.Machines = append(resp.Machines, s.summary(r.Context(), m))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

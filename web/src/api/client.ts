@@ -32,7 +32,8 @@ export interface Me {
     email: string;
     avatar_url: string;
   };
-  machine: MachineSummary | null;
+  // All of the user's machines (possibly empty), seeding the SPA's first paint.
+  machines: MachineSummary[];
 }
 
 // MachineState mirrors the control-plane machines.state CHECK constraint.
@@ -56,6 +57,7 @@ interface SnapshotSummary {
 
 export interface MachineSummary {
   id: string;
+  name: string;
   state: MachineState;
   guest_ip: string | null;
   kernel_ref: string;
@@ -83,14 +85,18 @@ export interface MachineEvent {
   created_at: string;
 }
 
-// SSE payloads from GET /api/machine/events.
+// SSE payloads from GET /api/machine/events. The snapshot carries every machine
+// the user owns; live `machine` events upsert one by id and `destroyed` removes one.
 export interface SnapshotData {
-  machine: MachineSummary | null;
+  machines: MachineSummary[];
   events: MachineEvent[];
 }
 export interface MachineEventData {
   machine: MachineSummary;
   event: MachineEvent;
+}
+export interface MachineDestroyedData {
+  machine_id: string;
 }
 
 // SecretField is one declared input a provider needs (Phase 6). The settings UI
@@ -211,43 +217,50 @@ export const api = {
   me: () => request<Me>('/api/me'),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
-  // GET /api/machine returns the user's machine, or null when they have none
-  // (the API answers 404 no_machine, which we translate to null here).
-  getMachine: async (): Promise<MachineSummary | null> => {
-    try {
-      return await request<MachineSummary>('/api/machine');
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) return null;
-      throw err;
-    }
-  },
-  createMachine: () => request<MachineSummary>('/api/machine', { method: 'POST' }),
-  startMachine: () => request<MachineSummary>('/api/machine/start', { method: 'POST' }),
-  stopMachine: () => request<MachineSummary>('/api/machine/stop', { method: 'POST' }),
-  // DELETE /api/machine tears the machine down for good (wipes the persistent
-  // disk) and returns 204. The destroyed machine arrives over SSE as a
-  // `destroyed` event; the mutation also clears the cache immediately.
-  destroyMachine: () => request<void>('/api/machine', { method: 'DELETE' }),
-
-  // Mint a one-shot editor URL for the running machine (Phase 8). 409
+  // GET /api/machines returns all of the user's machines (possibly empty).
+  listMachines: () => request<MachineSummary[]>('/api/machines'),
+  // POST /api/machines provisions a new machine, auto-named when no name given.
+  // 409 machine_limit (ApiError) when the per-user cap is reached.
+  createMachine: (name?: string) =>
+    request<MachineSummary>('/api/machines', {
+      method: 'POST',
+      headers: name ? { 'Content-Type': 'application/json' } : {},
+      body: name ? JSON.stringify({ name }) : undefined,
+    }),
+  startMachine: (id: string) =>
+    request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}/start`, { method: 'POST' }),
+  stopMachine: (id: string) =>
+    request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+  destroyMachine: (id: string) =>
+    request<void>(`/api/machines/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  renameMachine: (id: string, name: string) =>
+    request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  // Mint a one-shot editor URL for a running machine (Phase 8). 409
   // machine_not_running / 404 no_machine surface as ApiError. Only available when
   // the control plane has PROTEOS_MACHINE_DOMAIN set; otherwise the route 404s.
   // An optional `folder` opens code-server directly on a project (Phase 9 #5);
   // 400 bad_folder if it is not a listable project.
-  webSession: (folder?: string) =>
-    request<WebSession>('/api/machine/web-session', {
+  webSession: (machineID: string, folder?: string) =>
+    request<WebSession>(`/api/machine/web-session?machine=${encodeURIComponent(machineID)}`, {
       method: 'POST',
       headers: folder ? { 'Content-Type': 'application/json' } : {},
       body: folder ? JSON.stringify({ folder }) : undefined,
     }),
 
-  // Projects + desktop layout (Phase 9). listProjects 409s when the machine is
-  // not running. getDesktop/putDesktop relay the opaque layout to/from machine
-  // SQLite; putDesktop is a 204 (a no-op on a diskless stack).
-  listProjects: () => request<ProjectsResponse>('/api/projects'),
-  getDesktop: () => request<DesktopResponse>('/api/machine/desktop'),
-  putDesktop: (layout: unknown) =>
-    request<void>('/api/machine/desktop', {
+  // Projects + desktop layout (Phase 9), scoped to a specific machine via
+  // ?machine=. listProjects 409s when the machine is not running. getDesktop/
+  // putDesktop relay the opaque layout to/from that machine's SQLite; putDesktop
+  // is a 204 (a no-op on a diskless stack).
+  listProjects: (machineID: string) =>
+    request<ProjectsResponse>(`/api/projects?machine=${encodeURIComponent(machineID)}`),
+  getDesktop: (machineID: string) =>
+    request<DesktopResponse>(`/api/machine/desktop?machine=${encodeURIComponent(machineID)}`),
+  putDesktop: (machineID: string, layout: unknown) =>
+    request<void>(`/api/machine/desktop?machine=${encodeURIComponent(machineID)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout }),
@@ -270,8 +283,8 @@ export const api = {
   // when the GitHub grant is revoked; cloneRepo returns an op_id and the clone
   // completes asynchronously (watch git.clone machine events).
   listRepos: () => request<ReposResponse>('/api/git/repos'),
-  cloneRepo: (fullName: string) =>
-    request<CloneStarted>('/api/git/clone', {
+  cloneRepo: (machineID: string, fullName: string) =>
+    request<CloneStarted>(`/api/git/clone?machine=${encodeURIComponent(machineID)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name: fullName }),

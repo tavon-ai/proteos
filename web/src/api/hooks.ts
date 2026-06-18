@@ -5,6 +5,7 @@ import {
   ApiError,
   machineEventsUrl,
   SessionExpiredError,
+  type MachineDestroyedData,
   type MachineEvent,
   type MachineEventData,
   type MachineSummary,
@@ -39,16 +40,16 @@ export function useLogout() {
   });
 }
 
-// machineKey is the query cache key for the user's machine.
-const machineKey = ['machine'] as const;
+// machinesKey is the query cache key for the user's list of machines.
+const machinesKey = ['machines'] as const;
 
-// useMachine loads the user's machine (null if none). Seeded from /api/me on
-// first paint so the dashboard renders without a second round-trip; the SSE
-// stream then keeps it live.
-export function useMachine(initial: MachineSummary | null) {
+// useMachines loads all of the user's machines. Seeded from /api/me on first
+// paint so the desktop renders without a second round-trip; the SSE stream then
+// keeps the list live (upsert/remove by id).
+export function useMachines(initial: MachineSummary[]) {
   return useQuery({
-    queryKey: machineKey,
-    queryFn: api.getMachine,
+    queryKey: machinesKey,
+    queryFn: api.listMachines,
     initialData: initial,
     retry: (failureCount, error) => {
       if (error instanceof SessionExpiredError) return false;
@@ -57,23 +58,46 @@ export function useMachine(initial: MachineSummary | null) {
   });
 }
 
-// useMachineMutations exposes create/start/stop. Each writes the returned
-// summary straight into the machine query cache so the UI reflects the new
-// (transitional) state immediately, before the first SSE event arrives.
+// upsertMachine merges a single machine summary into the cached list by id.
+function upsertMachine(qc: ReturnType<typeof useQueryClient>, m: MachineSummary) {
+  qc.setQueryData<MachineSummary[]>(machinesKey, (prev = []) => {
+    const i = prev.findIndex((x) => x.id === m.id);
+    if (i === -1) return [...prev, m];
+    const next = prev.slice();
+    next[i] = m;
+    return next;
+  });
+}
+
+// removeMachine drops a machine from the cached list by id.
+function removeMachine(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.setQueryData<MachineSummary[]>(machinesKey, (prev = []) => prev.filter((x) => x.id !== id));
+}
+
+// useMachineMutations exposes create/start/stop/destroy/rename, each keyed by a
+// machine id (create takes an optional name). Successful results are merged into
+// the machines list cache immediately, before the first SSE event arrives.
 export function useMachineMutations() {
   const qc = useQueryClient();
-  const onSuccess = (m: MachineSummary) => qc.setQueryData(machineKey, m);
+  const onSuccess = (m: MachineSummary) => upsertMachine(qc, m);
 
-  const create = useMutation({ mutationFn: api.createMachine, onSuccess });
-  const start = useMutation({ mutationFn: api.startMachine, onSuccess });
-  const stop = useMutation({ mutationFn: api.stopMachine, onSuccess });
-  // Destroy returns 204 (no body); clear the machine from the cache so the UI
-  // drops to "no machine" immediately, before the SSE `destroyed` event lands.
-  const destroy = useMutation({
-    mutationFn: api.destroyMachine,
-    onSuccess: () => qc.setQueryData(machineKey, null),
+  const create = useMutation({
+    mutationFn: (name?: string) => api.createMachine(name),
+    onSuccess,
   });
-  return { create, start, stop, destroy };
+  const start = useMutation({ mutationFn: (id: string) => api.startMachine(id), onSuccess });
+  const stop = useMutation({ mutationFn: (id: string) => api.stopMachine(id), onSuccess });
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.renameMachine(id, name),
+    onSuccess,
+  });
+  // Destroy returns 204 (no body); drop it from the cache immediately, before the
+  // SSE `destroyed` event lands.
+  const destroy = useMutation({
+    mutationFn: (id: string) => api.destroyMachine(id),
+    onSuccess: (_void, id) => removeMachine(qc, id),
+  });
+  return { create, start, stop, rename, destroy };
 }
 
 // providersKey is the query cache key for the provider registry + key_set view.
@@ -130,17 +154,18 @@ export function useRepos() {
   });
 }
 
-// projectsKey is the query cache key for the machine's cloned projects.
-const projectsKey = ['projects'] as const;
+// projectsKey is the query cache key for a machine's cloned projects (keyed by
+// machine id so switching machines refetches the right set).
+const projectsKey = (machineId: string | null) => ['projects', machineId] as const;
 
-// useProjects loads the machine's cloned projects (Phase 9). Disabled until the
-// machine is running (the endpoint 409s otherwise); refetched imperatively on the
-// git.clone SSE event via invalidateProjects below.
-export function useProjects(enabled: boolean) {
+// useProjects loads a machine's cloned projects (Phase 9). Disabled until the
+// machine is running and known (the endpoint 409s otherwise); refetched
+// imperatively on the git.clone SSE event via useInvalidateProjects below.
+export function useProjects(machineId: string | null, enabled: boolean) {
   return useQuery<ProjectsResponse>({
-    queryKey: projectsKey,
-    queryFn: api.listProjects,
-    enabled,
+    queryKey: projectsKey(machineId),
+    queryFn: () => api.listProjects(machineId as string),
+    enabled: enabled && !!machineId,
     retry: (failureCount, error) => {
       if (error instanceof SessionExpiredError) return false;
       if (error instanceof ApiError) return false; // 409 not-running: don't hammer
@@ -150,18 +175,19 @@ export function useProjects(enabled: boolean) {
 }
 
 // useInvalidateProjects returns a function that forces a projects refetch — wired
-// to the git.clone machine event so a finished clone surfaces its new tile.
+// to the git.clone machine event so a finished clone surfaces its new tile. It
+// invalidates every machine's projects query (the event does not name which).
 export function useInvalidateProjects() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: projectsKey });
+  return () => qc.invalidateQueries({ queryKey: ['projects'] });
 }
 
-// useCloneRepo dispatches a clone. It returns the op_id immediately (202);
-// completion arrives as a git.clone machine event. On a stale grant the mutation
-// rejects with ApiError 409 reconnect_github, which the panel surfaces.
-export function useCloneRepo() {
+// useCloneRepo dispatches a clone into the given machine. It returns the op_id
+// immediately (202); completion arrives as a git.clone machine event. On a stale
+// grant the mutation rejects with ApiError 409 reconnect_github.
+export function useCloneRepo(machineId: string | null) {
   return useMutation({
-    mutationFn: (fullName: string) => api.cloneRepo(fullName),
+    mutationFn: (fullName: string) => api.cloneRepo(machineId as string, fullName),
   });
 }
 
@@ -171,10 +197,10 @@ export function reconnectRequired(error: unknown): boolean {
 }
 
 // useMachineEvents subscribes to the SSE stream. It writes live machine state
-// into the query cache (so useMachine stays current without polling) and keeps
-// a rolling event log for display. The browser EventSource reconnects on its
-// own; it replays Last-Event-ID automatically, and our server backfills the
-// missed rows.
+// into the machines-list cache (so useMachines stays current without polling)
+// and keeps a rolling event log for display. The browser EventSource reconnects
+// on its own; it replays Last-Event-ID automatically, and our server backfills
+// the missed rows.
 export function useMachineEvents(): MachineEvent[] {
   const qc = useQueryClient();
   const [events, setEvents] = useState<MachineEvent[]>([]);
@@ -194,26 +220,25 @@ export function useMachineEvents(): MachineEvent[] {
 
     es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
-      qc.setQueryData(machineKey, data.machine);
+      // Replace the whole list — the snapshot is the authoritative current set.
+      qc.setQueryData<MachineSummary[]>(machinesKey, data.machines);
       // Snapshot events arrive oldest-first; show newest-first.
       for (const ev of data.events) pushEvent(ev);
-      log.debug('snapshot', { state: data.machine?.state ?? null, events: data.events.length });
+      log.debug('snapshot', { machines: data.machines.length, events: data.events.length });
     });
 
     es.addEventListener('machine', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as MachineEventData;
-      qc.setQueryData(machineKey, data.machine);
+      upsertMachine(qc, data.machine);
       pushEvent(data.event);
       log.debug('event', { type: data.event.type, to: data.event.to_state });
     });
 
-    // A destroyed machine carries no row; drop it from the cache so the UI
-    // returns to "no machine" and forget the prior event ids.
-    es.addEventListener('destroyed', () => {
-      qc.setQueryData(machineKey, null);
-      seen.current.clear();
-      setEvents([]);
-      log.debug('machine destroyed');
+    // A destroyed machine carries only its id; drop it from the list.
+    es.addEventListener('destroyed', (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as MachineDestroyedData;
+      removeMachine(qc, data.machine_id);
+      log.debug('machine destroyed', { id: data.machine_id });
     });
 
     // EventSource auto-reconnects on error; surface it so a flapping stream is
