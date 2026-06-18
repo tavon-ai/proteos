@@ -36,6 +36,7 @@ func (stubNodeClient) Stop(context.Context, string, string) error { return nil }
 func (stubNodeClient) Status(context.Context, string) (agentapi.MachineStatus, error) {
 	return agentapi.MachineStatus{}, nil
 }
+func (stubNodeClient) Destroy(context.Context, string) error { return nil }
 
 // failDialer is a gateway.GuestDialer that must never be reached (used by the
 // authz tests, where every case errors before the tunnel dial).

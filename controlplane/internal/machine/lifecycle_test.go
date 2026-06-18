@@ -24,11 +24,12 @@ import (
 type fakeAgent struct {
 	mu          sync.Mutex
 	status      map[string]agentapi.MachineStatus
-	failEnsure  bool
-	ensureCalls int
-	stopCalls   int
-	lastEnsure  map[string]agentapi.EnsureRequest // captured per id (incl. volume key)
-	stopModes   []string                          // modes seen on stop calls
+	failEnsure   bool
+	ensureCalls  int
+	stopCalls    int
+	destroyCalls int
+	lastEnsure   map[string]agentapi.EnsureRequest // captured per id (incl. volume key)
+	stopModes    []string                          // modes seen on stop calls
 }
 
 func newFakeAgent() *fakeAgent {
@@ -114,6 +115,14 @@ func (f *fakeAgent) handler() http.Handler {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(st)
+	})
+	mux.HandleFunc(agentapi.RouteDestroy, func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		f.mu.Lock()
+		f.destroyCalls++
+		delete(f.status, id)
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	})
 	return mux
 }
@@ -333,6 +342,57 @@ func TestInvalidStateTransitions(t *testing.T) {
 	// Stop while provisioning (not running) → ErrInvalidState.
 	if _, err := h.svc.Stop(ctx, h.userID); err != machine.ErrInvalidState {
 		t.Fatalf("stop while provisioning: got %v, want ErrInvalidState", err)
+	}
+}
+
+func TestDestroy(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Destroy with no machine → ErrNoMachine.
+	if err := h.svc.Destroy(ctx, h.userID); err != machine.ErrNoMachine {
+		t.Fatalf("destroy without machine: got %v, want ErrNoMachine", err)
+	}
+
+	m, err := h.svc.Create(ctx, h.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idStr := machine.UUIDString(m.ID)
+	h.agent.SetStatus(idStr, agentapi.StateRunning, "", "172.30.0.2")
+	h.poller.AdvanceTransitional(ctx)
+	if h.machine(t).State != string(machine.StateRunning) {
+		t.Fatal("expected running before destroy")
+	}
+
+	// Create minted a disk and a volume key; confirm they exist pre-destroy.
+	if _, err := h.q.GetDiskByMachineID(ctx, m.ID); err != nil {
+		t.Fatalf("expected disk before destroy: %v", err)
+	}
+	if _, err := secrets.GetMachineVolumeKey(h.sec, idStr); err != nil {
+		t.Fatalf("expected volume key before destroy: %v", err)
+	}
+
+	// Destroy: agent torn down, row gone, disk + volume key cleaned up.
+	if err := h.svc.Destroy(ctx, h.userID); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if h.agent.destroyCalls != 1 {
+		t.Fatalf("agent destroy calls=%d, want 1", h.agent.destroyCalls)
+	}
+	if _, err := h.svc.Get(ctx, h.userID); err != machine.ErrNoMachine {
+		t.Fatalf("after destroy Get: got %v, want ErrNoMachine", err)
+	}
+	if _, err := h.q.GetDiskByMachineID(ctx, m.ID); err == nil {
+		t.Fatal("disk row should be gone after destroy (cascade)")
+	}
+	if _, err := secrets.GetMachineVolumeKey(h.sec, idStr); err == nil {
+		t.Fatal("volume key should be gone after destroy")
+	}
+
+	// The user can create a fresh machine after a destroy.
+	if _, err := h.svc.Create(ctx, h.userID); err != nil {
+		t.Fatalf("create after destroy: %v", err)
 	}
 }
 

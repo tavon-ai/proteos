@@ -8,9 +8,15 @@ import (
 
 // Update is one published machine change: the post-commit machine row plus the
 // audit event that recorded the change. The event id is the SSE Last-Event-ID.
+//
+// Deleted marks the terminal "machine destroyed" notification: the row no longer
+// exists, so Machine carries only the pre-delete row (for the SSE user-id filter)
+// and Event is zero. Subscribers emit a `destroyed` event instead of a `machine`
+// one.
 type Update struct {
 	Machine store.Machine
 	Event   store.MachineEvent
+	Deleted bool
 }
 
 // Broker is an in-process pub/sub fan-out for machine Updates. It is the

@@ -120,8 +120,20 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			// Filter to this user's machine; skip rows already replayed/snapshotted.
-			if !sameUser(u.Machine.UserID, user.ID) || u.Event.ID <= lastSent {
+			if !sameUser(u.Machine.UserID, user.ID) {
+				continue
+			}
+			// A destroy carries no event row; emit a terminal `destroyed` frame so
+			// the client drops the machine (the row is already gone).
+			if u.Deleted {
+				if writeSSE(w, "destroyed", "", map[string]string{"machine_id": machine.UUIDString(u.Machine.ID)}) != nil {
+					return
+				}
+				flusher.Flush()
+				continue
+			}
+			// Skip rows already replayed/snapshotted.
+			if u.Event.ID <= lastSent {
 				continue
 			}
 			if err := s.writeMachineEvent(ctx, w, u.Machine, u.Event); err != nil {

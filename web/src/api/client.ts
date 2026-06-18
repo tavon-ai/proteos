@@ -224,6 +224,10 @@ export const api = {
   createMachine: () => request<MachineSummary>('/api/machine', { method: 'POST' }),
   startMachine: () => request<MachineSummary>('/api/machine/start', { method: 'POST' }),
   stopMachine: () => request<MachineSummary>('/api/machine/stop', { method: 'POST' }),
+  // DELETE /api/machine tears the machine down for good (wipes the persistent
+  // disk) and returns 204. The destroyed machine arrives over SSE as a
+  // `destroyed` event; the mutation also clears the cache immediately.
+  destroyMachine: () => request<void>('/api/machine', { method: 'DELETE' }),
 
   // Mint a one-shot editor URL for the running machine (Phase 8). 409
   // machine_not_running / 404 no_machine surface as ApiError. Only available when

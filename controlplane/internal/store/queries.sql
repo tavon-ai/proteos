@@ -88,6 +88,12 @@ SELECT * FROM machines WHERE user_id = $1;
 -- name: GetMachineByID :one
 SELECT * FROM machines WHERE id = $1;
 
+-- name: DeleteMachine :exec
+-- Hard-delete a machine row. Cascades to its disk, snapshot, and machine_events
+-- (all ON DELETE CASCADE). The node-agent VM teardown and the secret-store
+-- volume-key deletion are done by the service before this runs.
+DELETE FROM machines WHERE id = $1;
+
 -- name: UpdateMachineState :one
 -- Guarded compare-and-set transition: only updates if the row is still in the
 -- expected from-state, so illegal/raced transitions affect zero rows (the Go

@@ -145,12 +145,14 @@ proteos_guest_go_install: true
 proteos_guest_go_version: "" # empty ⇒ build-rootfs.sh default (mirrors the host Go pin)
 proteos_guest_taskfile_install: true
 proteos_guest_taskfile_version: "" # empty ⇒ build-rootfs.sh default
-proteos_guest_aliases: {} # name ⇒ command map; baked into the guest .bashrc
+proteos_guest_aliases:
+  c: "claude --dangerously-skip-permissions"
+  gs: "git status"
+  gc: "git commit -a -s -m"
+  ga: "git add ."
 
-# c: "claude --dangerously-skip-permissions",
-# gs: "git status",
-# gc: "git commit -a -s -m",
-# ga: "git add .",
+# name ⇒ command map; baked into the guest .bashrc
+
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.
 # ============================================================================

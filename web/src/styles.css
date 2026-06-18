@@ -599,6 +599,19 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.btn-danger {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--error);
+  color: var(--bg);
+}
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* === Phase 9: project-centric desktop ================================= */
 

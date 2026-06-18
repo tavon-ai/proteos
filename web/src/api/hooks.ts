@@ -67,7 +67,13 @@ export function useMachineMutations() {
   const create = useMutation({ mutationFn: api.createMachine, onSuccess });
   const start = useMutation({ mutationFn: api.startMachine, onSuccess });
   const stop = useMutation({ mutationFn: api.stopMachine, onSuccess });
-  return { create, start, stop };
+  // Destroy returns 204 (no body); clear the machine from the cache so the UI
+  // drops to "no machine" immediately, before the SSE `destroyed` event lands.
+  const destroy = useMutation({
+    mutationFn: api.destroyMachine,
+    onSuccess: () => qc.setQueryData(machineKey, null),
+  });
+  return { create, start, stop, destroy };
 }
 
 // providersKey is the query cache key for the provider registry + key_set view.
@@ -199,6 +205,15 @@ export function useMachineEvents(): MachineEvent[] {
       qc.setQueryData(machineKey, data.machine);
       pushEvent(data.event);
       log.debug('event', { type: data.event.type, to: data.event.to_state });
+    });
+
+    // A destroyed machine carries no row; drop it from the cache so the UI
+    // returns to "no machine" and forget the prior event ids.
+    es.addEventListener('destroyed', () => {
+      qc.setQueryData(machineKey, null);
+      seen.current.clear();
+      setEvents([]);
+      log.debug('machine destroyed');
     });
 
     // EventSource auto-reconnects on error; surface it so a flapping stream is

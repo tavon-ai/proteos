@@ -107,6 +107,18 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	return i, err
 }
 
+const deleteMachine = `-- name: DeleteMachine :exec
+DELETE FROM machines WHERE id = $1
+`
+
+// Hard-delete a machine row. Cascades to its disk, snapshot, and machine_events
+// (all ON DELETE CASCADE). The node-agent VM teardown and the secret-store
+// volume-key deletion are done by the service before this runs.
+func (q *Queries) DeleteMachine(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMachine, id)
+	return err
+}
+
 const deleteSnapshot = `-- name: DeleteSnapshot :exec
 DELETE FROM snapshots WHERE machine_id = $1
 `

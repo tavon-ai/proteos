@@ -30,6 +30,21 @@ export function openTerminal(wm: WindowManagerContext, project: Project): void {
   });
 }
 
+// openHomeTerminal opens a terminal in the user's home directory. Unlike
+// openTerminal it is not scoped to a project (no cwd ⇒ the guest lands in $HOME),
+// so it works even with no repos cloned — the way to get a shell on a fresh or
+// misbehaving machine. A fresh session each time, so repeated clicks open
+// independent shells (matching openTerminal; no dedupe).
+export function openHomeTerminal(wm: WindowManagerContext): void {
+  const session = freshSession();
+  wm.open({
+    id: session,
+    kind: 'terminal',
+    title: 'Terminal — home',
+    session,
+  });
+}
+
 export function openAgent(
   wm: WindowManagerContext,
   project: Project,

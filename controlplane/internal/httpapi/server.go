@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machine", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateMachine))))
 	mux.Handle("POST /api/machine/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
 	mux.Handle("POST /api/machine/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
+	mux.Handle("DELETE /api/machine", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDestroyMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
 
 	// Machine-web session mint (Phase 8): the main-origin endpoint that issues the

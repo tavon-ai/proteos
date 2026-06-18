@@ -31,6 +31,7 @@ func TestProtectedRoutesRejectUnauthenticated(t *testing.T) {
 		{http.MethodPost, "/api/machine"},
 		{http.MethodPost, "/api/machine/start"},
 		{http.MethodPost, "/api/machine/stop"},
+		{http.MethodDelete, "/api/machine"},
 		{http.MethodGet, "/api/machine/events"},
 	}
 

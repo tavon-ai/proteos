@@ -136,6 +136,26 @@ func (s *Server) handleStopMachine(w http.ResponseWriter, r *http.Request) {
 	s.machineMutation(w, r, s.Machines.Stop)
 }
 
+// handleDestroyMachine tears down and removes the user's machine. 204 on
+// success, 404 no_machine if they have none. Irreversible: the persistent disk
+// is wiped (unlike stop, which hibernates).
+func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	err := s.Machines.Destroy(r.Context(), user.ID)
+	switch {
+	case errors.Is(err, machine.ErrNoMachine):
+		writeError(w, http.StatusNotFound, "no_machine")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal")
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // machineMutation factors the shared shape of start/stop: auth, run op, map
 // ErrNoMachine→404, ErrInvalidState→409, else 202 with the summary.
 func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func(context.Context, pgtype.UUID) (store.Machine, error)) {

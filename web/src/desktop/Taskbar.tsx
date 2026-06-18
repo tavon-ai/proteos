@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { MachineState, MachineSummary, Me } from '../api/client';
 import { useMachineMutations } from '../api/hooks';
 import { useWindowManager } from './windowManagerContext';
-import { openLogs, openProjects, openSettings } from './openers';
+import { openHomeTerminal, openLogs, openProjects, openSettings } from './openers';
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
   'requested',
@@ -28,7 +28,7 @@ export function Taskbar({
   loggingOut: boolean;
 }) {
   const wm = useWindowManager();
-  const { create, start, stop } = useMachineMutations();
+  const { create, start, stop, destroy } = useMachineMutations();
   const clock = useClock();
 
   const state = machine?.state;
@@ -36,7 +36,15 @@ export function Taskbar({
     (state ? TRANSITIONAL.has(state) : false) ||
     create.isPending ||
     start.isPending ||
-    stop.isPending;
+    stop.isPending ||
+    destroy.isPending;
+
+  // Destroy wipes the persistent disk for good, so it is gated behind a confirm.
+  const onDestroy = () => {
+    if (window.confirm('Destroy this machine? Its persistent disk is wiped and cannot be recovered.')) {
+      destroy.mutate();
+    }
+  };
 
   return (
     <header className="taskbar">
@@ -63,11 +71,19 @@ export function Taskbar({
             Stop
           </button>
         )}
+        {(state === 'running' || state === 'stopped' || state === 'error') && (
+          <button className="btn-danger" onClick={onDestroy} disabled={busy}>
+            {destroy.isPending ? 'Destroying…' : 'Destroy'}
+          </button>
+        )}
       </div>
 
       <nav className="taskbar-apps">
         <button className="taskbar-app" onClick={() => openProjects(wm)}>
           Projects
+        </button>
+        <button className="taskbar-app" onClick={() => openHomeTerminal(wm)}>
+          Terminal
         </button>
         <button className="taskbar-app" onClick={() => openSettings(wm)}>
           Settings

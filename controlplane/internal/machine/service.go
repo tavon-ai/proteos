@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tavon/proteos/controlplane/internal/nodeclient"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	agentapi "github.com/tavon/proteos/nodeagent/api"
@@ -30,6 +32,7 @@ type NodeClient interface {
 	Ensure(ctx context.Context, id string, req agentapi.EnsureRequest) (agentapi.EnsureResponse, error)
 	Stop(ctx context.Context, id, mode string) error
 	Status(ctx context.Context, id string) (agentapi.MachineStatus, error)
+	Destroy(ctx context.Context, id string) error
 }
 
 // Spec is the resource shape and pinned image refs stamped on new machines.
@@ -198,6 +201,44 @@ func (s *Service) Stop(ctx context.Context, userID pgtype.UUID) (store.Machine, 
 		return s.fail(ctx, m, StateHibernating, "node-agent stop failed: "+err.Error())
 	}
 	return m, nil
+}
+
+// Destroy tears a machine down completely and removes it. Unlike Stop (which
+// hibernates and is reversible via Start), Destroy is irreversible: the VM and
+// all its host resources are torn down on the agent, the persistent disk is
+// wiped, the LUKS volume key is dropped, and the machine row is hard-deleted
+// (cascading to its disk, snapshot, and event log). Allowed from any state — the
+// point is to wipe the machine regardless of where it is in its lifecycle.
+// ErrNoMachine if the user has none.
+func (s *Service) Destroy(ctx context.Context, userID pgtype.UUID) error {
+	m, err := s.Get(ctx, userID)
+	if err != nil {
+		return err
+	}
+	id := UUIDString(m.ID)
+
+	// Tear the VM and its host resources down on the agent first. A machine the
+	// agent no longer tracks is already gone (idempotent); any other failure
+	// aborts the destroy so the row survives and the user can retry.
+	if err := s.nodes.Destroy(ctx, id); err != nil && !errors.Is(err, nodeclient.ErrUnknownMachine) {
+		return fmt.Errorf("node-agent destroy failed: %w", err)
+	}
+
+	// Best-effort: drop the volume key. A leftover key is harmless (its volume is
+	// already destroyed) but should not linger in the secret store.
+	if err := s.secrets.Delete(secrets.MachineVolumeKeyPath(id)); err != nil {
+		slog.Warn("destroy: delete volume key", "machine", id, "err", err)
+	}
+
+	// Hard-delete the row; the cascade removes the disk, snapshot, and event log.
+	if err := s.q.DeleteMachine(ctx, m.ID); err != nil {
+		return fmt.Errorf("delete machine: %w", err)
+	}
+
+	// Notify live SSE subscribers the machine is gone (the row no longer exists,
+	// so this carries the pre-delete row only for the user-id filter).
+	s.broker.Publish(Update{Machine: m, Deleted: true})
+	return nil
 }
 
 // ensureOnAgent issues the agent ensure-running for a machine already moved to a
