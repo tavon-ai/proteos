@@ -44,18 +44,20 @@ function DesktopScoped({
   events: MachineEvent[];
   providers: Provider[];
 }) {
-  const { selected, selectedId } = useSelectedMachine();
+  const { machines, selected, selectedId } = useSelectedMachine();
   const running = selected?.state === 'running';
   const saveLayout = useLayoutSaver(selectedId, running);
 
   return (
-    // Key by the active machine: switching machines fully remounts the window
-    // manager, so the desktop starts empty and loads the selected machine's own
-    // layout — windows from the previous machine can never linger.
-    <WindowManagerProvider key={selectedId ?? 'none'} onChange={saveLayout}>
+    // ONE window manager holds every machine's windows at once. Windows are
+    // tagged with their machine and only the active machine's are shown (the rest
+    // stay mounted but display:none), so terminals/agents keep their live PTYs and
+    // scrollback across machine switches — switching is a show/hide, never a
+    // remount.
+    <WindowManagerProvider onChange={saveLayout}>
       <DesktopShell
         me={me}
-        machine={selected}
+        machines={machines ?? []}
         selectedId={selectedId}
         events={events}
         providers={providers}
@@ -66,13 +68,13 @@ function DesktopScoped({
 
 function DesktopShell({
   me,
-  machine,
+  machines,
   selectedId,
   events,
   providers,
 }: {
   me: Me;
-  machine: MachineSummary | null;
+  machines: MachineSummary[];
   selectedId: string | null;
   events: MachineEvent[];
   providers: Provider[];
@@ -80,20 +82,26 @@ function DesktopShell({
   const wm = useWindowManager();
   const navigate = useNavigate();
   const logout = useLogout();
-  const running = machine?.state === 'running';
   const viewport = useViewport();
 
-  // Scope the desktop to the active machine: reset on switch, restore its layout
-  // once running (reconnects live PTYs by their opaque session ids).
-  useLayoutLoader(wm, selectedId, running);
+  const selected = machines.find((m) => m.id === selectedId) ?? null;
 
-  // Open the Projects launcher on first paint so the desktop is never empty.
-  const openedRef = useRef(false);
+  // Restore each machine's layout the first time it becomes the active running
+  // machine (does not disturb other machines' live windows).
+  useLayoutLoader(wm, selectedId, selected?.state === 'running');
+
+  // Open a Projects launcher the FIRST time each machine becomes active, so a
+  // machine's desktop is never empty. Tracked per-machine in a ref (not keyed on
+  // wm, whose identity changes on every window mutation) so it does NOT re-open
+  // or re-focus Projects on later opens/closes — closing it stays closed.
+  const projectsOpened = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (openedRef.current) return;
-    openedRef.current = true;
-    openProjects(wm);
-  }, [wm]);
+    if (selectedId && !projectsOpened.current.has(selectedId)) {
+      projectsOpened.current.add(selectedId);
+      openProjects(wm, selectedId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const onLogout = () => {
     logout.mutate(undefined, {
@@ -106,17 +114,25 @@ function DesktopShell({
       <Taskbar me={me} onLogout={onLogout} loggingOut={logout.isPending} />
 
       <div className="desktop-surface">
-        {wm.windows.map((win) => (
-          <Window key={win.id} win={win} viewport={viewport}>
-            <WindowBody
-              win={win}
-              machine={machine}
-              machineState={machine?.state ?? 'stopped'}
-              events={events}
-              providers={providers}
-            />
-          </Window>
-        ))}
+        {wm.windows.map((win) => {
+          // A window is shown when it belongs to the active machine (or is a
+          // global window with no machine). Hidden windows stay MOUNTED so their
+          // terminals keep their live PTYs and scrollback across switches.
+          const visible = !win.machineId || win.machineId === selectedId;
+          const winMachine = win.machineId
+            ? (machines.find((m) => m.id === win.machineId) ?? null)
+            : selected;
+          return (
+            <Window key={win.id} win={win} viewport={viewport} hidden={!visible}>
+              <WindowBody
+                win={win}
+                machineState={winMachine?.state ?? 'stopped'}
+                events={events}
+                providers={providers}
+              />
+            </Window>
+          );
+        })}
       </div>
 
       <Dock />
@@ -129,30 +145,35 @@ function DesktopShell({
 // terminal or the editor iframe survives every minimize/maximize/focus.
 function WindowBody({
   win,
-  machine,
   machineState,
   events,
   providers,
 }: {
   win: WindowState;
-  machine: MachineSummary | null;
   machineState: MachineState;
   events: MachineEvent[];
   providers: Provider[];
 }) {
   switch (win.kind) {
     case 'projects':
-      return <ProjectsLauncher machineState={machineState} providers={providers} events={events} />;
+      return (
+        <ProjectsLauncher
+          machineId={win.machineId ?? null}
+          machineState={machineState}
+          providers={providers}
+          events={events}
+        />
+      );
     case 'terminal':
-      return machine ? (
-        <Terminal machineID={machine.id} session={win.session} cwd={win.cwd} />
+      return win.machineId ? (
+        <Terminal machineID={win.machineId} session={win.session} cwd={win.cwd} />
       ) : (
         <StoppedBody />
       );
     case 'agent':
-      return machine ? (
+      return win.machineId ? (
         <Terminal
-          machineID={machine.id}
+          machineID={win.machineId}
           provider={win.provider}
           session={win.session}
           cwd={win.cwd}
@@ -161,7 +182,9 @@ function WindowBody({
         <StoppedBody />
       );
     case 'editor':
-      return <EditorWindow machineState={machineState} folder={win.folder} />;
+      return (
+        <EditorWindow machineId={win.machineId ?? null} machineState={machineState} folder={win.folder} />
+      );
     case 'logs':
       return <LogsWindow events={events} />;
     case 'settings':

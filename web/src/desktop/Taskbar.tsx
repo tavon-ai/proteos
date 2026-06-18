@@ -18,8 +18,11 @@ const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
 // the Projects/Terminal/Settings/Activity windows, a clock, and the user menu.
 export function Taskbar({ me, onLogout, loggingOut }: { me: Me; onLogout: () => void; loggingOut: boolean }) {
   const wm = useWindowManager();
+  const { selectedId } = useSelectedMachine();
   const clock = useClock();
 
+  // Projects/Terminal open in the ACTIVE machine (disabled when there is none);
+  // Settings/Activity are global (one window across all machines).
   return (
     <header className="taskbar">
       <div className="taskbar-left">
@@ -28,10 +31,18 @@ export function Taskbar({ me, onLogout, loggingOut }: { me: Me; onLogout: () => 
       </div>
 
       <nav className="taskbar-apps">
-        <button className="taskbar-app" onClick={() => openProjects(wm)}>
+        <button
+          className="taskbar-app"
+          onClick={() => selectedId && openProjects(wm, selectedId)}
+          disabled={!selectedId}
+        >
           Projects
         </button>
-        <button className="taskbar-app" onClick={() => openHomeTerminal(wm)}>
+        <button
+          className="taskbar-app"
+          onClick={() => selectedId && openHomeTerminal(wm, selectedId)}
+          disabled={!selectedId}
+        >
           Terminal
         </button>
         <button className="taskbar-app" onClick={() => openSettings(wm)}>

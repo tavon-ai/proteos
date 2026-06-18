@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type MachineState } from '../api/client';
-import { useSelectedMachine } from '../desktop/selectedMachine';
 
 // EditorWindow hosts the machine's code-server editor inside a desktop window
 // (Phase 9). It mints a one-shot web-session URL scoped to the window's project
@@ -14,25 +13,26 @@ import { useSelectedMachine } from '../desktop/selectedMachine';
 // mounted once for the window's lifetime, so the iframe is never reloaded by a
 // minimize/maximize/focus (decision #2).
 export function EditorWindow({
+  machineId,
   machineState,
   folder,
 }: {
+  machineId: string | null;
   machineState: MachineState;
   folder?: string;
 }) {
-  const { selectedId } = useSelectedMachine();
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const running = machineState === 'running';
 
   const mint = useCallback(() => {
-    if (!selectedId) return;
+    if (!machineId) return;
     setError(null);
     api
-      .webSession(selectedId, folder)
+      .webSession(machineId, folder)
       .then((s) => setUrl(s.url))
       .catch(() => setError('Could not open the editor. Try again.'));
-  }, [selectedId, folder]);
+  }, [machineId, folder]);
 
   // Mint once the machine is running (and re-mint if it returns to running after
   // a stop). The token is single-use and ≤60s, loaded immediately by the iframe.

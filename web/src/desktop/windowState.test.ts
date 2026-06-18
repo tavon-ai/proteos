@@ -223,6 +223,52 @@ describe('layout serialization', () => {
     expect(s.windows[1].zIndex).toBeGreaterThan(s.windows[0].zIndex);
   });
 
+  it('scopes dedupe per machine (projects launcher is one per machine)', () => {
+    let s = initialDesktop;
+    s = open(s, { id: 'projects-m1', kind: 'projects', machineId: 'm1', dedupeKey: 'projects|m1' });
+    s = open(s, { id: 'projects-m2', kind: 'projects', machineId: 'm2', dedupeKey: 'projects|m2' });
+    // Different machines ⇒ two launchers coexist.
+    expect(s.windows.map((w) => w.id)).toEqual(['projects-m1', 'projects-m2']);
+    // Re-opening m1's launcher collapses onto the existing one (no third window).
+    s = open(s, { id: 'projects-m1-again', kind: 'projects', machineId: 'm1', dedupeKey: 'projects|m1' });
+    expect(s.windows.map((w) => w.id)).toEqual(['projects-m1', 'projects-m2']);
+  });
+
+  it('hydrateMachine restores one machine without disturbing another', () => {
+    let s = initialDesktop;
+    // A live terminal on m2 that must survive m1 being (re)hydrated.
+    s = open(s, { id: 't-m2', kind: 'terminal', machineId: 'm2', session: 's2' });
+    s = desktopReducer(s, {
+      type: 'hydrateMachine',
+      machineId: 'm1',
+      windows: [
+        {
+          id: 't-m1',
+          kind: 'terminal',
+          title: 'T1',
+          machineId: 'm1',
+          session: 's1',
+          geometry: { x: 10, y: 10, width: 400, height: 300 },
+        },
+      ],
+    });
+    const ids = s.windows.map((w) => w.id).sort();
+    expect(ids).toEqual(['t-m1', 't-m2']);
+    // m2's window kept its machineId/session (untouched).
+    const m2 = s.windows.find((w) => w.id === 't-m2')!;
+    expect(m2.machineId).toBe('m2');
+    expect(m2.session).toBe('s2');
+  });
+
+  it('serializeLayout can scope to one machine', () => {
+    let s = initialDesktop;
+    s = open(s, { id: 't-m1', kind: 'terminal', machineId: 'm1', session: 's1' });
+    s = open(s, { id: 't-m2', kind: 'terminal', machineId: 'm2', session: 's2' });
+    const onlyM1 = serializeLayout(s, 'm1');
+    expect(onlyM1.windows.map((w) => w.id)).toEqual(['t-m1']);
+    expect(onlyM1.windows[0].machineId).toBe('m1');
+  });
+
   it('parseLayout rejects malformed input', () => {
     expect(parseLayout(null)).toBeNull();
     expect(parseLayout('not json')).toBeNull();

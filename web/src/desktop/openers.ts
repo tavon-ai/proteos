@@ -18,12 +18,13 @@ function projectLabel(project: Project): string {
   return project.name;
 }
 
-export function openTerminal(wm: WindowManagerContext, project: Project): void {
+export function openTerminal(wm: WindowManagerContext, machineId: string, project: Project): void {
   const session = freshSession();
   wm.open({
     id: session,
     kind: 'terminal',
     title: `Terminal — ${projectLabel(project)}`,
+    machineId,
     projectId: project.path,
     session,
     cwd: project.path,
@@ -35,18 +36,20 @@ export function openTerminal(wm: WindowManagerContext, project: Project): void {
 // so it works even with no repos cloned — the way to get a shell on a fresh or
 // misbehaving machine. A fresh session each time, so repeated clicks open
 // independent shells (matching openTerminal; no dedupe).
-export function openHomeTerminal(wm: WindowManagerContext): void {
+export function openHomeTerminal(wm: WindowManagerContext, machineId: string): void {
   const session = freshSession();
   wm.open({
     id: session,
     kind: 'terminal',
     title: 'Terminal — home',
+    machineId,
     session,
   });
 }
 
 export function openAgent(
   wm: WindowManagerContext,
+  machineId: string,
   project: Project,
   providerKey: string,
   providerName: string,
@@ -56,6 +59,7 @@ export function openAgent(
     id: session,
     kind: 'agent',
     title: `${providerName} — ${projectLabel(project)}`,
+    machineId,
     projectId: project.path,
     session,
     provider: providerKey,
@@ -63,14 +67,15 @@ export function openAgent(
   });
 }
 
-export function openEditor(wm: WindowManagerContext, project: Project): void {
+export function openEditor(wm: WindowManagerContext, machineId: string, project: Project): void {
   wm.open({
-    id: 'editor-' + project.path,
+    id: `editor-${machineId}-${project.path}`,
     kind: 'editor',
     title: `Editor — ${projectLabel(project)}`,
+    machineId,
     projectId: project.path,
     folder: project.path,
-    dedupeKey: project.path,
+    dedupeKey: `${machineId}|${project.path}`,
   });
 }
 
@@ -82,6 +87,12 @@ export function openLogs(wm: WindowManagerContext): void {
   wm.open({ id: 'logs', kind: 'logs', title: 'Activity', dedupeKey: 'logs' });
 }
 
-export function openProjects(wm: WindowManagerContext): void {
-  wm.open({ id: 'projects', kind: 'projects', title: 'Projects', dedupeKey: 'projects' });
+export function openProjects(wm: WindowManagerContext, machineId: string): void {
+  wm.open({
+    id: `projects-${machineId}`,
+    kind: 'projects',
+    title: 'Projects',
+    machineId,
+    dedupeKey: `projects|${machineId}`,
+  });
 }

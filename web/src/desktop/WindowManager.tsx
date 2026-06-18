@@ -70,6 +70,7 @@ export function WindowManagerProvider({
         notify();
       },
       hydrate: (windows) => dispatch({ type: 'hydrate', windows }),
+      hydrateMachine: (machineId, windows) => dispatch({ type: 'hydrateMachine', machineId, windows }),
     }),
     [state, notify],
   );

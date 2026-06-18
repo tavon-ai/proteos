@@ -32,6 +32,12 @@ export interface WindowState {
   kind: WindowKind;
   title: string;
 
+  // The machine this window belongs to (multi-machine). Undefined ⇒ a global
+  // window (Settings/Activity) shown regardless of the active machine. Windows
+  // for the non-active machine stay mounted but hidden, so their terminals keep
+  // their live PTYs across switches.
+  machineId?: string;
+
   // Scoping (Phase 9): the project a window belongs to and the parameters its
   // content needs to (re)connect. `session` is the opaque, stable per-window id
   // a terminal/agent reconnects to; `cwd`/`folder` scope it to a repo folder.
@@ -79,6 +85,7 @@ export interface OpenSpec {
   id: string;
   kind: WindowKind;
   title: string;
+  machineId?: string;
   projectId?: string;
   session?: string;
   provider?: string;
@@ -97,7 +104,8 @@ export type DesktopAction =
   | { type: 'minimize'; id: string }
   | { type: 'toggleMaximize'; id: string; viewport?: { width: number; height: number } }
   | { type: 'restore'; id: string }
-  | { type: 'hydrate'; windows: PersistedWindow[] };
+  | { type: 'hydrate'; windows: PersistedWindow[] }
+  | { type: 'hydrateMachine'; machineId: string; windows: PersistedWindow[] };
 
 // raise returns the next zIndex and bumps topZ.
 function withTop(state: DesktopState): { z: number; topZ: number } {
@@ -122,13 +130,16 @@ function dedupeMatch(state: DesktopState, spec: OpenSpec): WindowState | undefin
 }
 
 // dedupeKeyOf reconstructs a window's dedupe identity from its fields. Editors
-// dedupe by folder, settings/projects by kind alone (singletons).
+// dedupe by machine+folder and projects by machine (so each machine gets its own
+// editor-per-folder and its own projects launcher); settings/activity are global
+// singletons (one across all machines). The openers build matching dedupeKeys.
 function dedupeKeyOf(w: WindowState): string | undefined {
   switch (w.kind) {
     case 'editor':
-      return w.folder ?? w.projectId ?? '';
-    case 'settings':
+      return `${w.machineId ?? ''}|${w.folder ?? w.projectId ?? ''}`;
     case 'projects':
+      return `projects|${w.machineId ?? ''}`;
+    case 'settings':
     case 'logs':
       return w.kind;
     default:
@@ -157,6 +168,7 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         id: action.spec.id,
         kind: action.spec.kind,
         title: action.spec.title,
+        machineId: action.spec.machineId,
         projectId: action.spec.projectId,
         session: action.spec.session,
         provider: action.spec.provider,
@@ -261,6 +273,9 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
     case 'hydrate':
       return hydrate(state, action.windows);
 
+    case 'hydrateMachine':
+      return hydrateMachine(state, action.machineId, action.windows);
+
     default:
       return state;
   }
@@ -276,6 +291,7 @@ export interface PersistedWindow {
   id: string;
   kind: WindowKind;
   title: string;
+  machineId?: string;
   projectId?: string;
   session?: string;
   provider?: string;
@@ -293,13 +309,18 @@ export interface PersistedLayout {
 // serializeLayout flattens the live desktop to its persisted form, dropping
 // transient windows that should not be restored (the projects launcher and any
 // placeholder are reopened by the shell, not the saved layout).
-export function serializeLayout(state: DesktopState): PersistedLayout {
+// machineId, when given, restricts the layout to that machine's windows — each
+// machine's layout is persisted to its own guest SQLite, so a multi-machine
+// desktop saves one machine's subset at a time.
+export function serializeLayout(state: DesktopState, machineId?: string): PersistedLayout {
   const windows = state.windows
     .filter((w) => w.kind !== 'placeholder' && w.kind !== 'projects')
+    .filter((w) => machineId === undefined || w.machineId === machineId)
     .map<PersistedWindow>((w) => ({
       id: w.id,
       kind: w.kind,
       title: w.title,
+      machineId: w.machineId,
       projectId: w.projectId,
       session: w.session,
       provider: w.provider,
@@ -328,6 +349,7 @@ function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopStat
     id: w.id,
     kind: w.kind,
     title: w.title,
+    machineId: w.machineId,
     projectId: w.projectId,
     session: w.session,
     provider: w.provider,
@@ -340,6 +362,35 @@ function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopStat
   // Re-number kept transients beneath the restored stack.
   const keptRenum = kept.map((w, i) => ({ ...w, zIndex: i + 1 }));
   const all = [...keptRenum, ...restored];
+  return { windows: all, topZ: all.length, cascade: all.length };
+}
+
+// hydrateMachine restores one machine's persisted windows WITHOUT disturbing any
+// other machine's live windows (the multi-machine desktop loads each machine's
+// layout the first time it is selected). Existing windows for this machine are
+// replaced by the restored set; windows for every other machine (and global
+// windows) are kept exactly as-is. zIndex is renumbered by final array order.
+function hydrateMachine(
+  current: DesktopState,
+  machineId: string,
+  windows: PersistedWindow[],
+): DesktopState {
+  const others = current.windows.filter((w) => w.machineId !== machineId);
+  const restored = windows.map<WindowState>((w) => ({
+    id: w.id,
+    kind: w.kind,
+    title: w.title,
+    machineId,
+    projectId: w.projectId,
+    session: w.session,
+    provider: w.provider,
+    cwd: w.cwd,
+    folder: w.folder,
+    geometry: w.geometry,
+    zIndex: 0, // renumbered below
+    mode: w.mode === 'minimized' ? 'minimized' : 'normal',
+  }));
+  const all = [...others, ...restored].map((w, i) => ({ ...w, zIndex: i + 1 }));
   return { windows: all, topZ: all.length, cascade: all.length };
 }
 

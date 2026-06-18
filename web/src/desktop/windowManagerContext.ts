@@ -18,6 +18,8 @@ export interface WindowManagerContext {
   toggleMaximize: (id: string, viewport?: { width: number; height: number }) => void;
   restore: (id: string) => void;
   hydrate: (windows: PersistedWindow[]) => void;
+  /** Restore one machine's windows without disturbing other machines'. */
+  hydrateMachine: (machineId: string, windows: PersistedWindow[]) => void;
   /** Current full state — used by the layout saver to serialize. */
   state: DesktopState;
 }
