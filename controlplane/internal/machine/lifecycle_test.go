@@ -22,8 +22,8 @@ import (
 // reported status directly (SetStatus) so the poller's reconciliation can be
 // exercised deterministically without sleeping.
 type fakeAgent struct {
-	mu          sync.Mutex
-	status      map[string]agentapi.MachineStatus
+	mu           sync.Mutex
+	status       map[string]agentapi.MachineStatus
 	failEnsure   bool
 	ensureCalls  int
 	stopCalls    int
@@ -197,7 +197,7 @@ func TestFullLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create → provisioning, ensure called, handle recorded.
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestFullLifecycle(t *testing.T) {
 	}
 
 	// Stop → stopping, agent stop called; agent reports stopped; poller → stopped.
-	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
+	if _, err := h.svc.Stop(ctx, h.userID, id); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	if h.agent.stopCalls != 1 {
@@ -235,7 +235,7 @@ func TestFullLifecycle(t *testing.T) {
 	}
 
 	// Start from stopped → starting → running again.
-	if _, err := h.svc.Start(ctx, h.userID); err != nil {
+	if _, err := h.svc.Start(ctx, h.userID, id); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if got := h.machine(t).State; got != string(machine.StateStarting) {
@@ -265,7 +265,7 @@ func TestBootFailureMovesToError(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestAgentUnreachableDuringPollMovesToError(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	if _, err := h.svc.Create(ctx, h.userID); err != nil {
+	if _, err := h.svc.Create(ctx, h.userID, ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// Agent goes away before the poller can observe the boot completing.
@@ -309,7 +309,7 @@ func TestEnsureFailureAtCreateMovesToError(t *testing.T) {
 	ctx := context.Background()
 	h.agent.failEnsure = true
 
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatalf("create returned hard error: %v", err)
 	}
@@ -322,39 +322,47 @@ func TestInvalidStateTransitions(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Stop with no machine → ErrNoMachine.
-	if _, err := h.svc.Stop(ctx, h.userID); err != machine.ErrNoMachine {
-		t.Fatalf("stop without machine: got %v, want ErrNoMachine", err)
+	// Stop a machine that does not exist → ErrNoMachine.
+	if _, err := h.svc.Stop(ctx, h.userID, nonexistentID(t)); err != machine.ErrNoMachine {
+		t.Fatalf("stop nonexistent: got %v, want ErrNoMachine", err)
 	}
 
 	// Create one (provisioning).
-	if _, err := h.svc.Create(ctx, h.userID); err != nil {
+	m, err := h.svc.Create(ctx, h.userID, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	// Second create → ErrMachineExists.
-	if _, err := h.svc.Create(ctx, h.userID); err != machine.ErrMachineExists {
-		t.Fatalf("second create: got %v, want ErrMachineExists", err)
-	}
 	// Start while provisioning (not stopped/error) → ErrInvalidState.
-	if _, err := h.svc.Start(ctx, h.userID); err != machine.ErrInvalidState {
+	if _, err := h.svc.Start(ctx, h.userID, m.ID); err != machine.ErrInvalidState {
 		t.Fatalf("start while provisioning: got %v, want ErrInvalidState", err)
 	}
 	// Stop while provisioning (not running) → ErrInvalidState.
-	if _, err := h.svc.Stop(ctx, h.userID); err != machine.ErrInvalidState {
+	if _, err := h.svc.Stop(ctx, h.userID, m.ID); err != machine.ErrInvalidState {
 		t.Fatalf("stop while provisioning: got %v, want ErrInvalidState", err)
 	}
+}
+
+// nonexistentID returns a valid-but-unused machine UUID for ownership/not-found
+// assertions.
+func nonexistentID(t *testing.T) pgtype.UUID {
+	t.Helper()
+	id, err := machine.ParseUUID("00000000-0000-0000-0000-0000000000ff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestDestroy(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Destroy with no machine → ErrNoMachine.
-	if err := h.svc.Destroy(ctx, h.userID); err != machine.ErrNoMachine {
-		t.Fatalf("destroy without machine: got %v, want ErrNoMachine", err)
+	// Destroy a machine that does not exist → ErrNoMachine.
+	if err := h.svc.Destroy(ctx, h.userID, nonexistentID(t)); err != machine.ErrNoMachine {
+		t.Fatalf("destroy nonexistent: got %v, want ErrNoMachine", err)
 	}
 
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +382,7 @@ func TestDestroy(t *testing.T) {
 	}
 
 	// Destroy: agent torn down, row gone, disk + volume key cleaned up.
-	if err := h.svc.Destroy(ctx, h.userID); err != nil {
+	if err := h.svc.Destroy(ctx, h.userID, m.ID); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 	if h.agent.destroyCalls != 1 {
@@ -391,8 +399,101 @@ func TestDestroy(t *testing.T) {
 	}
 
 	// The user can create a fresh machine after a destroy.
-	if _, err := h.svc.Create(ctx, h.userID); err != nil {
+	if _, err := h.svc.Create(ctx, h.userID, ""); err != nil {
 		t.Fatalf("create after destroy: %v", err)
+	}
+}
+
+func TestMultipleMachines(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Two machines for the same user, auto-named machine-1 / machine-2.
+	m1, err := h.svc.Create(ctx, h.userID, "")
+	if err != nil {
+		t.Fatalf("create m1: %v", err)
+	}
+	m2, err := h.svc.Create(ctx, h.userID, "")
+	if err != nil {
+		t.Fatalf("create m2: %v", err)
+	}
+	if m1.Name != "machine-1" || m2.Name != "machine-2" {
+		t.Fatalf("auto names = %q,%q; want machine-1,machine-2", m1.Name, m2.Name)
+	}
+	if m1.ID == m2.ID {
+		t.Fatal("the two machines share an id")
+	}
+
+	ms, err := h.svc.List(ctx, h.userID)
+	if err != nil || len(ms) != 2 {
+		t.Fatalf("list: len=%d err=%v, want 2 machines", len(ms), err)
+	}
+
+	// Destroying one leaves the other untouched.
+	if err := h.svc.Destroy(ctx, h.userID, m1.ID); err != nil {
+		t.Fatalf("destroy m1: %v", err)
+	}
+	ms, _ = h.svc.List(ctx, h.userID)
+	if len(ms) != 1 || ms[0].ID != m2.ID {
+		t.Fatalf("after destroy m1, list should be [m2]; got %d machines", len(ms))
+	}
+}
+
+func TestMachineLimit(t *testing.T) {
+	h := newHarness(t) // default cap is 3
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if _, err := h.svc.Create(ctx, h.userID, ""); err != nil {
+			t.Fatalf("create %d: %v", i+1, err)
+		}
+	}
+	// The 4th exceeds the cap.
+	if _, err := h.svc.Create(ctx, h.userID, ""); err != machine.ErrMachineLimit {
+		t.Fatalf("4th create: got %v, want ErrMachineLimit", err)
+	}
+}
+
+func TestOwnershipRejected(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m, err := h.svc.Create(ctx, h.userID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A different user may not start/stop/destroy/rename this machine — all map
+	// to ErrNoMachine (existence never leaked).
+	other, err := h.q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 99, Login: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Start(ctx, other.ID, m.ID); err != machine.ErrNoMachine {
+		t.Fatalf("foreign start: got %v, want ErrNoMachine", err)
+	}
+	if err := h.svc.Destroy(ctx, other.ID, m.ID); err != machine.ErrNoMachine {
+		t.Fatalf("foreign destroy: got %v, want ErrNoMachine", err)
+	}
+	if _, err := h.svc.Rename(ctx, other.ID, m.ID, "hax"); err != machine.ErrNoMachine {
+		t.Fatalf("foreign rename: got %v, want ErrNoMachine", err)
+	}
+}
+
+func TestRename(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m, err := h.svc.Create(ctx, h.userID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := h.svc.Rename(ctx, h.userID, m.ID, "api-box")
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if renamed.Name != "api-box" {
+		t.Fatalf("name = %q, want api-box", renamed.Name)
 	}
 }
 
@@ -400,7 +501,7 @@ func TestRunningSweepDetectsCrash(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

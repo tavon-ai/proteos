@@ -23,7 +23,7 @@ func TestHibernateResumeLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create: disk allocated, volume key minted + sent to the agent.
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestHibernateResumeLifecycle(t *testing.T) {
 	}
 
 	// Stop → hibernating, with hibernate mode on the wire.
-	if _, err := h.svc.Stop(ctx, h.userID); err != nil {
+	if _, err := h.svc.Stop(ctx, h.userID, id); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	if h.machine(t).State != string(machine.StateHibernating) {
@@ -88,7 +88,7 @@ func TestHibernateResumeLifecycle(t *testing.T) {
 	}
 
 	// Start → starting; agent resumes (boot=resumed). Snapshot is consumed.
-	if _, err := h.svc.Start(ctx, h.userID); err != nil {
+	if _, err := h.svc.Start(ctx, h.userID, id); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	h.agent.SetStatus(idStr, agentapi.StateRunning, "", "172.30.0.2")
@@ -152,7 +152,7 @@ func TestVolumeKeyMintedAndStored(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID)
+	m, err := h.svc.Create(ctx, h.userID, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

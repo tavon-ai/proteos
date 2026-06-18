@@ -22,9 +22,12 @@ interface WindowProps {
   children: ReactNode;
   /** The desktop viewport size, for maximize. */
   viewport: { width: number; height: number };
+  /** Hidden (belongs to a non-active machine): kept mounted, display:none, so its
+   *  live terminal/editor survives a machine switch. */
+  hidden?: boolean;
 }
 
-function WindowImpl({ win, children, viewport }: WindowProps) {
+function WindowImpl({ win, children, viewport, hidden }: WindowProps) {
   const wm = useWindowManager();
   const minimized = win.mode === 'minimized';
   const maximized = win.mode === 'maximized';
@@ -42,7 +45,7 @@ function WindowImpl({ win, children, viewport }: WindowProps) {
       enableResizing={!maximized}
       style={{
         zIndex: win.zIndex,
-        display: minimized ? 'none' : 'flex',
+        display: minimized || hidden ? 'none' : 'flex',
       }}
       onMouseDownCapture={() => wm.focus(win.id)}
       onDragStop={(_e, d) => wm.move(win.id, d.x, d.y)}

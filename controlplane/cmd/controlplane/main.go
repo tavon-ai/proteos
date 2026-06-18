@@ -131,11 +131,12 @@ func run(migrate, migrateOnly bool) error {
 	}
 	broker := machine.NewBroker()
 	machineSvc := machine.NewService(pool, nodes, broker, sec, host.ID, machine.Spec{
-		Vcpus:     cfg.MachineVcpus,
-		MemMiB:    cfg.MachineMemMiB,
-		DiskMiB:   cfg.MachineDiskMiB,
-		KernelRef: cfg.KernelRef,
-		RootfsRef: cfg.RootfsRef,
+		Vcpus:      cfg.MachineVcpus,
+		MemMiB:     cfg.MachineMemMiB,
+		DiskMiB:    cfg.MachineDiskMiB,
+		KernelRef:  cfg.KernelRef,
+		RootfsRef:  cfg.RootfsRef,
+		MaxPerUser: cfg.MachineMaxPerUser,
 	})
 	poller := machine.NewPoller(pool, nodes, broker)
 

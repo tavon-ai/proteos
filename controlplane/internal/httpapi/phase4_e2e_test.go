@@ -50,11 +50,12 @@ func TestHibernateResumeE2E(t *testing.T) {
 
 	// Create drives the real lifecycle: disk + volume key minted, ensure on the
 	// agent, poller advances to running.
-	m, err := svc.Create(ctx, fx.userID)
+	m, err := svc.Create(ctx, fx.userID, "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	fx.machineID = machine.UUIDString(m.ID)
+	fx.machinePgID = m.ID
 	t.Cleanup(func() { _ = nodes.Destroy(context.Background(), fx.machineID) })
 	waitCPState(t, fx, machine.StateRunning)
 	waitGuestReachable(t, nodes, fx.machineID)
@@ -67,7 +68,7 @@ func TestHibernateResumeE2E(t *testing.T) {
 
 	// Stop = hibernate. Wait for stopped, then assert the snapshot metadata
 	// round-tripped into the API summary.
-	if _, err := svc.Stop(ctx, fx.userID); err != nil {
+	if _, err := svc.Stop(ctx, fx.userID, fx.machinePgID); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 	waitCPState(t, fx, machine.StateStopped)
@@ -77,7 +78,7 @@ func TestHibernateResumeE2E(t *testing.T) {
 	}
 
 	// Start = resume. Wait for running; the new guest agent rebinds the socket.
-	if _, err := svc.Start(ctx, fx.userID); err != nil {
+	if _, err := svc.Start(ctx, fx.userID, fx.machinePgID); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	waitCPState(t, fx, machine.StateRunning)
@@ -210,10 +211,10 @@ func runInTerminal(t *testing.T, fx cpFixture, session, cmd, want string) {
 	}
 }
 
-// getSummary fetches the user's machine summary from /api/machine.
+// getSummary fetches the user's machine summary from /api/machines/{id}.
 func getSummary(t *testing.T, fx cpFixture) httpapi.MachineSummary {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, fx.url+"/api/machine", nil)
+	req, _ := http.NewRequest(http.MethodGet, fx.url+"/api/machines/"+fx.machineID, nil)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fx.token})
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

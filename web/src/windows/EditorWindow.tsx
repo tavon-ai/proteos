@@ -13,9 +13,11 @@ import { api, type MachineState } from '../api/client';
 // mounted once for the window's lifetime, so the iframe is never reloaded by a
 // minimize/maximize/focus (decision #2).
 export function EditorWindow({
+  machineId,
   machineState,
   folder,
 }: {
+  machineId: string | null;
   machineState: MachineState;
   folder?: string;
 }) {
@@ -24,12 +26,13 @@ export function EditorWindow({
   const running = machineState === 'running';
 
   const mint = useCallback(() => {
+    if (!machineId) return;
     setError(null);
     api
-      .webSession(folder)
+      .webSession(machineId, folder)
       .then((s) => setUrl(s.url))
       .catch(() => setError('Could not open the editor. Try again.'));
-  }, [folder]);
+  }, [machineId, folder]);
 
   // Mint once the machine is running (and re-mint if it returns to running after
   // a stop). The token is single-use and ≤60s, loaded immediately by the iframe.

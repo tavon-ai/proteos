@@ -38,13 +38,9 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m, err := s.Machines.Get(r.Context(), user.ID)
-	if errors.Is(err, machine.ErrNoMachine) {
-		writeError(w, http.StatusConflict, "machine_not_running")
-		return
-	}
+	m, err := s.resolveTerminalMachine(r.Context(), user, r.URL.Query().Get("machine"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal")
+		writeError(w, http.StatusConflict, "machine_not_running")
 		return
 	}
 	machineID := machine.UUIDString(m.ID)

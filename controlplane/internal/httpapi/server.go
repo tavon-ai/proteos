@@ -89,14 +89,17 @@ func (s *Server) Handler() http.Handler {
 	// Current user (authenticated).
 	mux.Handle("GET /api/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
 
-	// Machine routes (Phase 2). Reads are auth-only; mutations also require the
-	// CSRF header. The SSE stream is a GET (no CSRF) — EventSource cannot set
+	// Machine routes. Multi-machine: a RESTful collection (/api/machines) plus
+	// per-machine ops keyed by {id}. Reads are auth-only; mutations also require
+	// the CSRF header. The SSE stream is a GET (no CSRF) — EventSource cannot set
 	// custom headers, and it is read-only.
-	mux.Handle("GET /api/machine", s.requireAuth(http.HandlerFunc(s.handleGetMachine)))
-	mux.Handle("POST /api/machine", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateMachine))))
-	mux.Handle("POST /api/machine/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
-	mux.Handle("POST /api/machine/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
-	mux.Handle("DELETE /api/machine", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDestroyMachine))))
+	mux.Handle("GET /api/machines", s.requireAuth(http.HandlerFunc(s.handleListMachines)))
+	mux.Handle("POST /api/machines", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateMachine))))
+	mux.Handle("GET /api/machines/{id}", s.requireAuth(http.HandlerFunc(s.handleGetMachine)))
+	mux.Handle("PATCH /api/machines/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleRenameMachine))))
+	mux.Handle("DELETE /api/machines/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDestroyMachine))))
+	mux.Handle("POST /api/machines/{id}/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
+	mux.Handle("POST /api/machines/{id}/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
 
 	// Machine-web session mint (Phase 8): the main-origin endpoint that issues the

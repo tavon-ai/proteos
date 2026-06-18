@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { MachineEvent, MachineState, MachineSummary, Me, Provider } from '../api/client';
-import { useLogout, useMachine, useMachineEvents, useProviders } from '../api/hooks';
+import { useLogout, useMachineEvents, useMachines, useProviders } from '../api/hooks';
 import { Terminal } from '../components/Terminal';
 import { EditorWindow } from '../windows/EditorWindow';
 import { LogsWindow } from '../windows/LogsWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
+import { SelectedMachineProvider, useSelectedMachine } from './selectedMachine';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
 import { WindowManagerProvider } from './WindowManager';
@@ -16,54 +17,91 @@ import { openProjects } from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';
 
-// Desktop is the Phase 9 product shell that replaces the flat dashboard: a
-// project-centric, multi-window desktop. It owns the live machine + event +
-// provider subscriptions once (passing them down, so a single EventSource backs
-// the whole UI) and wraps everything in the WindowManagerProvider, whose onChange
-// debounce-saves the layout to machine SQLite (decision #6).
+// Desktop is the product shell: a project-centric, multi-window desktop. It owns
+// the live machines + event + provider subscriptions once (a single EventSource
+// backs the whole UI) and provides the active-machine selection to the tree.
 export function Desktop({ me }: { me: Me }) {
-  const { data: machine } = useMachine(me.machine);
+  const { data: machines } = useMachines(me.machines);
   const events = useMachineEvents();
   const { data: providers } = useProviders();
-  const running = machine?.state === 'running';
-
-  const saveLayout = useLayoutSaver(running);
 
   return (
+    <SelectedMachineProvider machines={machines ?? []}>
+      <DesktopScoped me={me} events={events} providers={providers ?? []} />
+    </SelectedMachineProvider>
+  );
+}
+
+// DesktopScoped binds the window manager + layout persistence to the active
+// machine. The WindowManagerProvider's onChange debounce-saves that machine's
+// layout to its SQLite (decision #6).
+function DesktopScoped({
+  me,
+  events,
+  providers,
+}: {
+  me: Me;
+  events: MachineEvent[];
+  providers: Provider[];
+}) {
+  const { machines, selected, selectedId } = useSelectedMachine();
+  const running = selected?.state === 'running';
+  const saveLayout = useLayoutSaver(selectedId, running);
+
+  return (
+    // ONE window manager holds every machine's windows at once. Windows are
+    // tagged with their machine and only the active machine's are shown (the rest
+    // stay mounted but display:none), so terminals/agents keep their live PTYs and
+    // scrollback across machine switches — switching is a show/hide, never a
+    // remount.
     <WindowManagerProvider onChange={saveLayout}>
-      <DesktopShell me={me} machine={machine ?? null} events={events} providers={providers ?? []} />
+      <DesktopShell
+        me={me}
+        machines={machines ?? []}
+        selectedId={selectedId}
+        events={events}
+        providers={providers}
+      />
     </WindowManagerProvider>
   );
 }
 
 function DesktopShell({
   me,
-  machine,
+  machines,
+  selectedId,
   events,
   providers,
 }: {
   me: Me;
-  machine: MachineSummary | null;
+  machines: MachineSummary[];
+  selectedId: string | null;
   events: MachineEvent[];
   providers: Provider[];
 }) {
   const wm = useWindowManager();
   const navigate = useNavigate();
   const logout = useLogout();
-  const running = machine?.state === 'running';
   const viewport = useViewport();
 
-  // Restore the saved layout once the machine is running (reconnects live PTYs by
-  // their opaque session ids).
-  useLayoutLoader(wm, running);
+  const selected = machines.find((m) => m.id === selectedId) ?? null;
 
-  // Open the Projects launcher on first paint so the desktop is never empty.
-  const openedRef = useRef(false);
+  // Restore each machine's layout the first time it becomes the active running
+  // machine (does not disturb other machines' live windows).
+  useLayoutLoader(wm, selectedId, selected?.state === 'running');
+
+  // Open a Projects launcher the FIRST time each machine becomes active, so a
+  // machine's desktop is never empty. Tracked per-machine in a ref (not keyed on
+  // wm, whose identity changes on every window mutation) so it does NOT re-open
+  // or re-focus Projects on later opens/closes — closing it stays closed.
+  const projectsOpened = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (openedRef.current) return;
-    openedRef.current = true;
-    openProjects(wm);
-  }, [wm]);
+    if (selectedId && !projectsOpened.current.has(selectedId)) {
+      projectsOpened.current.add(selectedId);
+      openProjects(wm, selectedId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const onLogout = () => {
     logout.mutate(undefined, {
@@ -73,20 +111,28 @@ function DesktopShell({
 
   return (
     <div className="desktop">
-      <Taskbar machine={machine} me={me} onLogout={onLogout} loggingOut={logout.isPending} />
+      <Taskbar me={me} onLogout={onLogout} loggingOut={logout.isPending} />
 
       <div className="desktop-surface">
-        {wm.windows.map((win) => (
-          <Window key={win.id} win={win} viewport={viewport}>
-            <WindowBody
-              win={win}
-              machine={machine}
-              machineState={machine?.state ?? 'stopped'}
-              events={events}
-              providers={providers}
-            />
-          </Window>
-        ))}
+        {wm.windows.map((win) => {
+          // A window is shown when it belongs to the active machine (or is a
+          // global window with no machine). Hidden windows stay MOUNTED so their
+          // terminals keep their live PTYs and scrollback across switches.
+          const visible = !win.machineId || win.machineId === selectedId;
+          const winMachine = win.machineId
+            ? (machines.find((m) => m.id === win.machineId) ?? null)
+            : selected;
+          return (
+            <Window key={win.id} win={win} viewport={viewport} hidden={!visible}>
+              <WindowBody
+                win={win}
+                machineState={winMachine?.state ?? 'stopped'}
+                events={events}
+                providers={providers}
+              />
+            </Window>
+          );
+        })}
       </div>
 
       <Dock />
@@ -99,30 +145,35 @@ function DesktopShell({
 // terminal or the editor iframe survives every minimize/maximize/focus.
 function WindowBody({
   win,
-  machine,
   machineState,
   events,
   providers,
 }: {
   win: WindowState;
-  machine: MachineSummary | null;
   machineState: MachineState;
   events: MachineEvent[];
   providers: Provider[];
 }) {
   switch (win.kind) {
     case 'projects':
-      return <ProjectsLauncher machineState={machineState} providers={providers} events={events} />;
+      return (
+        <ProjectsLauncher
+          machineId={win.machineId ?? null}
+          machineState={machineState}
+          providers={providers}
+          events={events}
+        />
+      );
     case 'terminal':
-      return machine ? (
-        <Terminal machineID={machine.id} session={win.session} cwd={win.cwd} />
+      return win.machineId ? (
+        <Terminal machineID={win.machineId} session={win.session} cwd={win.cwd} />
       ) : (
         <StoppedBody />
       );
     case 'agent':
-      return machine ? (
+      return win.machineId ? (
         <Terminal
-          machineID={machine.id}
+          machineID={win.machineId}
           provider={win.provider}
           session={win.session}
           cwd={win.cwd}
@@ -131,7 +182,9 @@ function WindowBody({
         <StoppedBody />
       );
     case 'editor':
-      return <EditorWindow machineState={machineState} folder={win.folder} />;
+      return (
+        <EditorWindow machineId={win.machineId ?? null} machineState={machineState} folder={win.folder} />
+      );
     case 'logs':
       return <LogsWindow events={events} />;
     case 'settings':

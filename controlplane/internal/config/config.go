@@ -93,6 +93,10 @@ type Config struct {
 	MachineMemMiB  int
 	MachineDiskMiB int
 
+	// MachineMaxPerUser caps how many machines one user may own (default 3). The
+	// cap protects the single fc-node host's RAM and guest-IP pool.
+	MachineMaxPerUser int
+
 	// KernelRef / RootfsRef are the pinned image refs stamped per machine; the
 	// node-agent resolves them against its images dir.
 	KernelRef string
@@ -155,8 +159,10 @@ func Load() (*Config, error) {
 		MachineVcpus:   getenvInt("PROTEOS_MACHINE_VCPUS", 2),
 		MachineMemMiB:  getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
 		MachineDiskMiB: getenvInt("PROTEOS_MACHINE_DISK_MIB", 10240),
-		KernelRef:      getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
-		RootfsRef:      getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
+
+		MachineMaxPerUser: getenvInt("PROTEOS_MAX_MACHINES_PER_USER", 3),
+		KernelRef:         getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
+		RootfsRef:         getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
 
 		MachineDomain: os.Getenv("PROTEOS_MACHINE_DOMAIN"),
 	}

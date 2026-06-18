@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -45,10 +44,11 @@ func toEventJSON(e store.MachineEvent) machineEventJSON {
 	return j
 }
 
-// snapshotData is the body of the initial `snapshot` event.
+// snapshotData is the body of the initial `snapshot` event: all of the user's
+// machines plus the most-recent events across them.
 type snapshotData struct {
-	Machine *MachineSummary    `json:"machine"`
-	Events  []machineEventJSON `json:"events"`
+	Machines []MachineSummary   `json:"machines"`
+	Events   []machineEventJSON `json:"events"`
 }
 
 // machineData is the body of each live `machine` event.
@@ -88,20 +88,24 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 	updates, cancel := s.Broker.Subscribe()
 	defer cancel()
 
-	m, machineErr := s.Machines.Get(ctx, user.ID)
-	hasMachine := machineErr == nil
-	if machineErr != nil && !errors.Is(machineErr, machine.ErrNoMachine) {
-		// Can't even read the machine; close the stream.
+	machines, err := s.Machines.List(ctx, user.ID)
+	if err != nil {
+		// Can't even read the machines; close the stream.
 		return
+	}
+	// Index by id so replay can render each event's machine summary.
+	byID := make(map[pgtype.UUID]store.Machine, len(machines))
+	for _, m := range machines {
+		byID[m.ID] = m
 	}
 
 	var lastSent int64
-	if lastID := lastEventID(r); lastID > 0 && hasMachine {
+	if lastID := lastEventID(r); lastID > 0 {
 		// Reconnect: replay everything after the client's last seen id.
-		lastSent = s.replayAfter(ctx, w, flusher, m, lastID)
+		lastSent = s.replayAfter(ctx, w, flusher, user.ID, byID, lastID)
 	} else {
-		// Fresh connection: send the snapshot (machine + recent events).
-		lastSent = s.writeSnapshot(ctx, w, flusher, m, hasMachine)
+		// Fresh connection: send the snapshot (all machines + recent events).
+		lastSent = s.writeSnapshot(ctx, w, flusher, user.ID, machines)
 	}
 
 	heartbeat := time.NewTicker(sseHeartbeat)
@@ -145,15 +149,17 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeSnapshot emits the `snapshot` event and returns the highest event id it
-// included (so the live loop can skip duplicates).
-func (s *Server) writeSnapshot(ctx context.Context, w http.ResponseWriter, f http.Flusher, m store.Machine, hasMachine bool) int64 {
-	data := snapshotData{Events: []machineEventJSON{}}
+// writeSnapshot emits the `snapshot` event (all the user's machines + the most
+// recent events across them) and returns the highest event id it included (so
+// the live loop can skip duplicates).
+func (s *Server) writeSnapshot(ctx context.Context, w http.ResponseWriter, f http.Flusher, userID pgtype.UUID, machines []store.Machine) int64 {
+	data := snapshotData{Machines: make([]MachineSummary, 0, len(machines)), Events: []machineEventJSON{}}
+	for _, m := range machines {
+		data.Machines = append(data.Machines, s.summary(ctx, m))
+	}
 	var maxID int64
-	if hasMachine {
-		summary := s.summary(ctx, m)
-		data.Machine = &summary
-		evs, err := s.Queries.ListMachineEventsRecent(ctx, store.ListMachineEventsRecentParams{MachineID: m.ID, Limit: 50})
+	if len(machines) > 0 {
+		evs, err := s.Queries.ListUserMachineEventsRecent(ctx, store.ListUserMachineEventsRecentParams{UserID: userID, Limit: 50})
 		if err == nil {
 			for _, e := range evs {
 				data.Events = append(data.Events, toEventJSON(e))
@@ -168,15 +174,22 @@ func (s *Server) writeSnapshot(ctx context.Context, w http.ResponseWriter, f htt
 	return maxID
 }
 
-// replayAfter streams every event after lastID as a `machine` event, returning
-// the highest id sent.
-func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.Flusher, m store.Machine, lastID int64) int64 {
-	evs, err := s.Queries.ListMachineEventsAfter(ctx, store.ListMachineEventsAfterParams{MachineID: m.ID, ID: lastID})
+// replayAfter streams every event after lastID (across all the user's machines)
+// as a `machine` event, returning the highest id sent. byID maps machine id to
+// the row whose summary is sent with each event.
+func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.Flusher, userID pgtype.UUID, byID map[pgtype.UUID]store.Machine, lastID int64) int64 {
+	evs, err := s.Queries.ListUserMachineEventsAfter(ctx, store.ListUserMachineEventsAfterParams{UserID: userID, ID: lastID})
 	if err != nil {
 		return lastID
 	}
 	maxID := lastID
 	for _, e := range evs {
+		m, ok := byID[e.MachineID]
+		if !ok {
+			// Machine was destroyed (its events cascade-deleted) between list and
+			// now; skip — the client already saw/​will see the destroyed event.
+			continue
+		}
 		if s.writeMachineEvent(ctx, w, m, e) != nil {
 			break
 		}

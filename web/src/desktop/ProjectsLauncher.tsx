@@ -17,16 +17,18 @@ import { openAgent, openEditor, openSettings, openTerminal } from './openers';
 // reveals the GitHub clone form (the Phase 7 ReposPanel logic). The unit of work
 // is the project, so every window opened here is born pointed at one.
 export function ProjectsLauncher({
+  machineId,
   machineState,
   providers,
   events,
 }: {
+  machineId: string | null;
   machineState: MachineState;
   providers: Provider[];
   events: MachineEvent[];
 }) {
   const running = machineState === 'running';
-  const { data, isLoading, error } = useProjects(running);
+  const { data, isLoading, error } = useProjects(machineId, running);
   const invalidateProjects = useInvalidateProjects();
   const [showClone, setShowClone] = useState(false);
 
@@ -51,7 +53,7 @@ export function ProjectsLauncher({
         </button>
       </div>
 
-      {showClone && <CloneForm events={events} />}
+      {showClone && <CloneForm machineId={machineId} events={events} />}
 
       {isLoading && <p className="muted">Loading projects…</p>}
       {error && <p className="muted">Could not load projects.</p>}
@@ -63,14 +65,22 @@ export function ProjectsLauncher({
 
       <ul className="project-grid">
         {projects.map((p) => (
-          <ProjectTile key={p.path} project={p} providers={providers} />
+          <ProjectTile key={p.path} machineId={machineId} project={p} providers={providers} />
         ))}
       </ul>
     </div>
   );
 }
 
-function ProjectTile({ project, providers }: { project: Project; providers: Provider[] }) {
+function ProjectTile({
+  machineId,
+  project,
+  providers,
+}: {
+  machineId: string | null;
+  project: Project;
+  providers: Provider[];
+}) {
   const wm = useWindowManager();
   const [agentMenu, setAgentMenu] = useState(false);
   const launchable = providers.filter((p) => p.enabled && p.key_set);
@@ -95,10 +105,16 @@ function ProjectTile({ project, providers }: { project: Project; providers: Prov
         </p>
       )}
       <div className="project-actions">
-        <button className="btn-secondary" onClick={() => openEditor(wm, project)}>
+        <button
+          className="btn-secondary"
+          onClick={() => machineId && openEditor(wm, machineId, project)}
+        >
           Editor
         </button>
-        <button className="btn-secondary" onClick={() => openTerminal(wm, project)}>
+        <button
+          className="btn-secondary"
+          onClick={() => machineId && openTerminal(wm, machineId, project)}
+        >
           Terminal
         </button>
         <div className="agent-menu-wrap">
@@ -126,7 +142,7 @@ function ProjectTile({ project, providers }: { project: Project; providers: Prov
                   className="agent-menu-item"
                   onClick={() => {
                     setAgentMenu(false);
-                    openAgent(wm, project, p.key, p.display_name);
+                    if (machineId) openAgent(wm, machineId, project, p.key, p.display_name);
                   }}
                 >
                   {p.display_name}
@@ -149,9 +165,9 @@ interface CloneState {
   detail?: string;
 }
 
-function CloneForm({ events }: { events: MachineEvent[] }) {
+function CloneForm({ machineId, events }: { machineId: string | null; events: MachineEvent[] }) {
   const { data, isLoading, error, refetch, isFetching } = useRepos();
-  const clone = useCloneRepo();
+  const clone = useCloneRepo(machineId);
   const [clones, setClones] = useState<Record<string, CloneState>>({});
 
   // Correlate git.clone completion events back to in-flight clones by op_id.
