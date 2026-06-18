@@ -4,12 +4,12 @@
 # "Fully reproducible" means pinning, not resolving-latest at run time, so the
 # kernel object key is fixed here rather than discovered from the CI bucket.
 # ============================================================================
-proteos_fc_version: "v1.16.0"                                  # firecracker + jailer release tag
-proteos_ci_version: "v1.15"                                    # CI artifact bucket line (lags the binary)
-proteos_ubuntu_version: "24.04"                                # rootfs flavour from the CI bucket
-proteos_kernel_key: "firecracker-ci/v1.15/x86_64/vmlinux-6.1.155"  # exact key from versions.lock
-proteos_go_version: "1.26.4"                                   # must satisfy nodeagent/go.mod (go 1.26.4)
-proteos_taskfile_version: "v3.40.0"                            # go-task release tag (host `task` CLI; bump freely)
+proteos_fc_version: "v1.16.0" # firecracker + jailer release tag
+proteos_ci_version: "v1.15" # CI artifact bucket line (lags the binary)
+proteos_ubuntu_version: "24.04" # rootfs flavour from the CI bucket
+proteos_kernel_key: "firecracker-ci/v1.15/x86_64/vmlinux-6.1.155" # exact key from versions.lock
+proteos_go_version: "1.26.4" # must satisfy nodeagent/go.mod (go 1.26.4)
+proteos_taskfile_version: "v3.40.0" # go-task release tag (host `task` CLI; bump freely)
 proteos_arch: "x86_64"
 proteos_go_arch: "amd64"
 
@@ -25,12 +25,12 @@ proteos_taskfile_release_url: "https://github.com/go-task/task/releases/download
 proteos_bin_dir: "/usr/local/bin"
 proteos_images_dir: "/var/lib/proteos/images"
 proteos_data_dir: "/var/lib/proteos/agent"
-proteos_volumes_dir: "/var/lib/proteos/volumes"          # per-machine LUKS volumes (0700, OUTSIDE the jail tree)
-proteos_chroot_base_dir: "/srv/jailer"                   # jailer --chroot-base-dir
-proteos_src_dir: "/opt/proteos/src"                      # node-agent source checkout
+proteos_volumes_dir: "/var/lib/proteos/volumes" # per-machine LUKS volumes (0700, OUTSIDE the jail tree)
+proteos_chroot_base_dir: "/srv/jailer" # jailer --chroot-base-dir
+proteos_src_dir: "/opt/proteos/src" # node-agent source checkout
 proteos_config_dir: "/etc/proteos"
 proteos_env_file: "/etc/proteos/node-agent.env"
-proteos_bin_out: "/usr/local/bin/proteos-node-agent"     # built binary (BIN_OUT in run-node-agent.sh)
+proteos_bin_out: "/usr/local/bin/proteos-node-agent" # built binary (BIN_OUT in run-node-agent.sh)
 proteos_go_root: "/usr/local/go"
 
 # Image filenames inside proteos_images_dir.
@@ -64,12 +64,12 @@ proteos_rootfs_size: "1G"
 # (delete {{ proteos_images_dir }}/manifest.lock — see deploy/ansible/README.md),
 # since the bake is guarded on source changes, not on these vars.
 # ----------------------------------------------------------------------------
-proteos_claude_install: "bootstrap"   # bootstrap | binary | none
-proteos_claude_version: ""            # bootstrap: channel/version (empty ⇒ stable); binary: required
-proteos_claude_sha256: ""             # binary mode: recommended sha256 pin
-proteos_claude_binary_url: ""         # binary mode: direct URL to the pinned linux-x64 `claude`
-proteos_claude_binary_src: ""         # binary mode: OR a local file on the ansible controller
-proteos_claude_staged: "{{ proteos_images_dir }}/claude-staged"  # host staging path (binary mode)
+proteos_claude_install: "bootstrap" # bootstrap | binary | none
+proteos_claude_version: "" # bootstrap: channel/version (empty ⇒ stable); binary: required
+proteos_claude_sha256: "" # binary mode: recommended sha256 pin
+proteos_claude_binary_url: "" # binary mode: direct URL to the pinned linux-x64 `claude`
+proteos_claude_binary_src: "" # binary mode: OR a local file on the ansible controller
+proteos_claude_staged: "{{ proteos_images_dir }}/claude-staged" # host staging path (binary mode)
 
 # ----------------------------------------------------------------------------
 # Phase 6: bake the remaining provider CLIs (Gemini, OpenAI Codex, pi.dev) into
@@ -92,13 +92,13 @@ proteos_claude_staged: "{{ proteos_images_dir }}/claude-staged"  # host staging 
 # rebuild (delete {{ proteos_images_dir }}/manifest.lock — see README.md): the
 # bake is guarded on source changes, not on these vars.
 # ----------------------------------------------------------------------------
-proteos_node_version: ""               # empty ⇒ latest LTS (only used when an npm CLI is enabled)
-proteos_gemini_install: "none"         # latest | none
-proteos_gemini_version: ""             # empty ⇒ latest; set to pin
-proteos_codex_install: "none"          # latest | none
-proteos_codex_version: ""              # empty ⇒ latest; set to pin
-proteos_pi_install: "none"             # latest | none
-proteos_pi_version: ""                 # empty ⇒ latest; set to pin
+proteos_node_version: "" # empty ⇒ latest LTS (only used when an npm CLI is enabled)
+proteos_gemini_install: "none" # latest | none
+proteos_gemini_version: "" # empty ⇒ latest; set to pin
+proteos_codex_install: "none" # latest | none
+proteos_codex_version: "" # empty ⇒ latest; set to pin
+proteos_pi_install: "latest" # latest | none
+proteos_pi_version: "" # empty ⇒ latest; set to pin
 
 # Phase 7: install git into the guest rootfs (clone/commit/push need a real git
 # binary; the ProteOS credential helper is the guestagent binary, wired via
@@ -121,8 +121,8 @@ proteos_git_install: true
 # {{ proteos_images_dir }}/manifest.lock — see README.md): the bake is guarded on
 # source changes, not on these vars. The image grows ~400 MiB when enabled.
 proteos_codeserver_install: true
-proteos_codeserver_version: ""        # empty ⇒ latest GitHub release; set to pin (e.g. 4.99.3)
-proteos_codeserver_sha256: ""         # optional sha256 pin for the release tarball
+proteos_codeserver_version: "" # empty ⇒ latest GitHub release; set to pin (e.g. 4.99.3)
+proteos_codeserver_sha256: "" # optional sha256 pin for the release tarball
 
 # ----------------------------------------------------------------------------
 # Guest dev tooling baked into the rootfs: vim, the Go toolchain (unpacked into
@@ -142,17 +142,21 @@ proteos_codeserver_sha256: ""         # optional sha256 pin for the release tarb
 # ----------------------------------------------------------------------------
 proteos_guest_vim_install: true
 proteos_guest_go_install: true
-proteos_guest_go_version: ""           # empty ⇒ build-rootfs.sh default (mirrors the host Go pin)
+proteos_guest_go_version: "" # empty ⇒ build-rootfs.sh default (mirrors the host Go pin)
 proteos_guest_taskfile_install: true
-proteos_guest_taskfile_version: ""     # empty ⇒ build-rootfs.sh default
-proteos_guest_aliases: {}              # name ⇒ command map; baked into the guest .bashrc
+proteos_guest_taskfile_version: "" # empty ⇒ build-rootfs.sh default
+proteos_guest_aliases: {} # name ⇒ command map; baked into the guest .bashrc
 
+# c: "claude --dangerously-skip-permissions",
+# gs: "git status",
+# gc: "git commit -a -s -m",
+# ga: "git add .",
 # ============================================================================
 # node-agent runtime config — rendered into proteos_env_file.
 # ============================================================================
-proteos_agent_addr: "0.0.0.0:9090"            # 0.0.0.0 so the (separate) app VM can reach it
+proteos_agent_addr: "0.0.0.0:9090" # 0.0.0.0 so the (separate) app VM can reach it
 proteos_agent_driver: "firecracker"
-proteos_agent_subnet: "172.30.0.0/24"         # per-host guest subnet; keep off the host/app-VM subnets
+proteos_agent_subnet: "172.30.0.0/24" # per-host guest subnet; keep off the host/app-VM subnets
 proteos_firecracker_bin: "/usr/local/bin/firecracker"
 proteos_jailer_bin: "/usr/local/bin/jailer"
 proteos_cryptsetup_bin: "/usr/sbin/cryptsetup"

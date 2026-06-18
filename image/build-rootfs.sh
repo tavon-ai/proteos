@@ -330,7 +330,10 @@ install_git() {
     # trailing `|| true` keeps `set -o pipefail` from aborting when grep finds no
     # lib/bin file (doc-only packages) or head closes the pipe early (SIGPIPE).
     local probe
-    probe="$(dpkg-deb -c "$deb" | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1 || true)"
+    # `head -1` closes the pipe early, so dpkg-deb's tar child takes a SIGPIPE
+    # and whines "tar subprocess was killed by signal (Broken pipe)" — harmless
+    # (we only want the first matching path); drop its stderr to keep logs clean.
+    probe="$(dpkg-deb -c "$deb" 2>/dev/null | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1 || true)"
     probe="${probe#.}"
     if [[ -n $probe && -e "$mnt$probe" ]]; then
       continue
@@ -369,7 +372,10 @@ lay_down_cache() {
         ;;
     esac
     local probe
-    probe="$(dpkg-deb -c "$deb" | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1 || true)"
+    # `head -1` closes the pipe early, so dpkg-deb's tar child takes a SIGPIPE
+    # and whines "tar subprocess was killed by signal (Broken pipe)" — harmless
+    # (we only want the first matching path); drop its stderr to keep logs clean.
+    probe="$(dpkg-deb -c "$deb" 2>/dev/null | awk '$1 ~ /^-/ {print $NF}' | grep -E '^\./(usr/)?(lib|lib64|bin|sbin)/' | head -1 || true)"
     probe="${probe#.}"
     if [[ -n $probe && -e "$mnt$probe" ]]; then
       continue
@@ -480,6 +486,18 @@ install_vim() {
     return
   fi
   apt_extract_install "$mnt" vim
+  # The vim package ships /usr/bin/vim.basic and relies on update-alternatives
+  # (run from its postinst) to create the /usr/bin/vim -> vim.basic symlink. We
+  # install extract-only and run NO maintainer scripts, so that symlink never
+  # appears — lay it down ourselves (same for the `vi`/`editor` alternatives so
+  # the usual entrypoints all work). Unlike git/sudo, vim has no binary at the
+  # canonical path without this.
+  if ! sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v vim' >/dev/null 2>&1; then
+    [[ -e "$mnt/usr/bin/vim.basic" ]] \
+      || die "vim extract-only install failed: /usr/bin/vim.basic not laid down (vim deb or its deps did not extract)"
+    sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      sh -c 'for link in vim vi editor; do ln -sf /usr/bin/vim.basic /usr/bin/$link; done'
+  fi
   sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c 'command -v vim' >/dev/null 2>&1 \
     || die "vim extract-only install failed: vim not runnable in the image"
   ok "vim installed"
@@ -508,7 +526,13 @@ install_go() {
   dl "$url" "$WORK/$tarball" || die "download Go $version"
   local actual want
   actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
-  want="$(dl "${url}.sha256" 2>/dev/null | awk '{print $1}')" || true
+  # go.dev does NOT serve detached <tarball>.sha256 files — that path returns the
+  # site's HTML shell with HTTP 200 (so curl -f does not catch it, and the page
+  # gets mistaken for a checksum). The published sha256 lives in the JSON index;
+  # collapse it to one line and pull the sha256 from the same object as our file.
+  want="$(dl "https://go.dev/dl/?mode=json&include=all" 2>/dev/null | tr -d '\n ' \
+    | grep -oE "\"filename\":\"${tarball//./\\.}\"[^}]*\"sha256\":\"[0-9a-f]{64}\"" \
+    | grep -oE '[0-9a-f]{64}' | head -1)" || true
   if [[ -n $want ]]; then
     [[ "$actual" == "$want" ]] || die "Go sha256 mismatch: expected $want, got $actual"
     ok "Go tarball sha256 verified ($actual)"

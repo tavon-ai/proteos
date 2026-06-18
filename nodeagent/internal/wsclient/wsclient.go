@@ -135,10 +135,10 @@ func (c *Conn) SetDeadline(t time.Time) error { return c.conn.SetDeadline(t) }
 
 // Close sends a close frame (best-effort) and returns. The caller still closes
 // the underlying tunnel conn.
-// func (c *Conn) Close() error {
-// 	_ = writeFrame(c.conn, opClose, nil, true)
-// 	return nil
-// }
+func (c *Conn) Close() error {
+	_ = writeFrame(c.conn, opClose, nil, true)
+	return nil
+}
 
 // --- framing -----------------------------------------------------------------
 
