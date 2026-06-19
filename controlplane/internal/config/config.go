@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	agentapi "github.com/tavon/proteos/nodeagent/api"
 )
 
 // Config is the fully-resolved control-plane configuration.
@@ -136,6 +138,14 @@ type Config struct {
 	// with StateSigningKey (reused, per decision #2).
 	MachineDomain string
 
+	// PreviewPortMin / PreviewPortMax (PROTEOS_PREVIEW_PORT_MIN/MAX) bound the
+	// previewable application ports the web-session mint will issue a token for
+	// (PP2). Reserved system ports 1024/1025 stay rejected regardless. Defaults to
+	// the high range (agentapi.DefaultPreviewPortMin/Max). The node-agent reads
+	// the same env names so the mint and the tunnel allowlist agree.
+	PreviewPortMin uint32
+	PreviewPortMax uint32
+
 	// --- Phase 6: provider enablement --------------------------------------
 
 	// ProvidersEnabled aligns the registry's enabled flag with the providers
@@ -185,7 +195,13 @@ func Load() (*Config, error) {
 		MaxMemMiB:         getenvInt("PROTEOS_MAX_MEM_MIB", 16384),
 		MaxDiskMiB:        getenvInt("PROTEOS_MAX_DISK_MIB", 51200),
 
-		MachineDomain: os.Getenv("PROTEOS_MACHINE_DOMAIN"),
+		MachineDomain:  os.Getenv("PROTEOS_MACHINE_DOMAIN"),
+		PreviewPortMin: getenvUint32("PROTEOS_PREVIEW_PORT_MIN", agentapi.DefaultPreviewPortMin),
+		PreviewPortMax: getenvUint32("PROTEOS_PREVIEW_PORT_MAX", agentapi.DefaultPreviewPortMax),
+	}
+
+	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {
+		return nil, fmt.Errorf("PROTEOS_PREVIEW_PORT_MIN/MAX invalid range: %d..%d", c.PreviewPortMin, c.PreviewPortMax)
 	}
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {
@@ -243,6 +259,15 @@ func getenvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getenvUint32(key string, def uint32) uint32 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+			return uint32(n)
 		}
 	}
 	return def

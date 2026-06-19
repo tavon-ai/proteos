@@ -17,15 +17,33 @@ import (
 	"github.com/tavon/proteos/nodeagent/internal/driver"
 )
 
-// Server wires the routes to a driver, holding the shared bearer token.
+// Server wires the routes to a driver, holding the shared bearer token and the
+// configured preview port range (PP2).
 type Server struct {
-	token []byte
-	drv   driver.Driver
+	token      []byte
+	drv        driver.Driver
+	previewMin uint32
+	previewMax uint32
 }
 
-// New returns a Server authenticating with token against drv.
+// New returns a Server authenticating with token against drv. The preview port
+// range defaults to the high range (agentapi.DefaultPreviewPortMin/Max); call
+// WithPreviewRange to apply operator-configured bounds.
 func New(token string, drv driver.Driver) *Server {
-	return &Server{token: []byte(token), drv: drv}
+	return &Server{
+		token:      []byte(token),
+		drv:        drv,
+		previewMin: api.DefaultPreviewPortMin,
+		previewMax: api.DefaultPreviewPortMax,
+	}
+}
+
+// WithPreviewRange sets the previewable application-port bounds (PP2) and returns
+// the Server for chaining. Out-of-range ports are rejected at the tunnel
+// allowlist before any dial.
+func (s *Server) WithPreviewRange(min, max uint32) *Server {
+	s.previewMin, s.previewMax = min, max
+	return s
 }
 
 // Handler builds the fully-wired http.Handler. /healthz is public; everything

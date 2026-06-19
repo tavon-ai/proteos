@@ -55,7 +55,7 @@ func run() error {
 		slog.Warn("reattach encountered errors", "err", err)
 	}
 
-	srv := httpapi.New(cfg.Token, drv)
+	srv := httpapi.New(cfg.Token, drv).WithPreviewRange(cfg.PreviewPortMin, cfg.PreviewPortMax)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),

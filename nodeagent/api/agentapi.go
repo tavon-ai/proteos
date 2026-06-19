@@ -88,12 +88,12 @@ func ValidPreviewPort(p, min, max uint32) bool {
 }
 
 // ValidGuestPort reports whether the tunnel may reach p: a system port, or a
-// preview application port in the default range (PP2 will thread the
-// operator-configured bounds; the default range is used until then). An unknown
-// port is rejected with 400 before any dial, so the tunnel can never be pointed
-// at an arbitrary in-VM port.
-func ValidGuestPort(p uint32) bool {
-	return IsSystemGuestPort(p) || ValidPreviewPort(p, DefaultPreviewPortMin, DefaultPreviewPortMax)
+// preview application port within the operator-configured [min,max] range. An
+// unknown port is rejected with 400 before any dial, so the tunnel can never be
+// pointed at an arbitrary in-VM port. Callers pass their configured bounds
+// (DefaultPreviewPortMin/Max when unset).
+func ValidGuestPort(p, min, max uint32) bool {
+	return IsSystemGuestPort(p) || ValidPreviewPort(p, min, max)
 }
 
 // PreviewPreamble is the one-line frame the node-agent writes to the preview

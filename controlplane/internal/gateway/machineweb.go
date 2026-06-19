@@ -79,6 +79,14 @@ type MachineWebConfig struct {
 	Registry       *Registry   // revocation registry (shared with terminals)
 	Sessions       SessionResolver
 	Machines       MachineResolver
+
+	// PreviewPortMin / PreviewPortMax bound the previewable application ports the
+	// mint will issue a token for (PP2). Reserved system ports 1024/1025 stay
+	// rejected regardless. Zero ⇒ the default high range
+	// (agentapi.DefaultPreviewPortMin/Max). These mirror the node-agent's
+	// PROTEOS_PREVIEW_PORT_MIN/MAX so the mint and the allowlist agree.
+	PreviewPortMin uint32
+	PreviewPortMax uint32
 }
 
 // MachineWeb serves the per-machine editor origin. A nil *MachineWeb (domain
@@ -92,6 +100,12 @@ type MachineWeb struct {
 func NewMachineWeb(cfg MachineWebConfig) *MachineWeb {
 	if cfg.Domain == "" {
 		return nil
+	}
+	if cfg.PreviewPortMin == 0 {
+		cfg.PreviewPortMin = agentapi.DefaultPreviewPortMin
+	}
+	if cfg.PreviewPortMax == 0 {
+		cfg.PreviewPortMax = agentapi.DefaultPreviewPortMax
 	}
 	mw := &MachineWeb{cfg: cfg}
 
@@ -426,6 +440,14 @@ func (mw *MachineWeb) MintWebSessionURL(scheme, machineID, sessionID, userID, fo
 		RawQuery: url.Values{"token": {tok}}.Encode(),
 	}
 	return u.String()
+}
+
+// ValidPreviewPort reports whether port is an admissible preview application
+// port under the configured range (PP2): in [PreviewPortMin, PreviewPortMax] and
+// not a reserved system port (1024/1025). The mint rejects everything else with
+// a 400 before issuing a token.
+func (mw *MachineWeb) ValidPreviewPort(port uint32) bool {
+	return agentapi.ValidPreviewPort(port, mw.cfg.PreviewPortMin, mw.cfg.PreviewPortMax)
 }
 
 // Domain returns the configured machine domain (for the SPA/config surface).

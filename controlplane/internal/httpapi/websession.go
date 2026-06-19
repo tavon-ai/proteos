@@ -40,11 +40,11 @@ func (s *Server) handleWebSession(w http.ResponseWriter, r *http.Request) {
 
 	machineID := machine.UUIDString(m.ID)
 
-	// PP1: an optional ?port= mints a preview origin (m-<uuid>-p<port>) instead of
-	// the editor. The port must be an in-range preview port — reserved system
-	// ports (1024 terminal / 1025 code-server) and out-of-range values are 400
-	// before any URL is minted or guest dialled. Absent ⇒ the editor (port 0).
-	port, ok := webSessionPort(w, r)
+	// PP1/PP2: an optional ?port= mints a preview origin (m-<uuid>-p<port>) instead
+	// of the editor. The port must be in the configured preview range — reserved
+	// system ports (1024 terminal / 1025 code-server) and out-of-range values are
+	// 400 before any URL is minted or guest dialled. Absent ⇒ the editor (port 0).
+	port, ok := s.webSessionPort(w, r)
 	if !ok {
 		return
 	}
@@ -65,17 +65,17 @@ func (s *Server) handleWebSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
-// webSessionPort reads the optional ?port= and validates it as a preview port.
-// It returns (0, true) when absent (the editor), (port, true) for a valid
-// in-range preview port, and (0, false) — after writing 400 bad_request — for a
-// malformed, reserved, or out-of-range value.
-func webSessionPort(w http.ResponseWriter, r *http.Request) (uint32, bool) {
+// webSessionPort reads the optional ?port= and validates it against the
+// configured preview range (PP2). It returns (0, true) when absent (the editor),
+// (port, true) for a valid in-range preview port, and (0, false) — after writing
+// 400 bad_request — for a malformed, reserved, or out-of-range value.
+func (s *Server) webSessionPort(w http.ResponseWriter, r *http.Request) (uint32, bool) {
 	raw := r.URL.Query().Get(agentapi.GuestPortParam)
 	if raw == "" {
 		return 0, true
 	}
 	p, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil || !agentapi.ValidPreviewPort(uint32(p), agentapi.DefaultPreviewPortMin, agentapi.DefaultPreviewPortMax) {
+	if err != nil || !s.MachineWeb.ValidPreviewPort(uint32(p)) {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return 0, false
 	}

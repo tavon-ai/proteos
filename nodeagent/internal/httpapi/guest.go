@@ -29,10 +29,11 @@ func (s *Server) handleGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Phase 8: ?port= selects the guest port to tunnel to. Absent ⇒ the terminal
-	// port (Phase 3 back-compat). Only allowlisted ports are dialable — the
-	// tunnel can never be pointed at an arbitrary in-VM port.
-	port, ok := parseGuestPort(r.URL.Query().Get(api.GuestPortParam))
+	// ?port= selects the guest port to tunnel to. Absent ⇒ the terminal port
+	// (Phase 3 back-compat). Only allowlisted ports are dialable — a system port
+	// or a preview application port within the configured range — so the tunnel
+	// can never be pointed at an arbitrary in-VM port.
+	port, ok := parseGuestPort(r.URL.Query().Get(api.GuestPortParam), s.previewMin, s.previewMax)
 	if !ok {
 		writeError(w, http.StatusBadRequest, api.ErrBadRequest)
 		return
@@ -110,9 +111,10 @@ func bridge(clientConn net.Conn, clientRead io.Reader, guestConn net.Conn) {
 
 // parseGuestPort resolves the ?port= value to an allowlisted guest port. An
 // empty value defaults to the terminal port (Phase 3 callers send no port). A
-// non-empty value must parse and be tunnel-reachable (api.ValidGuestPort), else
-// ok is false and the caller answers 400.
-func parseGuestPort(raw string) (port uint32, ok bool) {
+// non-empty value must parse and be tunnel-reachable — a system port or a
+// preview application port within [min,max] (api.ValidGuestPort) — else ok is
+// false and the caller answers 400.
+func parseGuestPort(raw string, min, max uint32) (port uint32, ok bool) {
 	if raw == "" {
 		return api.GuestTerminalPort, true
 	}
@@ -121,7 +123,7 @@ func parseGuestPort(raw string) (port uint32, ok bool) {
 		return 0, false
 	}
 	p := uint32(n)
-	if !api.ValidGuestPort(p) {
+	if !api.ValidGuestPort(p, min, max) {
 		return 0, false
 	}
 	return p, true

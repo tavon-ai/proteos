@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	api "github.com/tavon/proteos/nodeagent/api"
 )
 
 // Config is the fully-resolved node-agent configuration.
@@ -65,6 +67,15 @@ type Config struct {
 	// decision #3). Unused by the dev driver.
 	GuestVsockPort int
 
+	// PreviewPortMin / PreviewPortMax (PROTEOS_PREVIEW_PORT_MIN/MAX) bound the
+	// previewable application ports the guest tunnel may reach (PP2). Reserved
+	// system ports 1024/1025 stay rejected regardless; anything outside the range
+	// is 400 before any dial. Defaults to the high range
+	// (agentapi.DefaultPreviewPortMin..Max). The control plane reads the same env
+	// names so the mint and the allowlist agree.
+	PreviewPortMin uint32
+	PreviewPortMax uint32
+
 	// --- firecracker driver (Task 2.7); unused by the dev driver -------------
 
 	// FirecrackerBin / JailerBin are absolute paths to the pinned binaries.
@@ -109,6 +120,8 @@ func Load() (*Config, error) {
 		GuestAgentBin:      os.Getenv("PROTEOS_DEV_GUESTAGENT_BIN"),
 		DevGuestWebBackend: os.Getenv("PROTEOS_DEV_GUEST_WEB_BACKEND"),
 		GuestVsockPort:     getenvInt("PROTEOS_GUEST_VSOCK_PORT", 1024),
+		PreviewPortMin:     getenvUint32("PROTEOS_PREVIEW_PORT_MIN", api.DefaultPreviewPortMin),
+		PreviewPortMax:     getenvUint32("PROTEOS_PREVIEW_PORT_MAX", api.DefaultPreviewPortMax),
 		FirecrackerBin:     getenv("PROTEOS_FIRECRACKER_BIN", "/usr/local/bin/firecracker"),
 		JailerBin:          getenv("PROTEOS_JAILER_BIN", "/usr/local/bin/jailer"),
 		ChrootBaseDir:      getenv("PROTEOS_CHROOT_BASE_DIR", "/srv/jailer"),
@@ -140,6 +153,10 @@ func Load() (*Config, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("PROTEOS_AGENT_TOKEN is required (shared bearer token with the control plane)")
 	}
+
+	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {
+		return nil, fmt.Errorf("PROTEOS_PREVIEW_PORT_MIN/MAX invalid range: %d..%d", c.PreviewPortMin, c.PreviewPortMax)
+	}
 	return c, nil
 }
 
@@ -154,6 +171,15 @@ func getenvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getenvUint32(key string, def uint32) uint32 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+			return uint32(n)
 		}
 	}
 	return def

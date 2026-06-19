@@ -261,6 +261,44 @@ func TestGuestTunnelPortAllowlist(t *testing.T) {
 	}
 }
 
+// TestGuestTunnelPreviewRange verifies the configured preview range (PP2) gates
+// the allowlist: a port inside the operator range opens, one outside it (even if
+// it would be valid under the default range) is 400 with no dial, and the system
+// ports stay reachable regardless of the range.
+func TestGuestTunnelPreviewRange(t *testing.T) {
+	network, addr, closeEcho := echoServer(t)
+	defer closeEcho()
+
+	cases := []struct {
+		name     string
+		path     string
+		wantCode string
+		wantPort uint32
+	}{
+		{"in configured range", "/v1/machines/m1/guest?port=2500", "101", 2500},
+		{"above configured range", "/v1/machines/m1/guest?port=5000", "400", 0},
+		{"below configured range", "/v1/machines/m1/guest?port=1500", "400", 0},
+		{"system terminal still ok", "/v1/machines/m1/guest?port=1024", "101", api.GuestTerminalPort},
+		{"system web still ok", "/v1/machines/m1/guest?port=1025", "101", api.GuestWebPort},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			drv := &fakeGuestDriver{state: api.StateRunning, guestNet: network, guestAdr: addr}
+			srv := httpapi.New(testToken, drv).WithPreviewRange(2000, 3000)
+			ts := httptest.NewServer(srv.Handler())
+			defer ts.Close()
+			conn, _, status := openTunnelPath(t, ts, tc.path, testToken)
+			defer conn.Close()
+			if !strings.Contains(status, tc.wantCode) {
+				t.Fatalf("status = %q, want %s", status, tc.wantCode)
+			}
+			if tc.wantCode == "101" && drv.lastPort.get() != tc.wantPort {
+				t.Fatalf("dialed port = %d, want %d", drv.lastPort.get(), tc.wantPort)
+			}
+		})
+	}
+}
+
 func TestGuestTunnelAuthz(t *testing.T) {
 	network, addr, closeEcho := echoServer(t)
 	defer closeEcho()

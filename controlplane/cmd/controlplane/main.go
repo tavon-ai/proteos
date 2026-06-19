@@ -218,6 +218,8 @@ func run(migrate, migrateOnly bool) error {
 		Registry:       gwRegistry,
 		Sessions:       sessRes,
 		Machines:       machRes,
+		PreviewPortMin: cfg.PreviewPortMin,
+		PreviewPortMax: cfg.PreviewPortMax,
 	})
 	if machineWeb != nil {
 		slog.Info("machine-web editor enabled", "domain", cfg.MachineDomain)

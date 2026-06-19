@@ -3,7 +3,9 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -144,6 +146,46 @@ func TestMachineWebE2E(t *testing.T) {
 		t.Fatalf("ws echo = %q err %v", echo, err)
 	}
 
+	// 5b. PP1/PP2 port preview: start two app servers on distinct in-range
+	// loopback ports inside the "VM" (dev: this host's loopback) and reach each
+	// through its own (machine, port) preview origin. This exercises the whole new
+	// path live — the mint's ?port=, the gateway's per-port dial, the node-agent's
+	// target-port preamble, and the generic guest forwarder — and proves two ports
+	// are independently reachable. A port-A cookie replayed on the port-B origin is
+	// rejected, confirming per-(machine,port) origin isolation.
+	portA := startPreviewApp(t, "preview-app-A")
+	portB := startPreviewApp(t, "preview-app-B")
+	cookieA := reachPreview(t, fx, portA, "preview-app-A")
+	_ = reachPreview(t, fx, portB, "preview-app-B")
+
+	crossReq, _ := http.NewRequest(http.MethodGet, fx.url+"/", nil)
+	crossReq.Host = fmt.Sprintf("m-%s-p%d.localhost", fx.machineID, portB)
+	crossReq.AddCookie(cookieA)
+	crossResp, err := http.DefaultClient.Do(crossReq)
+	if err != nil {
+		t.Fatalf("cross-port replay: %v", err)
+	}
+	crossResp.Body.Close()
+	if crossResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("port-A cookie on port-B origin = %d, want 401", crossResp.StatusCode)
+	}
+
+	// A reserved (1025) and an out-of-range (70000) preview mint are rejected 400
+	// before any token is issued.
+	for _, badPort := range []int{1025, 70000} {
+		badReq, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/machine/web-session?port=%d", fx.url, badPort), nil)
+		badReq.Header.Set("X-Requested-By", "proteos")
+		badReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fx.token})
+		badResp, err := http.DefaultClient.Do(badReq)
+		if err != nil {
+			t.Fatalf("bad-port mint: %v", err)
+		}
+		badResp.Body.Close()
+		if badResp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("preview mint port=%d = %d, want 400", badPort, badResp.StatusCode)
+		}
+	}
+
 	// 6. Logout (revoke the parent session) closes the live editor socket.
 	if err := fx.sessions.Revoke(ctx, fx.token); err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -199,6 +241,92 @@ func startEditorStub(t *testing.T) string {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://")
+}
+
+// startPreviewApp runs a tiny HTTP server on a loopback port, standing in for a
+// dev server the user runs inside the VM (in dev the guest's loopback IS this
+// host's loopback). It returns the port it bound — used as an in-range preview
+// target. The body lets the caller assert which app it reached.
+func startPreviewApp(t *testing.T, body string) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// reachPreview runs the full owner mint→auth→proxy handshake for a preview port
+// and asserts the proxied app returns want. It returns the port-scoped cookie so
+// the caller can test cross-origin isolation.
+func reachPreview(t *testing.T, fx cpFixture, port int, want string) *http.Cookie {
+	t.Helper()
+	previewHost := fmt.Sprintf("m-%s-p%d.localhost", fx.machineID, port)
+
+	// Mint a preview web-session URL for this port (requireAuth + CSRF).
+	mintReq, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/machine/web-session?port=%d", fx.url, port), nil)
+	mintReq.Header.Set("X-Requested-By", "proteos")
+	mintReq.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fx.token})
+	mintResp, err := http.DefaultClient.Do(mintReq)
+	if err != nil {
+		t.Fatalf("mint preview: %v", err)
+	}
+	defer mintResp.Body.Close()
+	if mintResp.StatusCode != http.StatusOK {
+		t.Fatalf("preview mint status = %d, want 200", mintResp.StatusCode)
+	}
+	var mint struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(mintResp.Body).Decode(&mint); err != nil {
+		t.Fatalf("decode preview mint: %v", err)
+	}
+	if !strings.Contains(mint.URL, previewHost) {
+		t.Fatalf("preview mint url = %q, want host %s", mint.URL, previewHost)
+	}
+	token := mustTokenParam(t, mint.URL)
+
+	// Exchange for the port-scoped cookie at the preview origin.
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	authReq, _ := http.NewRequest(http.MethodGet, fx.url+"/__proteos/auth?token="+token, nil)
+	authReq.Host = previewHost
+	authResp, err := noFollow.Do(authReq)
+	if err != nil {
+		t.Fatalf("preview auth: %v", err)
+	}
+	authResp.Body.Close()
+	if authResp.StatusCode != http.StatusFound {
+		t.Fatalf("preview auth = %d, want 302", authResp.StatusCode)
+	}
+	var cookie *http.Cookie
+	for _, c := range authResp.Cookies() {
+		if c.Name == "proteos_machine" {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("preview auth set no cookie")
+	}
+
+	// Reach the app through the preview origin → guest forwarder → loopback port.
+	req, _ := http.NewRequest(http.MethodGet, fx.url+"/", nil)
+	req.Host = previewHost
+	req.AddCookie(cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("preview proxy: %v", err)
+	}
+	pbody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(pbody) != want {
+		t.Fatalf("preview app (port %d) = %d %q, want 200 %q", port, resp.StatusCode, pbody, want)
+	}
+	return cookie
 }
 
 // waitWebReachable polls the guest web tunnel (port 1025) until it connects.
