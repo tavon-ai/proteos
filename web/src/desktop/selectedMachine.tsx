@@ -59,7 +59,9 @@ export function SelectedMachineProvider({
   // Keep the selection valid as the list changes (the selected machine was
   // destroyed, or the user's first machine just arrived over SSE).
   useEffect(() => {
-    setSelectedIdState((cur) => (cur && machines.some((m) => m.id === cur) ? cur : chooseDefaultMachine(machines, cur)));
+    setSelectedIdState((cur) =>
+      cur && machines.some((m) => m.id === cur) ? cur : chooseDefaultMachine(machines, cur),
+    );
   }, [machines]);
 
   const setSelectedId = useCallback((id: string) => {

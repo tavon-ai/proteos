@@ -183,7 +183,11 @@ function WindowBody({
       );
     case 'editor':
       return (
-        <EditorWindow machineId={win.machineId ?? null} machineState={machineState} folder={win.folder} />
+        <EditorWindow
+          machineId={win.machineId ?? null}
+          machineState={machineState}
+          folder={win.folder}
+        />
       );
     case 'logs':
       return <LogsWindow events={events} />;

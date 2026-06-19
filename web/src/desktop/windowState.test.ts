@@ -230,7 +230,12 @@ describe('layout serialization', () => {
     // Different machines ⇒ two launchers coexist.
     expect(s.windows.map((w) => w.id)).toEqual(['projects-m1', 'projects-m2']);
     // Re-opening m1's launcher collapses onto the existing one (no third window).
-    s = open(s, { id: 'projects-m1-again', kind: 'projects', machineId: 'm1', dedupeKey: 'projects|m1' });
+    s = open(s, {
+      id: 'projects-m1-again',
+      kind: 'projects',
+      machineId: 'm1',
+      dedupeKey: 'projects|m1',
+    });
     expect(s.windows.map((w) => w.id)).toEqual(['projects-m1', 'projects-m2']);
   });
 

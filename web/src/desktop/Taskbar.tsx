@@ -16,7 +16,15 @@ const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
 // Taskbar is the top bar of the desktop: the brand, the machine switcher with
 // start/stop/destroy controls for the active machine, quick-launch buttons for
 // the Projects/Terminal/Settings/Activity windows, a clock, and the user menu.
-export function Taskbar({ me, onLogout, loggingOut }: { me: Me; onLogout: () => void; loggingOut: boolean }) {
+export function Taskbar({
+  me,
+  onLogout,
+  loggingOut,
+}: {
+  me: Me;
+  onLogout: () => void;
+  loggingOut: boolean;
+}) {
   const wm = useWindowManager();
   const { selectedId } = useSelectedMachine();
   const clock = useClock();
@@ -102,7 +110,9 @@ function MachineSwitcher() {
 
   const onDestroy = () => {
     if (!selectedId) return;
-    if (window.confirm('Destroy this machine? Its persistent disk is wiped and cannot be recovered.')) {
+    if (
+      window.confirm('Destroy this machine? Its persistent disk is wiped and cannot be recovered.')
+    ) {
       destroy.mutate(selectedId);
     }
   };
@@ -130,12 +140,20 @@ function MachineSwitcher() {
 
       {/* Lifecycle controls for the active machine. */}
       {(state === 'stopped' || state === 'error') && (
-        <button className="btn-secondary" onClick={() => selectedId && start.mutate(selectedId)} disabled={busy}>
+        <button
+          className="btn-secondary"
+          onClick={() => selectedId && start.mutate(selectedId)}
+          disabled={busy}
+        >
           Start
         </button>
       )}
       {state === 'running' && (
-        <button className="btn-secondary" onClick={() => selectedId && stop.mutate(selectedId)} disabled={busy}>
+        <button
+          className="btn-secondary"
+          onClick={() => selectedId && stop.mutate(selectedId)}
+          disabled={busy}
+        >
           Stop
         </button>
       )}
