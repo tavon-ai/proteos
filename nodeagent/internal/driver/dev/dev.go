@@ -90,6 +90,12 @@ func (d *DevDriver) guestWebSockPath(machineID string) string {
 	return filepath.Join(d.store.MachineDir(machineID), "guest-web.sock")
 }
 
+// guestPreviewSockPath is the per-machine unix socket the guest agent's port-
+// preview forwarder (PP1) listens on, standing in for vsock port 1026 in dev.
+func (d *DevDriver) guestPreviewSockPath(machineID string) string {
+	return filepath.Join(d.store.MachineDir(machineID), "guest-preview.sock")
+}
+
 // persistDir is the per-machine directory standing in for the real driver's
 // persistent disk (decision #10). It is handed to the guest agent via
 // PROTEOS_GUEST_PERSIST and survives hibernate/resume (kept across Stop, only
@@ -241,6 +247,10 @@ func (d *DevDriver) buildCmd(machineID string) (*exec.Cmd, error) {
 		"PROTEOS_GUEST_SHELL=/bin/bash",
 		"PROTEOS_GUEST_PERSIST="+persist,
 		"PROTEOS_GUEST_ENV_DIR="+d.envDir(machineID),
+		// PP1: the generic port-preview forwarder (vsock:1026 in production). It
+		// needs no backend config — it dials whatever loopback port the node-agent
+		// names in the per-connection preamble — so it is always on in dev.
+		"PROTEOS_GUEST_PREVIEW_LISTEN=unix:"+d.guestPreviewSockPath(machineID),
 	)
 	// Phase 8: when a web backend is configured, run the guest agent's web forward
 	// on a per-machine socket (the dev stand-in for vsock port 1025) pointing at
@@ -386,7 +396,9 @@ func (d *DevDriver) Destroy(ctx context.Context, machineID string) error {
 // (guest.sock) or, for the Phase 8 web port, its web socket (guest-web.sock).
 // The machine must be tracked (else ErrUnknownMachine); the HTTP layer is
 // responsible for the running-state check and port allowlisting before calling
-// this. A zero port means the terminal socket.
+// this. A zero port means the terminal socket. A preview application port goes
+// to the preview forwarder socket, preceded by the target-port preamble (the
+// dev stand-in for the production vsock-1026 + preamble path).
 func (d *DevDriver) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	if _, ok, err := d.store.Load(machineID); err != nil {
 		return nil, err
@@ -394,11 +406,26 @@ func (d *DevDriver) DialGuest(ctx context.Context, machineID string, port uint32
 		return nil, driver.ErrUnknownMachine
 	}
 	sock := d.guestSockPath(machineID)
-	if port == agentapi.GuestWebPort {
+	var preamble string
+	switch {
+	case port == agentapi.GuestWebPort:
 		sock = d.guestWebSockPath(machineID)
+	case port != 0 && !agentapi.IsSystemGuestPort(port):
+		sock = d.guestPreviewSockPath(machineID)
+		preamble = agentapi.PreviewPreamble(port)
 	}
 	var dialer net.Dialer
-	return dialer.DialContext(ctx, "unix", sock)
+	conn, err := dialer.DialContext(ctx, "unix", sock)
+	if err != nil {
+		return nil, err
+	}
+	if preamble != "" {
+		if _, err := conn.Write([]byte(preamble)); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+	return conn, nil
 }
 
 var _ driver.GuestDialer = (*DevDriver)(nil)

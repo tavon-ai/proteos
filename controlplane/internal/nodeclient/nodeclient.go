@@ -129,9 +129,10 @@ func (c *Client) Health(ctx context.Context) error {
 // client refuses non-WebSocket upgrades), and on 101 returns the hijacked
 // connection — any bytes the agent buffered after the response headers are
 // preserved. The control-plane gateway then speaks WebSocket (terminal) or HTTP
-// (code-server) to the guest over this conn. port selects the guest vsock port
-// (agentapi.GuestTerminalPort / GuestWebPort); the node-agent allowlists it. The
-// returned conn is the caller's to close.
+// (code-server) to the guest over this conn. port selects the guest port: a
+// system vsock port (agentapi.GuestTerminalPort / GuestWebPort) or, for PP1, an
+// in-VM preview application port the node-agent reaches through the forwarder.
+// The node-agent allowlists it. The returned conn is the caller's to close.
 func (c *Client) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	u, err := url.Parse(c.baseURL)
 	if err != nil {

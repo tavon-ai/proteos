@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/session"
+	agentapi "github.com/tavon/proteos/nodeagent/api"
 )
 
 // handleWebSession mints the one-shot, ≤60s web-session URL the SPA navigates the
@@ -38,16 +40,46 @@ func (s *Server) handleWebSession(w http.ResponseWriter, r *http.Request) {
 
 	machineID := machine.UUIDString(m.ID)
 
-	// Phase 9 decision #5: an optional {folder} opens code-server directly on a
-	// project. It is validated against the machine's listable projects (the same
-	// check as a session cwd); absent ⇒ the workspace root (Phase 8 behavior).
-	folder, ok := s.webSessionFolder(w, r, machineID)
+	// PP1: an optional ?port= mints a preview origin (m-<uuid>-p<port>) instead of
+	// the editor. The port must be an in-range preview port — reserved system
+	// ports (1024 terminal / 1025 code-server) and out-of-range values are 400
+	// before any URL is minted or guest dialled. Absent ⇒ the editor (port 0).
+	port, ok := webSessionPort(w, r)
 	if !ok {
 		return
 	}
 
-	url := s.MachineWeb.MintWebSessionURL(externalScheme(r), machineID, sessionID, machine.UUIDString(user.ID), folder)
+	// Phase 9 decision #5: an optional {folder} opens code-server directly on a
+	// project. It is validated against the machine's listable projects (the same
+	// check as a session cwd); absent ⇒ the workspace root (Phase 8 behavior).
+	// Folder applies to the editor only; a preview opens the app root.
+	folder := ""
+	if port == 0 {
+		folder, ok = s.webSessionFolder(w, r, machineID)
+		if !ok {
+			return
+		}
+	}
+
+	url := s.MachineWeb.MintWebSessionURL(externalScheme(r), machineID, sessionID, machine.UUIDString(user.ID), folder, port)
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+}
+
+// webSessionPort reads the optional ?port= and validates it as a preview port.
+// It returns (0, true) when absent (the editor), (port, true) for a valid
+// in-range preview port, and (0, false) — after writing 400 bad_request — for a
+// malformed, reserved, or out-of-range value.
+func webSessionPort(w http.ResponseWriter, r *http.Request) (uint32, bool) {
+	raw := r.URL.Query().Get(agentapi.GuestPortParam)
+	if raw == "" {
+		return 0, true
+	}
+	p, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil || !agentapi.ValidPreviewPort(uint32(p), agentapi.DefaultPreviewPortMin, agentapi.DefaultPreviewPortMax) {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return 0, false
+	}
+	return uint32(p), true
 }
 
 // webSessionFolder decodes the optional {folder} from the request body and

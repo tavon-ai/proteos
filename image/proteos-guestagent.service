@@ -32,6 +32,12 @@ Environment=PROTEOS_GUEST_PERSIST_DEV=/dev/vdb
 # (--no-codeserver) leaves this listener up but unable to start the editor.
 Environment=PROTEOS_GUEST_WEB_LISTEN=vsock:1025
 Environment=PROTEOS_CODESERVER_BIN=/usr/local/bin/code-server
+# PP1 (port preview): the generic loopback forward. The agent listens on a third
+# vsock port (1026) that the node-agent tunnel reaches on the guest preview port;
+# for each connection the node-agent names a loopback port in a one-line preamble
+# and the agent bridges to 127.0.0.1:<port>. No backend/supervisor — the user's
+# own dev server is the backend; the control-plane gateway is the authenticator.
+Environment=PROTEOS_GUEST_PREVIEW_LISTEN=vsock:1026
 Restart=always
 RestartSec=1
 # The shell sessions are children of the agent; give them room.

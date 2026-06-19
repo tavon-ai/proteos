@@ -73,6 +73,17 @@ type Config struct {
 	// flags (space-split). Empty ⇒ the decision #5 defaults built from WebBackend
 	// and the persist-backed user-data/extensions dirs.
 	CodeServerArgs string
+
+	// --- PP1: port-preview forward ------------------------------------------
+
+	// PreviewListen (PROTEOS_GUEST_PREVIEW_LISTEN) is the listener spec for the
+	// generic port-preview forward: "vsock:1026" in production, "unix:<path>" in
+	// dev. Empty ⇒ port preview is disabled. The forward reads a one-line target-
+	// port preamble from each connection (written by the node-agent) and bridges
+	// to 127.0.0.1:<port> inside the VM; the node-agent tunnel reaches it on
+	// agentapi.GuestPreviewPort. There is no backend config and no supervisor —
+	// the user's own process is the backend.
+	PreviewListen string
 }
 
 // Load reads and validates configuration from the environment.
@@ -90,6 +101,8 @@ func Load() (*Config, error) {
 		WebBackend:     getenv("PROTEOS_GUEST_WEB_BACKEND", "127.0.0.1:13337"),
 		CodeServerBin:  os.Getenv("PROTEOS_CODESERVER_BIN"),
 		CodeServerArgs: os.Getenv("PROTEOS_CODESERVER_ARGS"),
+
+		PreviewListen: os.Getenv("PROTEOS_GUEST_PREVIEW_LISTEN"),
 	}
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)

@@ -9,6 +9,8 @@
 // control plane owns the mapping from these driver states to machine states.
 package agentapi
 
+import "strconv"
+
 // AuthHeader is the HTTP header carrying the shared bearer token. Both sides
 // compare it in constant time.
 const AuthHeader = "Authorization"
@@ -36,23 +38,70 @@ const (
 	RouteGuest = "GET /v1/machines/{id}/guest"
 )
 
-// Guest vsock ports the tunnel can reach. The node-agent allowlists exactly
-// these (an unknown port is 400 before any dial), so the tunnel can never be
-// pointed at an arbitrary in-VM port. GuestTerminalPort is the Phase 3 agent
-// (terminals + the /resume,/info,/secrets,/control surface); GuestWebPort is
-// the Phase 8 code-server forward (decision #4).
+// Guest vsock ports. GuestTerminalPort is the Phase 3 agent (terminals + the
+// /resume,/info,/secrets,/control surface); GuestWebPort is the Phase 8
+// code-server forward (decision #4). These two are dialed DIRECTLY: the ?port=
+// value is the vsock port the guest listens on.
+//
+// GuestPreviewPort is the port-preview (PP1) forward. It is NOT an application
+// port — it is the single vsock port the guest's generic preview forwarder
+// listens on. To reach an arbitrary in-VM loopback port the node-agent connects
+// here and writes the requested port as a one-line preamble (see
+// PreviewPreamble); the forwarder then bridges to 127.0.0.1:<port>. This
+// indirection lets ONE guest listener serve the whole preview range without
+// binding a vsock port per application port (binding ~64k vsock ports is
+// infeasible).
 const (
 	GuestTerminalPort uint32 = 1024
 	GuestWebPort      uint32 = 1025
+	GuestPreviewPort  uint32 = 1026
+)
+
+// Default preview application-port range (PP1). The previewable ports are the
+// high range minus the reserved system ports 1024 (terminal) and 1025
+// (code-server). PP2 makes the bounds operator-configurable; until then these
+// defaults gate both the control-plane mint and the node-agent allowlist.
+const (
+	DefaultPreviewPortMin uint32 = 1026
+	DefaultPreviewPortMax uint32 = 65535
 )
 
 // GuestPortParam is the RouteGuest query parameter selecting the guest port to
-// tunnel to. Absent ⇒ GuestTerminalPort (back-compat with Phase 3 callers).
+// tunnel to. Absent ⇒ GuestTerminalPort (back-compat with Phase 3 callers). For
+// a preview it carries the in-VM application port (e.g. 3000), not a vsock port.
 const GuestPortParam = "port"
 
-// ValidGuestPort reports whether p is a tunnel-reachable guest port.
-func ValidGuestPort(p uint32) bool {
+// IsSystemGuestPort reports whether p is a directly-dialed guest vsock port
+// (terminal or code-server web) rather than a preview application port reached
+// through the preview forwarder.
+func IsSystemGuestPort(p uint32) bool {
 	return p == GuestTerminalPort || p == GuestWebPort
+}
+
+// ValidPreviewPort reports whether p is an admissible preview application port:
+// within [min,max] and not one of the reserved system ports (1024/1025).
+func ValidPreviewPort(p, min, max uint32) bool {
+	if IsSystemGuestPort(p) {
+		return false
+	}
+	return p >= min && p <= max
+}
+
+// ValidGuestPort reports whether the tunnel may reach p: a system port, or a
+// preview application port in the default range (PP2 will thread the
+// operator-configured bounds; the default range is used until then). An unknown
+// port is rejected with 400 before any dial, so the tunnel can never be pointed
+// at an arbitrary in-VM port.
+func ValidGuestPort(p uint32) bool {
+	return IsSystemGuestPort(p) || ValidPreviewPort(p, DefaultPreviewPortMin, DefaultPreviewPortMax)
+}
+
+// PreviewPreamble is the one-line frame the node-agent writes to the preview
+// forwarder (on GuestPreviewPort) naming the in-VM loopback port to bridge to:
+// the decimal port followed by '\n'. It is the ONLY thing the node-agent injects
+// into the otherwise-opaque stream.
+func PreviewPreamble(port uint32) string {
+	return strconv.FormatUint(uint64(port), 10) + "\n"
 }
 
 // UpgradeGuestProto is the token in the Connection/Upgrade headers of the guest

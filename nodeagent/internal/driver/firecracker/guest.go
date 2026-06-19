@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	api "github.com/tavon/proteos/nodeagent/api"
 	"github.com/tavon/proteos/nodeagent/internal/driver"
 )
 
@@ -32,6 +33,12 @@ var _ driver.GuestDialer = (*Driver)(nil)
 // before calling this; here we only verify the driver tracks it. A zero port
 // means the configured terminal port (decision #4: a non-zero port reaches the
 // code-server forward without touching the terminal mux).
+//
+// A preview application port (PP1: anything that is not a system vsock port)
+// is reached through the guest's generic preview forwarder: we CONNECT to
+// GuestPreviewPort and write the requested loopback port as a one-line preamble,
+// then return the stream. The forwarder bridges it to 127.0.0.1:<port> inside
+// the VM. System ports (terminal/web) keep the direct vsock dial.
 func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	if _, ok, err := d.store.Load(machineID); err != nil {
 		return nil, err
@@ -46,6 +53,13 @@ func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (
 		}
 	}
 
+	// Preview ports are not dialed directly: connect to the forwarder's vsock
+	// port and name the target loopback port in a preamble (see api.PreviewPreamble).
+	vsockPort, preamble := port, ""
+	if !api.IsSystemGuestPort(port) {
+		vsockPort, preamble = api.GuestPreviewPort, api.PreviewPreamble(port)
+	}
+
 	layout := jailLayout{chrootBaseDir: d.cfg.ChrootBaseDir, id: machineID}
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", layout.vsockUDS())
@@ -58,7 +72,7 @@ func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (
 	}
 
 	// Hybrid handshake: "CONNECT <port>\n" → "OK <assigned_port>\n".
-	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", port); err != nil {
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", vsockPort); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("vsock CONNECT: %w", err)
 	}
@@ -71,6 +85,15 @@ func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (
 	if !strings.HasPrefix(line, "OK ") {
 		conn.Close()
 		return nil, fmt.Errorf("vsock handshake: unexpected reply %q", strings.TrimSpace(line))
+	}
+
+	// Preview tunnel: tell the forwarder which loopback port to bridge to before
+	// the opaque relay begins. Written under the handshake deadline still in force.
+	if preamble != "" {
+		if _, err := conn.Write([]byte(preamble)); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("vsock preview preamble: %w", err)
+		}
 	}
 
 	// Clear the handshake deadline; the caller manages timeouts thereafter.

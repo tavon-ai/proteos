@@ -223,9 +223,10 @@ func openTunnelPath(t *testing.T, ts *httptest.Server, path, token string) (net.
 	return conn, br, statusLine
 }
 
-// TestGuestTunnelPortAllowlist covers the Phase 8 ?port= parameter: absent ⇒
-// the terminal port, the web port is forwarded verbatim, and an off-list port is
-// rejected 400 before any dial.
+// TestGuestTunnelPortAllowlist covers the ?port= parameter: absent ⇒ the
+// terminal port, the web port is forwarded verbatim, an in-range PP1 preview
+// port is forwarded verbatim, and reserved/off-list ports are rejected 400
+// before any dial.
 func TestGuestTunnelPortAllowlist(t *testing.T) {
 	network, addr, closeEcho := echoServer(t)
 	defer closeEcho()
@@ -239,7 +240,8 @@ func TestGuestTunnelPortAllowlist(t *testing.T) {
 		{"absent defaults to terminal", "/v1/machines/m1/guest", "101", api.GuestTerminalPort},
 		{"explicit terminal port", "/v1/machines/m1/guest?port=1024", "101", api.GuestTerminalPort},
 		{"web port", "/v1/machines/m1/guest?port=1025", "101", api.GuestWebPort},
-		{"off-list port", "/v1/machines/m1/guest?port=22", "400", 0},
+		{"preview port forwarded verbatim", "/v1/machines/m1/guest?port=3000", "101", 3000},
+		{"below-range port", "/v1/machines/m1/guest?port=22", "400", 0},
 		{"non-numeric port", "/v1/machines/m1/guest?port=abc", "400", 0},
 	}
 	for _, tc := range cases {

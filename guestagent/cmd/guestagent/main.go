@@ -23,6 +23,7 @@ import (
 	"github.com/tavon/proteos/guestagent/internal/listen"
 	"github.com/tavon/proteos/guestagent/internal/localsock"
 	"github.com/tavon/proteos/guestagent/internal/persist"
+	"github.com/tavon/proteos/guestagent/internal/previewfwd"
 	"github.com/tavon/proteos/guestagent/internal/runas"
 	"github.com/tavon/proteos/guestagent/internal/secrets"
 	"github.com/tavon/proteos/guestagent/internal/server"
@@ -152,6 +153,28 @@ func run() error {
 			}
 		}()
 		defer sup.Shutdown()
+	}
+
+	// PP1: the generic port-preview forward. When a preview listener is configured
+	// it serves on a third private port (vsock:1026 / a dev unix socket) that the
+	// node-agent tunnel reaches on agentapi.GuestPreviewPort. It bridges each
+	// connection to the loopback port the node-agent names in a one-line preamble;
+	// there is no backend config and no supervisor (the user's own process is the
+	// backend), so a missing listener just disables the feature.
+	if cfg.PreviewListen != "" {
+		previewLn, err := listen.Listen(cfg.PreviewListen)
+		if err != nil {
+			return err
+		}
+		defer previewLn.Close()
+
+		fwd := previewfwd.New(previewLn)
+		go func() {
+			slog.Info("guest preview forward listening", "listen", cfg.PreviewListen)
+			if err := fwd.Serve(ctx); err != nil {
+				slog.Error("preview forward serve", "err", err)
+			}
+		}()
 	}
 
 	srv := server.New(mgr, p, sec, control)

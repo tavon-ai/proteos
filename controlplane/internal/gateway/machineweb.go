@@ -24,6 +24,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,11 +46,12 @@ const (
 	machineCookieTTL = 12 * time.Hour
 )
 
-// machineLabelRe matches the m-<uuid> host label (decision #1). The full UUID
-// keeps the label valid (38 chars) and not trivially guessable; authz (not
-// obscurity) is load-bearing. The m-<uuid>-p<port> preview form is reserved for
-// Phase 9+ and deliberately does NOT match here.
-var machineLabelRe = regexp.MustCompile(`^m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
+// machineLabelRe matches the m-<uuid> editor host label and the PP1 preview form
+// m-<uuid>-p<port> (decision #1). The full UUID keeps the label valid and not
+// trivially guessable; authz (not obscurity) is load-bearing. The optional
+// -p<port> group (1–5 digits) selects a preview port; absent ⇒ the port-less
+// editor origin. The label stays ≤63 chars (m- + 36 + -p + ≤5 ≈ 45).
+var machineLabelRe = regexp.MustCompile(`^m-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:-p([0-9]{1,5}))?$`)
 
 // SessionResolver reports the user that owns a still-live parent session, by id.
 // *session.Manager.AliveByID satisfies an adapter for this (kept string-typed so
@@ -94,15 +96,21 @@ func NewMachineWeb(cfg MachineWebConfig) *MachineWeb {
 	mw := &MachineWeb{cfg: cfg}
 
 	transport := &http.Transport{
-		// Each connection is a fresh guest tunnel to the machine encoded in the
-		// dial address (the Director sets req.URL.Host = machineID). Pooling keys
-		// on that host, so distinct machines never share a tunnel.
+		// Each connection is a fresh guest tunnel to a (machine, guest-port) pair
+		// encoded in the dial address (the Director sets req.URL.Host =
+		// machineID:guestPort). Pooling keys on that host:port, so distinct
+		// machines — and the editor (web port) vs each preview app port of the same
+		// machine — never share a tunnel.
 		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
-			host, _, err := net.SplitHostPort(addr)
+			host, portStr, err := net.SplitHostPort(addr)
 			if err != nil {
-				host = addr
+				host, portStr = addr, ""
 			}
-			return cfg.Guests.DialGuest(ctx, host, agentapi.GuestWebPort)
+			port := agentapi.GuestWebPort
+			if p, err := strconv.ParseUint(portStr, 10, 32); err == nil && p != 0 {
+				port = uint32(p)
+			}
+			return cfg.Guests.DialGuest(ctx, host, port)
 		},
 		MaxIdleConnsPerHost:   4,
 		ResponseHeaderTimeout: 30 * time.Second,
@@ -111,12 +119,14 @@ func NewMachineWeb(cfg MachineWebConfig) *MachineWeb {
 		Transport: transport,
 		Director: func(r *http.Request) {
 			machineID := r.Header.Get(internalMachineHeader)
+			guestPort := r.Header.Get(internalPortHeader)
 			r.Header.Del(internalMachineHeader)
-			// Dial/cache key is the machine id; the Host header code-server sees
-			// stays the original subdomain so its Origin==Host WebSocket check
+			r.Header.Del(internalPortHeader)
+			// Dial/cache key is machine id + guest port; the Host header the backend
+			// sees stays the original subdomain so its Origin==Host WebSocket check
 			// passes (the historically fragile part of proxying code-server).
 			r.URL.Scheme = "http"
-			r.URL.Host = machineID
+			r.URL.Host = net.JoinHostPort(machineID, guestPort)
 			r.Header.Set("X-Forwarded-Host", r.Host)
 			r.Header.Set("X-Forwarded-Proto", forwardedProto(r))
 		},
@@ -140,59 +150,74 @@ func NewMachineWeb(cfg MachineWebConfig) *MachineWeb {
 	return mw
 }
 
-// internalMachineHeader carries the resolved machine id from ServeHTTP to the
-// proxy Director without re-parsing the host. It is stripped before the upstream
-// request is sent.
-const internalMachineHeader = "X-Proteos-Machine-Internal"
+// internalMachineHeader / internalPortHeader carry the resolved machine id and
+// guest port from handleProxy to the proxy Director without re-parsing the host.
+// Both are stripped before the upstream request is sent.
+const (
+	internalMachineHeader = "X-Proteos-Machine-Internal"
+	internalPortHeader    = "X-Proteos-Port-Internal"
+)
 
 // Matches reports whether host is a machine-web host this handler should serve.
 func (mw *MachineWeb) Matches(host string) bool {
 	if mw == nil {
 		return false
 	}
-	_, ok := mw.parseHost(host)
+	_, _, ok := mw.parseHost(host)
 	return ok
 }
 
-// parseHost extracts the machine id from a m-<uuid>.<domain> host (any port
-// stripped, case-insensitive). ok=false for anything else.
-func (mw *MachineWeb) parseHost(host string) (machineID string, ok bool) {
+// parseHost extracts the machine id and preview port from a machine-web host
+// (any URL port stripped, case-insensitive). For the editor host m-<uuid>.<domain>
+// the returned port is 0; for the preview host m-<uuid>-p<port>.<domain> it is
+// the parsed port. ok=false for anything else (including a -p group that does not
+// parse as a uint16-range port).
+func (mw *MachineWeb) parseHost(host string) (machineID string, port uint32, ok bool) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	suffix := "." + strings.ToLower(mw.cfg.Domain)
 	if !strings.HasSuffix(host, suffix) {
-		return "", false
+		return "", 0, false
 	}
 	label := strings.TrimSuffix(host, suffix)
 	m := machineLabelRe.FindStringSubmatch(label)
 	if m == nil {
-		return "", false
+		return "", 0, false
 	}
-	return m[1], true
+	if m[2] != "" {
+		p, err := strconv.ParseUint(m[2], 10, 32)
+		if err != nil || p == 0 || p > 65535 {
+			return "", 0, false
+		}
+		return m[1], uint32(p), true
+	}
+	return m[1], 0, true
 }
 
 // ServeHTTP handles one machine-web request: the auth handler at /__proteos/auth,
 // otherwise the authenticated code-server proxy.
 func (mw *MachineWeb) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	machineID, ok := mw.parseHost(r.Host)
+	machineID, port, ok := mw.parseHost(r.Host)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	if r.URL.Path == "/__proteos/auth" {
-		mw.handleAuth(w, r, machineID)
+		mw.handleAuth(w, r, machineID, port)
 		return
 	}
-	mw.handleProxy(w, r, machineID)
+	mw.handleProxy(w, r, machineID, port)
 }
 
 // handleAuth validates the one-shot web-session token and sets the subdomain
-// cookie, then redirects to the editor root.
-func (mw *MachineWeb) handleAuth(w http.ResponseWriter, r *http.Request, machineID string) {
+// cookie, then redirects to the origin root. The token must match both the
+// machine and the preview port of this exact origin (decision #2/#3): a token
+// minted for one (machine, port) cannot set a cookie on another.
+func (mw *MachineWeb) handleAuth(w http.ResponseWriter, r *http.Request, machineID string, port uint32) {
 	tok, err := verifyMachineToken(mw.cfg.SigningKey, r.URL.Query().Get("token"))
-	if err != nil || tok.MachineID != machineID {
+	if err != nil || tok.MachineID != machineID || tok.Port != port {
 		writeJSONError(w, http.StatusForbidden, "bad_token")
 		return
 	}
@@ -200,6 +225,7 @@ func (mw *MachineWeb) handleAuth(w http.ResponseWriter, r *http.Request, machine
 		MachineID: tok.MachineID,
 		SessionID: tok.SessionID,
 		Exp:       time.Now().Add(machineCookieTTL).Unix(),
+		Port:      tok.Port,
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name:     MachineCookieName,
@@ -232,16 +258,19 @@ func (mw *MachineWeb) handleAuth(w http.ResponseWriter, r *http.Request, machine
 }
 
 // handleProxy re-validates the cookie, parent session, and ownership on every
-// request, then proxies to code-server. WebSocket upgrades additionally enforce
-// the subdomain Origin and register for revocation.
-func (mw *MachineWeb) handleProxy(w http.ResponseWriter, r *http.Request, machineID string) {
+// request, then proxies to the guest backend — code-server for the editor
+// (port 0) or the user's app on the preview port. WebSocket upgrades
+// additionally enforce the subdomain Origin and register for revocation.
+func (mw *MachineWeb) handleProxy(w http.ResponseWriter, r *http.Request, machineID string, port uint32) {
 	c, err := r.Cookie(MachineCookieName)
 	if err != nil || c.Value == "" {
 		writeJSONError(w, http.StatusUnauthorized, "no_cookie")
 		return
 	}
 	cookie, err := verifyMachineCookie(mw.cfg.SigningKey, c.Value)
-	if err != nil || cookie.MachineID != machineID {
+	if err != nil || cookie.MachineID != machineID || cookie.Port != port {
+		// The port mismatch is what stops a cookie minted for one preview origin
+		// (or the editor) from being replayed against another (machine, port).
 		writeJSONError(w, http.StatusUnauthorized, "bad_cookie")
 		return
 	}
@@ -282,7 +311,14 @@ func (mw *MachineWeb) handleProxy(w http.ResponseWriter, r *http.Request, machin
 		w = &revocableRW{ResponseWriter: w, sessionID: cookie.SessionID, registry: mw.cfg.Registry}
 	}
 
+	// Resolve the guest port to dial: the editor (port 0) reaches code-server on
+	// the web port; a preview reaches the user's app port through the forwarder.
+	guestPort := agentapi.GuestWebPort
+	if port != 0 {
+		guestPort = port
+	}
 	r.Header.Set(internalMachineHeader, machineID)
+	r.Header.Set(internalPortHeader, strconv.FormatUint(uint64(guestPort), 10))
 	mw.proxy.ServeHTTP(w, r)
 }
 
@@ -364,20 +400,28 @@ func (c *registeredConn) Close() error {
 	return c.Conn.Close()
 }
 
-// MintWebSessionURL builds the m-<uuid>.<domain>/__proteos/auth?token=… URL the
-// SPA navigates the editor frame to. scheme is the external scheme of the main
+// MintWebSessionURL builds the <host>/__proteos/auth?token=… URL the SPA
+// navigates the editor/preview frame to. scheme is the external scheme of the
+// main origin. A zero port mints the editor origin (m-<uuid>); a non-zero port
+// mints the preview origin (m-<uuid>-p<port>) and binds the port into the token,
+// so the cookie set at /__proteos/auth is scoped to that single (machine, port)
 // origin. It is the gateway's half of POST /api/machine/web-session.
-func (mw *MachineWeb) MintWebSessionURL(scheme, machineID, sessionID, userID, folder string) string {
+func (mw *MachineWeb) MintWebSessionURL(scheme, machineID, sessionID, userID, folder string, port uint32) string {
 	tok := signMachineToken(mw.cfg.SigningKey, machineToken{
 		MachineID: machineID,
 		UserID:    userID,
 		SessionID: sessionID,
 		Exp:       time.Now().Add(webTokenTTL).Unix(),
 		Folder:    folder,
+		Port:      port,
 	})
+	label := "m-" + machineID
+	if port != 0 {
+		label += "-p" + strconv.FormatUint(uint64(port), 10)
+	}
 	u := url.URL{
 		Scheme:   scheme,
-		Host:     "m-" + machineID + "." + mw.cfg.Domain,
+		Host:     label + "." + mw.cfg.Domain,
 		Path:     "/__proteos/auth",
 		RawQuery: url.Values{"token": {tok}}.Encode(),
 	}

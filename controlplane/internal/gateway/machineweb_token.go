@@ -28,14 +28,19 @@ type machineToken struct {
 	SessionID string `json:"s"`
 	Exp       int64  `json:"e"`           // unix seconds
 	Folder    string `json:"f,omitempty"` // Phase 9: validated open-folder path (/workspace/<repo>)
+	Port      uint32 `json:"p,omitempty"` // PP1: preview target port; 0 ⇒ the port-less editor origin
 }
 
-// machineCookie is the subdomain-scoped editor cookie value (signed). It carries
-// no user secret — just the machine + the parent session id it is bound to.
+// machineCookie is the subdomain-scoped editor/preview cookie value (signed). It
+// carries no user secret — just the machine + the parent session id it is bound
+// to, plus the preview port so the cookie is scoped to a single (machine, port)
+// origin (0 ⇒ the editor). The cookie is host-only (no Domain), so the browser
+// already keeps it per-origin; the Port check is server-side defence in depth.
 type machineCookie struct {
 	MachineID string `json:"m"`
 	SessionID string `json:"s"`
 	Exp       int64  `json:"e"`
+	Port      uint32 `json:"p,omitempty"`
 }
 
 func signMachineToken(key []byte, t machineToken) string { return signClaims(key, t) }
