@@ -241,18 +241,42 @@ describe('layout serialization', () => {
 
   it('scopes preview dedupe per (machine, port) so switching ports leaves prior previews open', () => {
     let s = initialDesktop;
-    s = open(s, { id: 'preview-m1-3000', kind: 'preview', machineId: 'm1', port: 3000, dedupeKey: 'm1|3000' });
-    s = open(s, { id: 'preview-m1-8080', kind: 'preview', machineId: 'm1', port: 8080, dedupeKey: 'm1|8080' });
+    s = open(s, {
+      id: 'preview-m1-3000',
+      kind: 'preview',
+      machineId: 'm1',
+      port: 3000,
+      dedupeKey: 'm1|3000',
+    });
+    s = open(s, {
+      id: 'preview-m1-8080',
+      kind: 'preview',
+      machineId: 'm1',
+      port: 8080,
+      dedupeKey: 'm1|8080',
+    });
     // A different port on the same machine opens its own window (prior preview unaffected).
     expect(s.windows.map((w) => w.id)).toEqual(['preview-m1-3000', 'preview-m1-8080']);
     // Re-opening port 3000 collapses onto the existing window (no third).
-    s = open(s, { id: 'preview-m1-3000-again', kind: 'preview', machineId: 'm1', port: 3000, dedupeKey: 'm1|3000' });
+    s = open(s, {
+      id: 'preview-m1-3000-again',
+      kind: 'preview',
+      machineId: 'm1',
+      port: 3000,
+      dedupeKey: 'm1|3000',
+    });
     expect(s.windows.map((w) => w.id)).toEqual(['preview-m1-3000', 'preview-m1-8080']);
   });
 
   it('round-trips a preview window port through serialize → parse → hydrate', () => {
     let s = initialDesktop;
-    s = open(s, { id: 'preview-m1-3000', kind: 'preview', title: 'App — port 3000', machineId: 'm1', port: 3000 });
+    s = open(s, {
+      id: 'preview-m1-3000',
+      kind: 'preview',
+      title: 'App — port 3000',
+      machineId: 'm1',
+      port: 3000,
+    });
     const parsed = parseLayout(JSON.stringify(serializeLayout(s)));
     const hydrated = desktopReducer(initialDesktop, { type: 'hydrate', windows: parsed!.windows });
     const win = hydrated.windows.find((w) => w.id === 'preview-m1-3000')!;
