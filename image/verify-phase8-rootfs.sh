@@ -110,6 +110,15 @@ if [[ -f $UNIT ]]; then
   else
     fail "guest unit missing PROTEOS_CODESERVER_BIN (the forward can't supervise code-server)"
   fi
+  # PP1 (port preview): the generic loopback forwarder is part of the guestagent
+  # binary; the systemd env line is what enables it on vsock:1026. Its presence is
+  # the baked-image proof that previews will bind (the live tunnel→loopback dial
+  # is covered by the on-VM acceptance in RUNBOOK Part H).
+  if grep -qE '^Environment=PROTEOS_GUEST_PREVIEW_LISTEN=vsock:1026' "$UNIT"; then
+    pass "guest unit listens for the port-preview forward on vsock:1026"
+  else
+    fail "guest unit missing PROTEOS_GUEST_PREVIEW_LISTEN=vsock:1026 (port preview won't bind)"
+  fi
 else
   fail "guest systemd unit not found at ${UNIT#"$MNT"}"
 fi

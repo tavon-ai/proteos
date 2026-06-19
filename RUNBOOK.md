@@ -663,6 +663,81 @@ the Phase 4 gating if the disk has not landed).
   whether `/` carries the cookie back (a browser with third-party cookies hard-
   blocked and no CHIPS support falls back to the "Open in new tab" button).
 
+## Part H — Port preview (PP1–PP4): reach an in-machine app by URL
+
+The owner can open a web app / dev server they run on a port **inside** their
+machine, in the browser, at a per-`(machine, port)` subdomain
+`m-<uuid>-p<port>.<machine-domain>`. It layers on Part G: **no new DNS, TLS, or
+NPMplus host** — the preview host is a sibling under the same
+`*.machines.<domain>` wildcard, and the app-stack nginx `server_name` block
+already matches the optional `-p<port>` label. It is **owner-authenticated only**
+(private, not public/shareable). The only new baked artifact is a generic
+loopback forwarder in the guest agent (no supervisor — the user's own process is
+the backend), enabled by one systemd env line.
+
+### H1. Config (app stack + node-agent)
+
+```
+# Previewable ports default to the high range minus the reserved system ports
+# (1024 terminal / 1025 code-server). Override on BOTH sides — they must agree
+# (the control plane gates the mint, the node-agent gates the tunnel allowlist):
+#   in deploy/app-stack/.env       (control plane)
+#   and the node-agent environment (KVM host)
+PROTEOS_PREVIEW_PORT_MIN=1026     # default
+PROTEOS_PREVIEW_PORT_MAX=65535    # default
+```
+
+Nothing else: port preview rides the same `PROTEOS_MACHINE_DOMAIN` as the editor
+(Part G2). With the domain unset, the dashboard's "Open app…" mints but the route
+404s (same as the editor) — no preview without the wildcard infra.
+
+### H2. Rebake the rootfs + re-pin the ref (KVM host)
+
+The forwarder ships in the `guestagent` binary, so the SHA-keyed rootfs
+**auto-rebakes** on the guest-agent source change (the `node_agent` Ansible role,
+same as Phase 8). After the rebake, re-pin `PROTEOS_ROOTFS_REF` to the new image.
+
+```
+# Non-destructive image check (loop-mount): now also asserts the preview forward
+# is wired (PROTEOS_GUEST_PREVIEW_LISTEN=vsock:1026) alongside the editor bits.
+sudo image/verify-phase8-rootfs.sh
+```
+
+### H3. Live acceptance (app stack, browser)
+
+Run a dev server inside a running machine, then exercise the master-plan PP
+checklist:
+
+1. In a **terminal** on the machine, start a server on an in-range port, e.g.
+   `python3 -m http.server 8000` (or your app on `:3000`).
+2. Dashboard taskbar → **Open app…** → enter the port → the preview window frames
+   the app (or use **Open in new tab ↗** for an app that refuses framing).
+3. **Two ports at once**: start a second server on another port, **Open app…** on
+   it too — both previews coexist; switching ports leaves the other untouched.
+4. **Owner-only**: hitting `m-<uuid>-p<port>.<domain>/` **without** the preview
+   cookie returns 401. A cookie minted for port A, replayed on the port-B host,
+   also 401s (per-`(machine, port)` origin; the cookie is host-only).
+5. **Reserved/out-of-range** ports (1024, 1025, or outside the configured range)
+   are refused at mint with a clean error — no preview window opens.
+6. **Logout in another tab** kills the preview: a live preview WebSocket drops and
+   a reload returns 403 (the parent-session-alive check, shared with the editor).
+7. **Stop the machine** → the preview window shows "machine stopped", not a hang
+   (the gateway returns 502 `machine_stopped`); **Start** re-mints and reopens.
+
+### H4. Gotchas
+
+- **Longest label fits 63 chars.** The preview label is `m-` + 36-char uuid +
+  `-p` + ≤5 digits ≈ **45 chars**, well under the 63-char DNS-label limit and
+  covered by the existing wildcard cert — no per-host cert, no new record.
+- **Range must agree.** If the node-agent's `PROTEOS_PREVIEW_PORT_MIN/MAX` is
+  narrower than the control plane's, a mint can succeed but the tunnel then 400s
+  at the node-agent — keep both env pairs identical.
+- **Reserved ports stay reserved.** 1024 (terminal) and 1025 (code-server) are
+  never previewable, regardless of the configured range.
+- **Same `X-Frame-Options` / WebSocket NPMplus settings as Part G5** apply to the
+  preview host (it is the same wildcard proxy host). A user app that framebusts is
+  expected — that is what "Open in new tab" is for.
+
 ---
 
 ## Reproducibility notes

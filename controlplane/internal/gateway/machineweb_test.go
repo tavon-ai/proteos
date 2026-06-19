@@ -168,6 +168,15 @@ func stubBackend(t *testing.T) string {
 	return strings.TrimPrefix(srv.URL, "http://")
 }
 
+// previewCookie mints a valid cookie scoped to a (machine, port) preview origin.
+func previewCookie(t *testing.T, port uint32) *http.Cookie {
+	t.Helper()
+	val := signMachineCookie(testKey, machineCookie{
+		MachineID: testMachineID, SessionID: "s1", Exp: time.Now().Add(time.Hour).Unix(), Port: port,
+	})
+	return &http.Cookie{Name: MachineCookieName, Value: val}
+}
+
 func validCookie(t *testing.T) *http.Cookie {
 	t.Helper()
 	val := signMachineCookie(testKey, machineCookie{
@@ -480,5 +489,52 @@ func TestMachineWebWebSocketOriginAndRevocation(t *testing.T) {
 	reg.SessionRevoked("s1")
 	if _, _, err := c.Read(ctx); err == nil {
 		t.Fatal("expected the editor socket to close after revocation")
+	}
+}
+
+// TestMachineWebPreviewWebSocketOriginAndRevocation is the PP4 hardening check:
+// the WS Origin enforcement and the revocation registry cover a preview origin
+// exactly as they cover the editor. A foreign-origin upgrade to the preview host
+// is rejected; an own-origin one succeeds and is closed the instant the parent
+// session is revoked (owner logout).
+func TestMachineWebPreviewWebSocketOriginAndRevocation(t *testing.T) {
+	const previewPort = 3000
+	mw, reg := newTestMachineWeb(t, stubBackend(t), fakeSessions{"u1", true}, fakeMachines{"u1", true, true})
+	srv := httptest.NewServer(mw)
+	defer srv.Close()
+	previewHost := "m-" + testMachineID + "-p3000.localhost"
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Foreign Origin (here, the editor origin) is rejected before the upgrade.
+	hdrBad := http.Header{}
+	hdrBad.Set("Origin", "http://m-"+testMachineID+".localhost")
+	hdrBad.Set("Cookie", previewCookie(t, previewPort).String())
+	if _, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: hdrBad, Host: previewHost}); err == nil {
+		t.Fatal("preview WS dial with foreign Origin should fail")
+	}
+
+	// Own preview origin succeeds and echoes.
+	hdr := http.Header{}
+	hdr.Set("Origin", "http://"+previewHost)
+	hdr.Set("Cookie", previewCookie(t, previewPort).String())
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: hdr, Host: previewHost})
+	if err != nil {
+		t.Fatalf("preview WS dial: %v", err)
+	}
+	defer c.CloseNow()
+	if err := c.Write(ctx, websocket.MessageText, []byte("ping")); err != nil {
+		t.Fatalf("preview ws write: %v", err)
+	}
+	if _, data, err := c.Read(ctx); err != nil || string(data) != "ping" {
+		t.Fatalf("preview ws echo: %q err %v", data, err)
+	}
+
+	// Owner logout (parent session revoke) closes the live preview socket.
+	reg.SessionRevoked("s1")
+	if _, _, err := c.Read(ctx); err == nil {
+		t.Fatal("expected the preview socket to close after revocation")
 	}
 }

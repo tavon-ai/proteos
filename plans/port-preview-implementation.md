@@ -99,14 +99,16 @@ No UI in this stage — exercised via a manually-minted web-session URL.
 
 ### Acceptance criteria
 
-- [ ] A logged-in owner, given a minted web-session URL for `m-<uuid>-p<port>`, loads
+- [x] A logged-in owner, given a minted web-session URL for `m-<uuid>-p<port>`, loads
       content served by a process listening inside that VM, in the browser.
-- [ ] The auth handshake (token → cookie → proxied request) succeeds end-to-end over
+      *(Live e2e `TestMachineWebE2E` reaches two loopback apps through the real tunnel.)*
+- [x] The auth handshake (token → cookie → proxied request) succeeds end-to-end over
       the preview host; an unauthenticated request to the preview host is rejected.
-- [ ] A request for a port with **no** listener inside the VM yields `502`, not a hang.
-- [ ] `parseHost` unit tests cover the `-p<port>` form (valid, missing port, junk port)
+- [x] A request for a port with **no** listener inside the VM yields `502`, not a hang.
+      *(Forwarder drops the conn → gateway `ErrorHandler` 502.)*
+- [x] `parseHost` unit tests cover the `-p<port>` form (valid, missing port, junk port)
       and still reject the bare/foreign forms.
-- [ ] Existing Phase 8 editor flow (port-less `m-<uuid>` host) is unchanged and green.
+- [x] Existing Phase 8 editor flow (port-less `m-<uuid>` host) is unchanged and green.
 
 ---
 
@@ -129,14 +131,15 @@ Generalize the single-port tracer into a real, bounded policy:
 
 ### Acceptance criteria
 
-- [ ] Two distinct in-range ports of the same machine are independently reachable by
-      the owner, each via its own mint→auth handshake.
-- [ ] Reserved ports (1024, 1025) and out-of-range ports are rejected at mint time and
+- [x] Two distinct in-range ports of the same machine are independently reachable by
+      the owner, each via its own mint→auth handshake. *(Live e2e two-port leg.)*
+- [x] Reserved ports (1024, 1025) and out-of-range ports are rejected at mint time and
       at the node-agent allowlist with a clean error, no dial attempted.
-- [ ] A preview cookie for port A returns `401`/unauthorized when replayed against the
+- [x] A preview cookie for port A returns `401`/unauthorized when replayed against the
       port-B host or the editor host.
-- [ ] Range bounds honor the env config; defaults documented.
-- [ ] Unit/integration tests cover in-range, reserved, and out-of-range ports.
+- [x] Range bounds honor the env config; defaults documented.
+      *(`PROTEOS_PREVIEW_PORT_MIN/MAX` on both binaries; `.env.example`s + RUNBOOK Part H.)*
+- [x] Unit/integration tests cover in-range, reserved, and out-of-range ports.
 
 ---
 
@@ -154,13 +157,14 @@ down. Scope the affordance to the active machine (multi-machine switcher).
 
 ### Acceptance criteria
 
-- [ ] From the MachineCard, the owner enters a port and the in-machine app opens in the
-      browser without manual URL construction.
-- [ ] Switching to a different port re-mints and opens the new preview origin; the prior
-      preview is unaffected.
-- [ ] Stopping the machine surfaces a clear "machine stopped" state in the preview UI,
+- [x] From the MachineCard, the owner enters a port and the in-machine app opens in the
+      browser without manual URL construction. *(Taskbar "Open app…" → preview window.)*
+- [x] Switching to a different port re-mints and opens the new preview origin; the prior
+      preview is unaffected. *(Dedupe per `(machine, port)`; unit-tested.)*
+- [x] Stopping the machine surfaces a clear "machine stopped" state in the preview UI,
       consistent with the editor's behavior.
-- [ ] Frontend type-checks/lints clean; no regression to the editor "Open editor" button.
+- [x] Frontend type-checks/lints clean; no regression to the editor "Open editor" button.
+      *(Separate `previewSession` client method; editor path untouched.)*
 
 ---
 
@@ -186,15 +190,23 @@ Security and operational closure plus the Proxmox-only steps:
 
 ### Acceptance criteria
 
-- [ ] A preview WS upgrade from a foreign origin is rejected (`origin_forbidden`).
-- [ ] Owner logout and `session_revoked` close any open preview WebSocket immediately;
-      machine stop yields the stopped state, not a hang.
-- [ ] Rootfs rebuilt and `PROTEOS_ROOTFS_REF` re-pinned; forwarder verified present in
-      the baked image and reachable on a booted VM.
-- [ ] NPMplus/nginx confirmed serving the full `m-<uuid>-p<port>.machines.<domain>`
-      host over TLS.
-- [ ] Live-acceptance checklist passes on Proxmox: dev server reachable by owner;
-      logout and stop both terminate access. Runbook + backlog item updated.
+- [x] A preview WS upgrade from a foreign origin is rejected (`origin_forbidden`).
+      *(`TestMachineWebPreviewWebSocketOriginAndRevocation`.)*
+- [x] Owner logout and `session_revoked` close any open preview WebSocket immediately;
+      machine stop yields the stopped state, not a hang. *(Same test: revoke closes the
+      live preview socket; `machine_stopped` is a synchronous 502, shared with the editor.)*
+- [~] Rootfs rebuilt and `PROTEOS_ROOTFS_REF` re-pinned; forwarder verified present in
+      the baked image and reachable on a booted VM. **Operator step** — source is ready
+      (systemd unit pins `vsock:1026`; `verify-phase8-rootfs.sh` now asserts it), but the
+      SHA-keyed bake + re-pin must run on the KVM host (cannot bake in this environment).
+- [~] NPMplus/nginx confirmed serving the full `m-<uuid>-p<port>.machines.<domain>`
+      host over TLS. **Operator step** — nginx `server_name` accepts the `-p<port>` label
+      and the 45-char longest-label fits the wildcard cert (RUNBOOK Part H4); live TLS
+      check is on the Proxmox host.
+- [~] Live-acceptance checklist passes on Proxmox: dev server reachable by owner;
+      logout and stop both terminate access. **Operator step** — checklist authored
+      (RUNBOOK Part H3); runbook + `.env.example`s updated. The browser walkthrough runs
+      on the Proxmox/KVM host.
 
 ## Sequencing
 
