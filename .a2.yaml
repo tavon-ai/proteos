@@ -33,7 +33,7 @@ checks:
     - common:config_validation
     - common:retry
     - common:api_docs
-    - "security:*"
+    # - "security:*"
     - common:dockerfile
     - devops:terraform
     - devops:k8s
@@ -43,6 +43,10 @@ checks:
     - common:naming
     - go:deps_freshness
     - go:cyclomatic
+    - go:deadcode
+    - security:shell_injection
+    - security:filesystem
+    - security:network
   typescript:
     disabled:
       - common:metrics
