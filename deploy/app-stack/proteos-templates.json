@@ -1,4 +1,39 @@
 {
-  "_comment": "PLACEHOLDER — not used while PROTEOS_TEMPLATES_FILE is empty (the default; the control plane then synthesizes a single 'base' template from PROTEOS_ROOTFS_REF). To offer the full machine-template catalog, overwrite this file with the proteos-templates.json fetched by the node_agent Ansible role (deploy/ansible/artifacts/proteos-templates.json) and set PROTEOS_TEMPLATES_FILE=/etc/proteos/templates.json. Leaving this empty catalog active fails control-plane startup with 'template catalog is empty' — by design, so a misconfiguration is loud, not a machine booting a bogus image.",
-  "templates": []
+  "templates": [
+    {
+      "id": "base",
+      "label": "Base",
+      "description": "Platform baseline \u2014 editor, shell, git.",
+      "rootfs_ref": "proteos-rootfs-base-ubuntu-24.04-gab8d0441.ext4",
+      "defaults": { "vcpus": 2, "mem_mib": 2048, "disk_mib": 10240 }
+    },
+    {
+      "id": "go",
+      "label": "Go development",
+      "description": "Go toolchain + Taskfile.",
+      "rootfs_ref": "proteos-rootfs-go-ubuntu-24.04-gab8d0441.ext4",
+      "defaults": { "vcpus": 2, "mem_mib": 2048, "disk_mib": 10240 }
+    },
+    {
+      "id": "node",
+      "label": "Node.js development",
+      "description": "Node LTS runtime + npm provider CLIs.",
+      "rootfs_ref": "proteos-rootfs-node-ubuntu-24.04-gab8d0441.ext4",
+      "defaults": { "vcpus": 2, "mem_mib": 2048, "disk_mib": 10240 }
+    },
+    {
+      "id": "python",
+      "label": "Python development",
+      "description": "Python 3 + pip + venv + build tools.",
+      "rootfs_ref": "proteos-rootfs-python-ubuntu-24.04-gab8d0441.ext4",
+      "defaults": { "vcpus": 2, "mem_mib": 2048, "disk_mib": 10240 }
+    },
+    {
+      "id": "full",
+      "label": "Full stack (Go + Node + Python)",
+      "description": "Go, Node, and Python with build essentials.",
+      "rootfs_ref": "proteos-rootfs-full-ubuntu-24.04-gab8d0441.ext4",
+      "defaults": { "vcpus": 4, "mem_mib": 4096, "disk_mib": 20480 }
+    }
+  ]
 }

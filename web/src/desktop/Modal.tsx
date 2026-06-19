@@ -1,8 +1,14 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 // Modal is a centered dialog over a dimmed backdrop. Esc and a backdrop click
 // both close it; clicks inside the panel do not propagate. The first focusable
 // child receives focus via the browser's default tab order.
+//
+// It renders through a portal to document.body: the modal is invoked from the
+// taskbar, whose `backdrop-filter` makes it a containing block for
+// position:fixed — without the portal the backdrop would pin to the 44px
+// taskbar instead of the viewport, clipping the dialog off the top.
 export function Modal({
   title,
   onClose,
@@ -20,7 +26,7 @@ export function Modal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal"
@@ -37,6 +43,7 @@ export function Modal({
         </div>
         <div className="modal-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -703,7 +703,9 @@ body {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* Above the taskbar (z 100000): the modal is portaled to <body>, a sibling of
+     the desktop, so it must out-rank the taskbar to cover it. */
+  z-index: 100001;
   display: flex;
   align-items: center;
   justify-content: center;

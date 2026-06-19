@@ -1,0 +1,4 @@
+{
+  "_comment": "PLACEHOLDER — not used while PROTEOS_TEMPLATES_FILE is empty (the default; the control plane then synthesizes a single 'base' template from PROTEOS_ROOTFS_REF). To offer the full machine-template catalog, overwrite this file with the proteos-templates.json fetched by the node_agent Ansible role (deploy/ansible/artifacts/proteos-templates.json) and set PROTEOS_TEMPLATES_FILE=/etc/proteos/templates.json. Leaving this empty catalog active fails control-plane startup with 'template catalog is empty' — by design, so a misconfiguration is loud, not a machine booting a bogus image.",
+  "templates": []
+}
