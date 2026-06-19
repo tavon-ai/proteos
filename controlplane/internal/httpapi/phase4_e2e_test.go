@@ -50,7 +50,7 @@ func TestHibernateResumeE2E(t *testing.T) {
 
 	// Create drives the real lifecycle: disk + volume key minted, ensure on the
 	// agent, poller advances to running.
-	m, err := svc.Create(ctx, fx.userID, "")
+	m, err := svc.Create(ctx, fx.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

@@ -46,6 +46,40 @@ proteos_rootfs_ref: "ubuntu-24.04.ext4"
 proteos_rootfs_size: "1G"
 
 # ----------------------------------------------------------------------------
+# Machine-template catalog. The node_agent role bakes ONE rootfs image per entry
+# (proteos-rootfs-<id>-<base>-ga<sha>.ext4 via image/build-rootfs.sh --template),
+# and generates a proteos-templates.json the control plane consumes as
+# PROTEOS_TEMPLATES_FILE (fetched back to the controller for the app-stack deploy).
+#
+# The PLATFORM layer (guest agent, git, vim, taskfile, code-server, dev user, and
+# the Claude agent) is common to every template — those knobs below still apply to
+# all. A template only selects its LANGUAGE layer: go / node / python. The npm
+# provider CLIs (Gemini/Codex/pi.dev) ride on the Node layer, so they are baked
+# ONLY into templates with node: true (Claude, a native binary, is everywhere).
+#
+# label/description/defaults (vcpus, mem_mib, disk_mib) are surfaced to users by
+# the control plane; defaults must sit within its caps (PROTEOS_MAX_VCPUS etc.).
+# Baking the full set is slow (~10–20 min each); trim this list while iterating.
+proteos_templates:
+  - { id: base, label: "Base", description: "Platform baseline — editor, shell, git.", go: false, node: false, python: false, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
+  - { id: go, label: "Go development", description: "Go toolchain + Taskfile.", go: true, node: false, python: false, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
+  - { id: node, label: "Node.js development", description: "Node LTS runtime + npm provider CLIs.", go: false, node: true, python: false, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
+  - { id: python, label: "Python development", description: "Python 3 + pip + venv + build tools.", go: false, node: false, python: true, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
+  - { id: full, label: "Full stack (Go + Node + Python)", description: "Go, Node, and Python with build essentials.", go: true, node: true, python: true, vcpus: 4, mem_mib: 4096, disk_mib: 20480 }
+
+# The template whose image backs the single-image fallbacks: the node-agent env's
+# PROTEOS_ROOTFS_REF and the loop-mount acceptance gates + smoke boot (which boot
+# one image to prove the host works; the platform layer they check is identical
+# across templates). Must be one of proteos_templates[].id.
+proteos_primary_template: "base"
+
+# Where the generated control-plane catalog is fetched on the Ansible CONTROLLER
+# (the app-stack deploy then installs it as the control plane's
+# PROTEOS_TEMPLATES_FILE). Also written on the KVM host at
+# {{ proteos_images_dir }}/proteos-templates.json.
+proteos_templates_fetch_dir: "{{ playbook_dir }}/artifacts"
+
+# ----------------------------------------------------------------------------
 # Phase 5: bake the Claude Code agent CLI into the rootfs. The providers
 # profile.d wiring is baked regardless; this controls the `claude` binary.
 #
@@ -61,7 +95,7 @@ proteos_rootfs_size: "1G"
 #   "none" — skip Claude Code (only the providers wiring is baked).
 #
 # Bumping the version/channel on an already-baked host needs a FORCED rebuild
-# (delete {{ proteos_images_dir }}/manifest.lock — see deploy/ansible/README.md),
+# (delete {{ proteos_images_dir }}/manifest-<id>.lock (one per template) — see deploy/ansible/README.md),
 # since the bake is guarded on source changes, not on these vars.
 # ----------------------------------------------------------------------------
 proteos_claude_install: "bootstrap" # bootstrap | binary | none
@@ -89,7 +123,7 @@ proteos_claude_staged: "{{ proteos_images_dir }}/claude-staged" # host staging p
 # LTS resolved from nodejs.org).
 #
 # As with Claude, bumping a version/toggle on an already-baked host needs a FORCED
-# rebuild (delete {{ proteos_images_dir }}/manifest.lock — see README.md): the
+# rebuild (delete {{ proteos_images_dir }}/manifest-<id>.lock (one per template) — see README.md): the
 # bake is guarded on source changes, not on these vars.
 # ----------------------------------------------------------------------------
 proteos_node_version: "" # empty ⇒ latest LTS (only used when an npm CLI is enabled)
@@ -118,7 +152,7 @@ proteos_git_install: true
 # node_agent role runs image/verify-phase8-rootfs.sh as a post-bake gate.
 #
 # Bumping the version on an already-baked host needs a FORCED rebuild (delete
-# {{ proteos_images_dir }}/manifest.lock — see README.md): the bake is guarded on
+# {{ proteos_images_dir }}/manifest-<id>.lock (one per template) — see README.md): the bake is guarded on
 # source changes, not on these vars. The image grows ~400 MiB when enabled.
 proteos_codeserver_install: true
 proteos_codeserver_version: "" # empty ⇒ latest GitHub release; set to pin (e.g. 4.99.3)
@@ -130,7 +164,7 @@ proteos_codeserver_sha256: "" # optional sha256 pin for the release tarball
 # default; set the matching *_install false to skip. Empty Go/Taskfile versions
 # fall back to build-rootfs.sh's pinned defaults. Like the other bakes, bumping
 # these on an already-baked host needs a FORCED rebuild (delete
-# {{ proteos_images_dir }}/manifest.lock — see README): the bake is guarded on
+# {{ proteos_images_dir }}/manifest-<id>.lock (one per template) — see README): the bake is guarded on
 # source changes, not on these vars. Go adds ~600 MiB to the image.
 #
 # proteos_guest_aliases: shell aliases baked into the guest's interactive shells
@@ -141,6 +175,10 @@ proteos_codeserver_sha256: "" # optional sha256 pin for the release tarball
 # (Alias values must not contain a single quote — they are passed as --alias 'k=v'.)
 # ----------------------------------------------------------------------------
 proteos_guest_vim_install: true
+# NOTE: Go is now selected per template (the `go:` flag in proteos_templates), so
+# proteos_guest_go_install is no longer consulted by the bake — edit the template
+# set to choose which images carry Go. proteos_guest_go_version still applies (it
+# pins the Go version for any template with go: true).
 proteos_guest_go_install: true
 proteos_guest_go_version: "" # empty ⇒ build-rootfs.sh default (mirrors the host Go pin)
 proteos_guest_taskfile_install: true

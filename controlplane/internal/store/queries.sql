@@ -78,9 +78,10 @@ RETURNING *;
 -- name: CreateMachine :one
 -- Create one of a user's machines in the initial 'requested' state, pinning the
 -- image refs and resource spec for the lifetime of the row. name is the display
--- label (auto-named machine-N by the service; renameable later).
-INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec)
-VALUES ($1, $2, 'requested', $3, $4, $5, $6)
+-- label (auto-named machine-N by the service; renameable later). template_id is
+-- the catalog template the machine was created from (NULL for legacy machines).
+INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec, template_id)
+VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetMachineByUserID :one

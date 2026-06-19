@@ -197,7 +197,7 @@ func TestFullLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create → provisioning, ensure called, handle recorded.
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestBootFailureMovesToError(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestAgentUnreachableDuringPollMovesToError(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	if _, err := h.svc.Create(ctx, h.userID, ""); err != nil {
+	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// Agent goes away before the poller can observe the boot completing.
@@ -309,7 +309,7 @@ func TestEnsureFailureAtCreateMovesToError(t *testing.T) {
 	ctx := context.Background()
 	h.agent.failEnsure = true
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create returned hard error: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestInvalidStateTransitions(t *testing.T) {
 	}
 
 	// Create one (provisioning).
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestDestroy(t *testing.T) {
 		t.Fatalf("destroy nonexistent: got %v, want ErrNoMachine", err)
 	}
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestDestroy(t *testing.T) {
 	}
 
 	// The user can create a fresh machine after a destroy.
-	if _, err := h.svc.Create(ctx, h.userID, ""); err != nil {
+	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
 		t.Fatalf("create after destroy: %v", err)
 	}
 }
@@ -409,11 +409,11 @@ func TestMultipleMachines(t *testing.T) {
 	ctx := context.Background()
 
 	// Two machines for the same user, auto-named machine-1 / machine-2.
-	m1, err := h.svc.Create(ctx, h.userID, "")
+	m1, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create m1: %v", err)
 	}
-	m2, err := h.svc.Create(ctx, h.userID, "")
+	m2, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create m2: %v", err)
 	}
@@ -444,12 +444,12 @@ func TestMachineLimit(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		if _, err := h.svc.Create(ctx, h.userID, ""); err != nil {
+		if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
 			t.Fatalf("create %d: %v", i+1, err)
 		}
 	}
 	// The 4th exceeds the cap.
-	if _, err := h.svc.Create(ctx, h.userID, ""); err != machine.ErrMachineLimit {
+	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != machine.ErrMachineLimit {
 		t.Fatalf("4th create: got %v, want ErrMachineLimit", err)
 	}
 }
@@ -458,7 +458,7 @@ func TestOwnershipRejected(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestRename(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +501,7 @@ func TestRunningSweepDetectsCrash(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

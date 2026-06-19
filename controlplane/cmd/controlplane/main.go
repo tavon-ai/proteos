@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -130,6 +131,35 @@ func run(migrate, migrateOnly bool) error {
 		return err
 	}
 	broker := machine.NewBroker()
+
+	// Machine-template catalog (static config): load from PROTEOS_TEMPLATES_FILE
+	// when set, else synthesize a single "base" template from the global image
+	// refs + resource defaults. Either way the catalog is the source of truth for
+	// create-time refs/resources; a bad catalog fails startup loudly.
+	defaults := machine.Resources{Vcpus: cfg.MachineVcpus, MemMiB: cfg.MachineMemMiB, DiskMiB: cfg.MachineDiskMiB}
+	var catalog machine.Catalog
+	if cfg.TemplatesFile != "" {
+		catalog, err = machine.LoadCatalogFile(cfg.TemplatesFile, cfg.KernelRef)
+	} else {
+		catalog, err = machine.SingleTemplateCatalog(cfg.RootfsRef, cfg.KernelRef, defaults)
+	}
+	if err != nil {
+		return fmt.Errorf("machine templates: %w", err)
+	}
+	// Resource caps for create-time overrides; every template's own defaults must
+	// fall within them, else the catalog is misconfigured — fail startup loudly.
+	limits := machine.NewResourceLimits(cfg.MaxVcpus, cfg.MaxMemMiB, cfg.MaxDiskMiB)
+	for _, t := range catalog.Templates() {
+		if err := limits.Validate(t.Defaults); err != nil {
+			return fmt.Errorf("template %q defaults out of caps: %w", t.ID, err)
+		}
+	}
+	tmplSource := "synthesized-base"
+	if cfg.TemplatesFile != "" {
+		tmplSource = cfg.TemplatesFile
+	}
+	slog.Info("machine templates loaded", "count", len(catalog.Templates()), "source", tmplSource)
+
 	machineSvc := machine.NewService(pool, nodes, broker, sec, host.ID, machine.Spec{
 		Vcpus:      cfg.MachineVcpus,
 		MemMiB:     cfg.MachineMemMiB,
@@ -137,6 +167,8 @@ func run(migrate, migrateOnly bool) error {
 		KernelRef:  cfg.KernelRef,
 		RootfsRef:  cfg.RootfsRef,
 		MaxPerUser: cfg.MachineMaxPerUser,
+		Catalog:    catalog,
+		Limits:     limits,
 	})
 	poller := machine.NewPoller(pool, nodes, broker)
 

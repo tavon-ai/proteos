@@ -60,6 +60,7 @@ type Machine struct {
 	DiskID       pgtype.UUID        `json:"disk_id"`
 	Boot         *string            `json:"boot"`
 	Name         string             `json:"name"`
+	TemplateID   *string            `json:"template_id"`
 }
 
 type MachineEvent struct {

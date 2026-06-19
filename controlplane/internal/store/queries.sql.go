@@ -49,9 +49,9 @@ func (q *Queries) CreateDisk(ctx context.Context, arg CreateDiskParams) (Disk, e
 }
 
 const createMachine = `-- name: CreateMachine :one
-INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec)
-VALUES ($1, $2, 'requested', $3, $4, $5, $6)
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name
+INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec, template_id)
+VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7)
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
 `
 
 type CreateMachineParams struct {
@@ -61,11 +61,13 @@ type CreateMachineParams struct {
 	KernelRef    string      `json:"kernel_ref"`
 	RootfsRef    string      `json:"rootfs_ref"`
 	ResourceSpec []byte      `json:"resource_spec"`
+	TemplateID   *string     `json:"template_id"`
 }
 
 // Create one of a user's machines in the initial 'requested' state, pinning the
 // image refs and resource spec for the lifetime of the row. name is the display
-// label (auto-named machine-N by the service; renameable later).
+// label (auto-named machine-N by the service; renameable later). template_id is
+// the catalog template the machine was created from (NULL for legacy machines).
 func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (Machine, error) {
 	row := q.db.QueryRow(ctx, createMachine,
 		arg.UserID,
@@ -74,6 +76,7 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 		arg.KernelRef,
 		arg.RootfsRef,
 		arg.ResourceSpec,
+		arg.TemplateID,
 	)
 	var i Machine
 	err := row.Scan(
@@ -93,6 +96,7 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -178,7 +182,7 @@ func (q *Queries) GetGitHubLink(ctx context.Context, userID pgtype.UUID) (Github
 }
 
 const getMachineByID = `-- name: GetMachineByID :one
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name FROM machines WHERE id = $1
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE id = $1
 `
 
 func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, error) {
@@ -201,12 +205,13 @@ func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, 
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const getMachineByUserID = `-- name: GetMachineByUserID :one
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name FROM machines WHERE user_id = $1
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE user_id = $1
 `
 
 // The user's single machine. Retained only for the single-machine fallback in
@@ -231,6 +236,7 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -535,7 +541,7 @@ func (q *Queries) ListMachineEventsRecent(ctx context.Context, arg ListMachineEv
 }
 
 const listMachinesByUserID = `-- name: ListMachinesByUserID :many
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name FROM machines WHERE user_id = $1 ORDER BY created_at ASC, id ASC
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE user_id = $1 ORDER BY created_at ASC, id ASC
 `
 
 // All of a user's machines, oldest-first (stable order for the switcher).
@@ -565,6 +571,7 @@ func (q *Queries) ListMachinesByUserID(ctx context.Context, userID pgtype.UUID) 
 			&i.DiskID,
 			&i.Boot,
 			&i.Name,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -577,7 +584,7 @@ func (q *Queries) ListMachinesByUserID(ctx context.Context, userID pgtype.UUID) 
 }
 
 const listMachinesInStates = `-- name: ListMachinesInStates :many
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
 `
 
 // Used by the poller to find transitional machines to advance and running
@@ -608,6 +615,7 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 			&i.DiskID,
 			&i.Boot,
 			&i.Name,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -745,7 +753,7 @@ func (q *Queries) ListUserMachineEventsRecent(ctx context.Context, arg ListUserM
 const renameMachine = `-- name: RenameMachine :one
 UPDATE machines SET name = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
 `
 
 type RenameMachineParams struct {
@@ -774,6 +782,7 @@ func (q *Queries) RenameMachine(ctx context.Context, arg RenameMachineParams) (M
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -797,7 +806,7 @@ func (q *Queries) RevokeSession(ctx context.Context, tokenHash []byte) (pgtype.U
 const setMachineBoot = `-- name: SetMachineBoot :one
 UPDATE machines SET boot = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
 `
 
 type SetMachineBootParams struct {
@@ -826,6 +835,7 @@ func (q *Queries) SetMachineBoot(ctx context.Context, arg SetMachineBootParams) 
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -833,7 +843,7 @@ func (q *Queries) SetMachineBoot(ctx context.Context, arg SetMachineBootParams) 
 const setMachineDisk = `-- name: SetMachineDisk :one
 UPDATE machines SET disk_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
 `
 
 type SetMachineDiskParams struct {
@@ -862,6 +872,7 @@ func (q *Queries) SetMachineDisk(ctx context.Context, arg SetMachineDiskParams) 
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -873,7 +884,7 @@ SET vm_handle = $2,
     last_active_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
 `
 
 type SetMachineRuntimeParams struct {
@@ -904,6 +915,7 @@ func (q *Queries) SetMachineRuntime(ctx context.Context, arg SetMachineRuntimePa
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -941,7 +953,7 @@ SET state = $1,
     last_error = $2,
     updated_at = now()
 WHERE id = $3 AND state = $4
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
 `
 
 type UpdateMachineStateParams struct {
@@ -980,6 +992,7 @@ func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineState
 		&i.DiskID,
 		&i.Boot,
 		&i.Name,
+		&i.TemplateID,
 	)
 	return i, err
 }

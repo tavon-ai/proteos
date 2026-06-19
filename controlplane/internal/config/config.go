@@ -97,10 +97,27 @@ type Config struct {
 	// cap protects the single fc-node host's RAM and guest-IP pool.
 	MachineMaxPerUser int
 
+	// MaxVcpus / MaxMemMiB / MaxDiskMiB are the upper bounds for user resource
+	// overrides at create time (PROTEOS_MAX_VCPUS / _MEM_MIB / _DISK_MIB). The
+	// floors are fixed (1 vcpu / 1024 MiB / 5120 MiB). A template's own defaults
+	// must fall within these bounds or startup fails.
+	MaxVcpus   int
+	MaxMemMiB  int
+	MaxDiskMiB int
+
 	// KernelRef / RootfsRef are the pinned image refs stamped per machine; the
-	// node-agent resolves them against its images dir.
+	// node-agent resolves them against its images dir. They are the legacy
+	// single-image fallback used when TemplatesFile is unset (a one-entry "base"
+	// catalog is synthesized from them).
 	KernelRef string
 	RootfsRef string
+
+	// TemplatesFile (PROTEOS_TEMPLATES_FILE) is the path to a JSON machine-template
+	// catalog ({"templates":[{id,label,description,rootfs_ref,kernel_ref,defaults}]}).
+	// When set it is the source of truth for create-time image refs and default
+	// resources; when unset, a single "base" template is synthesized from
+	// RootfsRef/KernelRef + the Machine* resource defaults.
+	TemplatesFile string
 
 	// --- Phase 3: terminal gateway -----------------------------------------
 
@@ -163,6 +180,10 @@ func Load() (*Config, error) {
 		MachineMaxPerUser: getenvInt("PROTEOS_MAX_MACHINES_PER_USER", 3),
 		KernelRef:         getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
 		RootfsRef:         getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
+		TemplatesFile:     os.Getenv("PROTEOS_TEMPLATES_FILE"),
+		MaxVcpus:          getenvInt("PROTEOS_MAX_VCPUS", 8),
+		MaxMemMiB:         getenvInt("PROTEOS_MAX_MEM_MIB", 16384),
+		MaxDiskMiB:        getenvInt("PROTEOS_MAX_DISK_MIB", 51200),
 
 		MachineDomain: os.Getenv("PROTEOS_MACHINE_DOMAIN"),
 	}

@@ -23,7 +23,7 @@ func TestHibernateResumeLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Create: disk allocated, volume key minted + sent to the agent.
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestVolumeKeyMintedAndStored(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

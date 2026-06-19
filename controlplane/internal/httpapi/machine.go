@@ -22,6 +22,7 @@ type MachineSummary struct {
 	GuestIP      *string         `json:"guest_ip"`
 	KernelRef    string          `json:"kernel_ref"`
 	RootfsRef    string          `json:"rootfs_ref"`
+	TemplateID   *string         `json:"template_id"` // catalog template the machine was created from; null ⇒ legacy
 	ResourceSpec json.RawMessage `json:"resource_spec"`
 	LastError    *string         `json:"last_error"`
 	CreatedAt    string          `json:"created_at"`
@@ -49,6 +50,7 @@ func toSummary(m store.Machine, disk *store.Disk, snap *store.Snapshot) MachineS
 		State:        m.State,
 		KernelRef:    m.KernelRef,
 		RootfsRef:    m.RootfsRef,
+		TemplateID:   m.TemplateID,
 		ResourceSpec: json.RawMessage(m.ResourceSpec),
 		LastError:    m.LastError,
 		Boot:         m.Boot,
@@ -127,19 +129,26 @@ func (s *Server) handleGetMachine(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateMachine provisions a new machine for the user. 202 with the
-// (provisioning) summary, or 409 machine_limit when the per-user cap is reached.
-// An optional JSON body {"name": "..."} sets the display name; empty ⇒ auto-named.
+// (provisioning) summary, 409 machine_limit when the per-user cap is reached, or
+// 400 unknown_template when the body names a template not in the catalog. The
+// optional JSON body {"name","template_id"} sets the display name (empty ⇒
+// auto-named) and the template (empty ⇒ catalog default).
 func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	name := decodeOptionalName(r)
-	m, err := s.Machines.Create(r.Context(), user.ID, name)
+	opts := decodeCreateOptions(r)
+	m, err := s.Machines.Create(r.Context(), user.ID, opts)
+	var invRes machine.InvalidResourcesError
 	switch {
 	case errors.Is(err, machine.ErrMachineLimit):
 		writeError(w, http.StatusConflict, "machine_limit")
+	case errors.Is(err, machine.ErrUnknownTemplate):
+		writeError(w, http.StatusBadRequest, "unknown_template")
+	case errors.As(err, &invRes):
+		writeErrorDetail(w, http.StatusBadRequest, "invalid_resources", invRes.Detail)
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
@@ -264,17 +273,28 @@ func parseMachineID(s string) (pgtype.UUID, bool) {
 	return id, true
 }
 
-// decodeOptionalName reads an optional {"name": "..."} JSON body, tolerating an
-// empty/missing body (auto-naming then applies). A malformed body yields "".
-func decodeOptionalName(r *http.Request) string {
+// decodeCreateOptions reads the optional {"name","template_id"} create body,
+// tolerating an empty/missing body (auto-naming + catalog default then apply). A
+// malformed body yields zero options. Values are trimmed.
+func decodeCreateOptions(r *http.Request) machine.CreateOptions {
 	var body struct {
-		Name string `json:"name"`
+		Name       string `json:"name"`
+		TemplateID string `json:"template_id"`
+		Vcpus      *int   `json:"vcpus"`
+		MemMiB     *int   `json:"mem_mib"`
+		DiskMiB    *int   `json:"disk_mib"`
 	}
 	if r.Body == nil {
-		return ""
+		return machine.CreateOptions{}
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return ""
+		return machine.CreateOptions{}
 	}
-	return strings.TrimSpace(body.Name)
+	return machine.CreateOptions{
+		Name:       strings.TrimSpace(body.Name),
+		TemplateID: strings.TrimSpace(body.TemplateID),
+		Vcpus:      body.Vcpus,
+		MemMiB:     body.MemMiB,
+		DiskMiB:    body.DiskMiB,
+	}
 }

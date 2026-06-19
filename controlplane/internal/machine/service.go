@@ -21,10 +21,11 @@ import (
 
 // Service errors mapped by the HTTP layer to status codes.
 var (
-	ErrNoMachine    = errors.New("machine: none for user")          // 404
-	ErrInvalidState = errors.New("machine: invalid state for op")   // 409
-	ErrMachineLimit = errors.New("machine: per-user limit reached") // 409
-	ErrAmbiguous    = errors.New("machine: which one (multiple)")   // 400 (resolver)
+	ErrNoMachine       = errors.New("machine: none for user")          // 404
+	ErrInvalidState    = errors.New("machine: invalid state for op")   // 409
+	ErrMachineLimit    = errors.New("machine: per-user limit reached") // 409
+	ErrAmbiguous       = errors.New("machine: which one (multiple)")   // 400 (resolver)
+	ErrUnknownTemplate = errors.New("machine: unknown template")       // 400 (create)
 )
 
 // defaultMaxPerUser caps how many machines a user may own when Spec.MaxPerUser
@@ -41,13 +42,31 @@ type NodeClient interface {
 }
 
 // Spec is the resource shape and pinned image refs stamped on new machines.
+// Vcpus/MemMiB/DiskMiB/KernelRef/RootfsRef are the legacy single-image fallback,
+// used when Catalog is Empty() (i.e. no template catalog is configured — the
+// path tests exercise). When Catalog is non-empty it is the source of truth for
+// a new machine's image refs and default resources; the legacy fields are unused.
 type Spec struct {
 	Vcpus      int
 	MemMiB     int
 	DiskMiB    int // Phase 4: persistent disk size (default 10240)
 	KernelRef  string
 	RootfsRef  string
-	MaxPerUser int // per-user machine cap; ≤0 ⇒ defaultMaxPerUser
+	MaxPerUser int            // per-user machine cap; ≤0 ⇒ defaultMaxPerUser
+	Catalog    Catalog        // machine-template catalog; Empty() ⇒ legacy single-image path
+	Limits     ResourceLimits // caps for user resource overrides; Empty() ⇒ no bound-checking
+}
+
+// CreateOptions carries the user-supplied inputs to Create. All fields are
+// optional: empty Name ⇒ auto-named machine-N; empty TemplateID ⇒ the catalog
+// default; nil resource pointers ⇒ the chosen template's default for that
+// dimension. A provided override is validated against Spec.Limits.
+type CreateOptions struct {
+	Name       string
+	TemplateID string
+	Vcpus      *int
+	MemMiB     *int
+	DiskMiB    *int
 }
 
 // Service owns machine lifecycle operations driven by the user-facing API. All
@@ -84,6 +103,19 @@ func (s *Service) Get(ctx context.Context, userID pgtype.UUID) (store.Machine, e
 // List returns all of a user's machines, oldest-first. Empty slice if none.
 func (s *Service) List(ctx context.Context, userID pgtype.UUID) ([]store.Machine, error) {
 	return s.q.ListMachinesByUserID(ctx, userID)
+}
+
+// Templates returns the machine-template catalog (declared order; first is the
+// create-time default). Empty when no catalog is configured (legacy single-image
+// deployments / tests).
+func (s *Service) Templates() []Template {
+	return s.spec.Catalog.Templates()
+}
+
+// Limits returns the resource-override caps applied at create time (same bounds
+// for every template).
+func (s *Service) Limits() ResourceLimits {
+	return s.spec.Limits
 }
 
 // OnlyMachine returns the user's machine iff they own exactly one. ErrNoMachine
@@ -162,8 +194,9 @@ func (s *Service) GetByID(ctx context.Context, id pgtype.UUID) (store.Machine, e
 // the machine is moved to error (with the reason), and the errored machine is
 // still returned (the create "succeeded" in that a machine row now exists; the
 // user can retry via Start). Returns ErrMachineLimit if the user is at their
-// per-user cap. name is the display label; empty ⇒ auto-named machine-<n>.
-func (s *Service) Create(ctx context.Context, userID pgtype.UUID, name string) (store.Machine, error) {
+// per-user cap, or ErrUnknownTemplate if opts.TemplateID is not in the catalog.
+// opts.Name is the display label; empty ⇒ auto-named machine-<n>.
+func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOptions) (store.Machine, error) {
 	count, err := s.q.CountMachinesByUserID(ctx, userID)
 	if err != nil {
 		return store.Machine{}, fmt.Errorf("count machines: %w", err)
@@ -175,22 +208,25 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, name string) (
 	if count >= int64(max) {
 		return store.Machine{}, ErrMachineLimit
 	}
+	name := opts.Name
 	if name == "" {
 		name = fmt.Sprintf("machine-%d", count+1)
 	}
 
-	diskMiB := s.spec.DiskMiB
-	if diskMiB <= 0 {
-		diskMiB = 10240
+	rootfsRef, kernelRef, res, templateID, err := s.resolveCreate(opts)
+	if err != nil {
+		return store.Machine{}, err
 	}
-	specJSON, _ := json.Marshal(map[string]int{"vcpus": s.spec.Vcpus, "mem_mib": s.spec.MemMiB, "disk_mib": diskMiB})
+	diskMiB := res.DiskMiB
+	specJSON, _ := json.Marshal(map[string]int{"vcpus": res.Vcpus, "mem_mib": res.MemMiB, "disk_mib": diskMiB})
 	m, err := s.q.CreateMachine(ctx, store.CreateMachineParams{
 		UserID:       userID,
 		HostID:       s.hostID,
 		Name:         name,
-		KernelRef:    s.spec.KernelRef,
-		RootfsRef:    s.spec.RootfsRef,
+		KernelRef:    kernelRef,
+		RootfsRef:    rootfsRef,
 		ResourceSpec: specJSON,
+		TemplateID:   templateID,
 	})
 	if err != nil {
 		return store.Machine{}, fmt.Errorf("create machine: %w", err)
@@ -216,7 +252,52 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, name string) (
 		return store.Machine{}, err
 	}
 
-	return s.ensureOnAgent(ctx, m, s.spec.KernelRef, s.spec.RootfsRef)
+	return s.ensureOnAgent(ctx, m, kernelRef, rootfsRef)
+}
+
+// resolveCreate determines a new machine's image refs, resource spec, and
+// template id from the create options. With an empty catalog (tests / legacy
+// single-image deployments configured only via the global Spec) it returns the
+// Spec's refs and resources and a nil template id. Otherwise it picks the named
+// template (or the catalog default when TemplateID is empty), returning
+// ErrUnknownTemplate for an unrecognised id. (Slice 2 layers user resource
+// overrides + caps on top of the chosen template's defaults here.)
+func (s *Service) resolveCreate(opts CreateOptions) (rootfsRef, kernelRef string, res Resources, templateID *string, err error) {
+	if s.spec.Catalog.Empty() {
+		disk := s.spec.DiskMiB
+		if disk <= 0 {
+			disk = 10240
+		}
+		return s.spec.RootfsRef, s.spec.KernelRef,
+			Resources{Vcpus: s.spec.Vcpus, MemMiB: s.spec.MemMiB, DiskMiB: disk}, nil, nil
+	}
+	t := s.spec.Catalog.Default()
+	if opts.TemplateID != "" {
+		got, ok := s.spec.Catalog.Get(opts.TemplateID)
+		if !ok {
+			return "", "", Resources{}, nil, ErrUnknownTemplate
+		}
+		t = got
+	}
+	// Start from the template's defaults; apply any provided override per
+	// dimension, then bound-check the result against the configured caps.
+	res = t.Defaults
+	if opts.Vcpus != nil {
+		res.Vcpus = *opts.Vcpus
+	}
+	if opts.MemMiB != nil {
+		res.MemMiB = *opts.MemMiB
+	}
+	if opts.DiskMiB != nil {
+		res.DiskMiB = *opts.DiskMiB
+	}
+	if !s.spec.Limits.Empty() {
+		if err := s.spec.Limits.Validate(res); err != nil {
+			return "", "", Resources{}, nil, err
+		}
+	}
+	id := t.ID
+	return t.RootfsRef, t.KernelRef, res, &id, nil
 }
 
 // Start cold-boots a stopped or errored machine: transition to starting → ask
@@ -333,9 +414,17 @@ func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef,
 	// Phase 4: deliver the disk and the volume key on every ensure (the only
 	// call that needs the key — for luksOpen). The key is fetched fresh from the
 	// secret store and never logged.
+	//
+	// vCPUs/memory come from the machine's own resource_spec (templates can size
+	// them differently), falling back to the global Spec for legacy rows whose
+	// spec is missing/zero.
+	vcpus, memMiB := s.spec.Vcpus, s.spec.MemMiB
+	if r := parseResources(m.ResourceSpec); r.Vcpus > 0 && r.MemMiB > 0 {
+		vcpus, memMiB = r.Vcpus, r.MemMiB
+	}
 	req := agentapi.EnsureRequest{
-		Vcpus:     s.spec.Vcpus,
-		MemMiB:    s.spec.MemMiB,
+		Vcpus:     vcpus,
+		MemMiB:    memMiB,
 		KernelRef: kernelRef,
 		RootfsRef: rootfsRef,
 	}

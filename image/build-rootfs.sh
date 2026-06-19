@@ -68,6 +68,20 @@
 # and put on PATH; Taskfile installs `task` onto /usr/local/bin. Pin versions with
 # --go-version X.Y.Z / --taskfile-version vX.Y.Z.
 #
+# Machine-template language layers (Slice 4): a template selects which language
+# toolchains the image carries on top of the common platform layer.
+#   --node / --no-node   force the Node runtime on / off independently of the npm
+#                        provider CLIs (which still imply it). Default: auto.
+#   --python / --no-python   bake python3 + pip + venv + headers + build-essential
+#                            (the C/C++ toolchain). Default: off.
+#   --template <id>      tag the output: image becomes
+#                        proteos-rootfs-<id>-<base>-ga<sha>.ext4 and the manifest
+#                        manifest-<id>.lock (so several templates share one
+#                        out-dir). Omitted ⇒ the legacy single-image name.
+# The platform layer (guest agent, git, vim, taskfile, code-server, dev user,
+# claude) is the same across templates; only Go/Node/Python vary. See
+# image/bake-templates.sh, which bakes the standard base/go/node/python/full set.
+#
 #   --alias 'name=command'   bake a shell alias into the guest's interactive
 #                            shells (root + run-as user); repeatable.
 #   --bashrc-file FILE       append FILE's contents to the managed bashrc snippet;
@@ -503,6 +517,27 @@ install_vim() {
   ok "vim installed"
 }
 
+# install_python MNT — lay down the Python language layer extract-only: python3 +
+# pip + venv + headers and the C/C++ build toolchain (build-essential). Like the
+# other apt installs it runs no maintainer scripts, so it then creates the
+# unversioned compiler symlinks (/usr/bin/{gcc,cc,g++,c++}) that update-alternatives
+# would normally make from the versioned gcc-NN/g++-NN binaries. Sets PYTHON_VERSION.
+install_python() {
+  local mnt="$1"
+  apt_extract_install "$mnt" python3 python3-pip python3-venv python3-dev build-essential
+  # build-essential ships gcc/g++ as versioned binaries (gcc-13, g++-13); the
+  # unversioned entrypoints are normally registered by alternatives in postinst,
+  # which we skip. Symlink the first versioned compiler we find so cc/gcc/c++/g++
+  # all resolve (pip builds native wheels through `cc`).
+  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin sh -c '
+    for g in /usr/bin/gcc-[0-9]*; do [ -x "$g" ] || continue; ln -sf "$(basename "$g")" /usr/bin/gcc; ln -sf gcc /usr/bin/cc; break; done
+    for c in /usr/bin/g++-[0-9]*; do [ -x "$c" ] || continue; ln -sf "$(basename "$c")" /usr/bin/g++; ln -sf g++ /usr/bin/c++; break; done
+    true'
+  PYTHON_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin python3 --version 2>/dev/null | awk '{print $2}' || true)"
+  [[ -n $PYTHON_VERSION ]] || die "python extract-only install failed: python3 not runnable in the image"
+  ok "python installed (python ${PYTHON_VERSION})"
+}
+
 # go_arch maps uname -m onto the go.dev dist arch tag.
 go_arch() {
   case "$(uname -m)" in
@@ -632,6 +667,11 @@ install_shell_env() {
 BASE=""
 OUT_DIR=""
 GROW_MIB=256
+# Machine-template id (Slice 4). When set, the image is named
+# proteos-rootfs-<template>-<base>-ga<sha>.ext4 and its manifest is
+# manifest-<template>.lock, so several templates can bake into one out-dir
+# without clobbering each other. Empty ⇒ the legacy single-image name + manifest.
+TEMPLATE_ID=""
 CLAUDE_BIN=""
 CLAUDE_VERSION=""
 CLAUDE_SHA256=""
@@ -642,6 +682,10 @@ CLAUDE_PLATFORM=""   # override the auto-detected downloads.claude.ai platform (
 # identical to Phase 5.
 NODE_VERSION=""
 NODE_SHA256=""
+# Node language layer (Slice 4): a template can request the Node runtime on its
+# own (no npm provider CLI needed). 0=auto (install only if an npm provider or a
+# pinned --node-version implies it), 1=force on (--node), -1=force off (--no-node).
+NODE_INSTALL=0
 GEMINI=0
 GEMINI_VERSION=""
 CODEX=0
@@ -681,6 +725,11 @@ GO_SHA256=""
 TASKFILE_INSTALL=1
 TASKFILE_VERSION="v3.40.0"
 TASK_SHA256=""
+# Python language layer (Slice 4): python3 + pip + venv + headers + the C/C++
+# build toolchain (build-essential). Off by default (it is a per-template layer,
+# not a platform default); enabled with --python for the python/full templates.
+PYTHON_INSTALL=0
+PYTHON_VERSION=""
 # Operator shell customisation baked into the guest's interactive shells: aliases
 # (--alias 'name=command', repeatable) and/or whole files appended to the managed
 # bashrc snippet (--bashrc-file FILE, repeatable).
@@ -705,6 +754,11 @@ while [[ $# -gt 0 ]]; do
     --taskfile) TASKFILE_INSTALL=1; shift ;;
     --no-taskfile) TASKFILE_INSTALL=0; shift ;;
     --taskfile-version) TASKFILE_INSTALL=1; TASKFILE_VERSION=$2; shift 2 ;;
+    --node) NODE_INSTALL=1; shift ;;
+    --no-node) NODE_INSTALL=-1; shift ;;
+    --python) PYTHON_INSTALL=1; shift ;;
+    --no-python) PYTHON_INSTALL=0; shift ;;
+    --template) TEMPLATE_ID=$2; shift 2 ;;
     --alias) ALIASES+=("$2"); shift 2 ;;
     --bashrc-file) [[ -f $2 ]] || die "--bashrc-file not found: $2"; BASHRC_FILES+=("$2"); shift 2 ;;
     --out-dir) OUT_DIR=$2; shift 2 ;;
@@ -725,9 +779,16 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown arg: $1" ;;
   esac
 done
-# Any npm-distributed CLI implies the Node runtime.
+# Any npm-distributed CLI implies the Node runtime; --node forces it on its own;
+# --no-node forces it off (and is incompatible with an npm provider CLI).
 NEED_NODE=0
 [[ $GEMINI -eq 1 || $CODEX -eq 1 || $PI -eq 1 ]] && NEED_NODE=1
+if [[ $NODE_INSTALL -eq -1 ]]; then
+  [[ $NEED_NODE -eq 1 ]] && die "--no-node conflicts with an npm provider CLI (gemini/codex/pi need Node)"
+  NEED_NODE=0
+elif [[ $NODE_INSTALL -eq 1 ]]; then
+  NEED_NODE=1
+fi
 [[ -n $BASE ]] || die "--base <pinned firecracker-ci ext4> is required"
 [[ -f $BASE ]] || die "base rootfs not found: $BASE"
 if [[ -n $CLAUDE_BIN ]]; then
@@ -760,7 +821,13 @@ command -v go >/dev/null || die "go toolchain required to build the guest agent"
 GIT_SHORT="${PROTEOS_ROOTFS_GIT_SHORT:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)}"
 VERSION="ga-$GIT_SHORT"
 BASE_NAME="$(basename "$BASE" .ext4)"
-OUT_IMG="$OUT_DIR/proteos-rootfs-${BASE_NAME}-ga${GIT_SHORT}.ext4"
+# A template id distinguishes images that share a base+SHA but differ in language
+# layers (go vs node vs python); without one the legacy single-image name stands.
+if [[ -n $TEMPLATE_ID ]]; then
+  OUT_IMG="$OUT_DIR/proteos-rootfs-${TEMPLATE_ID}-${BASE_NAME}-ga${GIT_SHORT}.ext4"
+else
+  OUT_IMG="$OUT_DIR/proteos-rootfs-${BASE_NAME}-ga${GIT_SHORT}.ext4"
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT  # replaced by the full cleanup once the image is mounted
@@ -823,6 +890,12 @@ if [[ $GO_INSTALL -eq 1 ]]; then
   GO_NEED=$((GROW_MIB + 700))
   log "baking Go — bumping grow ${GROW_MIB}→${GO_NEED}MiB headroom"
   GROW_MIB=$GO_NEED
+fi
+# Python + build-essential's apt closure (gcc/g++/make + headers) is sizable.
+if [[ $PYTHON_INSTALL -eq 1 ]]; then
+  PY_NEED=$((GROW_MIB + 600))
+  log "baking Python + build tools — bumping grow ${GROW_MIB}→${PY_NEED}MiB headroom"
+  GROW_MIB=$PY_NEED
 fi
 if [[ $TASKFILE_INSTALL -eq 1 ]]; then
   TASK_NEED=$((GROW_MIB + 32))
@@ -974,6 +1047,13 @@ if [[ $VIM_INSTALL -eq 1 ]]; then
   unbind_chroot
   FEATURES="$FEATURES,vim"
 fi
+# Python language layer (apt → needs the chroot binds, same as vim/git).
+if [[ $PYTHON_INSTALL -eq 1 ]]; then
+  bind_chroot
+  install_python "$MNT"
+  unbind_chroot
+  FEATURES="$FEATURES,python"
+fi
 if [[ $GO_INSTALL -eq 1 ]]; then
   install_go "$MNT" "$GO_VERSION"
   FEATURES="$FEATURES,go"
@@ -1025,11 +1105,13 @@ TASK_REL="none"; [[ $TASKFILE_INSTALL -eq 1 ]] && TASK_REL="$TASKFILE_VERSION"
 VIM_REL="no"; [[ $VIM_INSTALL -eq 1 ]] && VIM_REL="yes"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
+PROTEOS_TEMPLATE=${TEMPLATE_ID:-none}
 PROTEOS_GUESTAGENT_VERSION=$VERSION
 PROTEOS_GUESTAGENT_FEATURES=$FEATURES
 PROTEOS_GIT_VERSION=${GIT_VERSION:-none}
 PROTEOS_VIM=$VIM_REL
 PROTEOS_GO_VERSION=$GO_REL
+PROTEOS_PYTHON_VERSION=${PYTHON_VERSION:-none}
 PROTEOS_TASKFILE_VERSION=$TASK_REL
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
 PROTEOS_CODESERVER_VERSION=${CS_VERSION:-none}
@@ -1054,17 +1136,26 @@ SHA="$(sha256sum "$OUT_IMG" | awk '{print $1}')"
 # start). Both answer the "how big / how long" questions PROVIDERS.md asks.
 IMAGE_SIZE_MIB="$(du -m "$OUT_IMG" | awk '{print $1}')"
 BUILD_SECONDS=$SECONDS
-MANIFEST="$OUT_DIR/manifest.lock"
+# Per-template manifest when a template id is set, so a multi-template bake into
+# one out-dir keeps a manifest per image (bake-templates.sh / Ansible read these
+# back to learn each image's name).
+if [[ -n $TEMPLATE_ID ]]; then
+  MANIFEST="$OUT_DIR/manifest-${TEMPLATE_ID}.lock"
+else
+  MANIFEST="$OUT_DIR/manifest.lock"
+fi
 cat >"$MANIFEST" <<EOF
 # Generated by image/build-rootfs.sh — commit this file.
 # The control plane's PROTEOS_ROOTFS_REF / the per-machine rootfs_ref pin this image.
 image          = $(basename "$OUT_IMG")
 sha256         = $SHA
+template       = ${TEMPLATE_ID:-none}
 base_rootfs    = $BASE_NAME
 guestagent     = $VERSION
 features       = $FEATURES
 git_version    = ${GIT_VERSION:-none}
 vim            = $VIM_REL
+python_version = ${PYTHON_VERSION:-none}
 go_version     = $GO_REL
 go_sha256      = ${GO_SHA256:-none}
 taskfile_version = $TASK_REL

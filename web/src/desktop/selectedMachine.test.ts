@@ -11,6 +11,7 @@ function m(id: string, state: MachineSummary['state']): MachineSummary {
     guest_ip: null,
     kernel_ref: 'k',
     rootfs_ref: 'r',
+    template_id: null,
     resource_spec: { vcpus: 1, mem_mib: 1 },
     last_error: null,
     created_at: '',

@@ -5,6 +5,7 @@ import {
   ApiError,
   machineEventsUrl,
   SessionExpiredError,
+  type CreateMachineInput,
   type MachineDestroyedData,
   type MachineEvent,
   type MachineEventData,
@@ -74,15 +75,33 @@ function removeMachine(qc: ReturnType<typeof useQueryClient>, id: string) {
   qc.setQueryData<MachineSummary[]>(machinesKey, (prev = []) => prev.filter((x) => x.id !== id));
 }
 
-// useMachineMutations exposes create/start/stop/destroy/rename, each keyed by a
-// machine id (create takes an optional name). Successful results are merged into
-// the machines list cache immediately, before the first SSE event arrives.
+// templatesKey is the query cache key for the machine-template catalog.
+const templatesKey = ['templates'] as const;
+
+// useTemplates loads the machine-template catalog. It is static within a deploy,
+// so it never goes stale on its own (the create dialog reads it on demand).
+export function useTemplates() {
+  return useQuery({
+    queryKey: templatesKey,
+    queryFn: api.getTemplates,
+    staleTime: Infinity,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useMachineMutations exposes create/start/stop/destroy/rename. create takes an
+// optional CreateMachineInput (name + template + resource overrides); the rest
+// are keyed by machine id. Successful results are merged into the machines list
+// cache immediately, before the first SSE event arrives.
 export function useMachineMutations() {
   const qc = useQueryClient();
   const onSuccess = (m: MachineSummary) => upsertMachine(qc, m);
 
   const create = useMutation({
-    mutationFn: (name?: string) => api.createMachine(name),
+    mutationFn: (input?: CreateMachineInput) => api.createMachine(input),
     onSuccess,
   });
   const start = useMutation({ mutationFn: (id: string) => api.startMachine(id), onSuccess });

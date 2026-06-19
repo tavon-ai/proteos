@@ -140,6 +140,25 @@ Set, at minimum:
 - `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `PROTEOS_STATE_KEY` (`openssl rand -hex 32`).
 - Keep `PROTEOS_KERNEL_REF` / `PROTEOS_ROOTFS_REF` matching the staged filenames.
 
+**Machine templates (optional).** With nothing extra set, the control plane offers
+a single "base" machine built from `PROTEOS_ROOTFS_REF`. To offer the full
+catalog (Go / Node / Python / full), the node_agent Ansible role on the KVM host
+bakes one image per template and fetches a `proteos-templates.json` to
+`deploy/ansible/artifacts/` on the controller. Install it on the app VM:
+
+```bash
+cp <controller>/deploy/ansible/artifacts/proteos-templates.json \
+   <repo>/deploy/app-stack/proteos-templates.json   # overwrites the placeholder
+# in .env:
+#   PROTEOS_TEMPLATES_FILE=/etc/proteos/templates.json
+#   (optionally raise PROTEOS_MAX_VCPUS / _MEM_MIB / _DISK_MIB above the defaults)
+```
+
+The file is mounted read-only at `/etc/proteos/templates.json`. Each template's
+default resources must fit within the `PROTEOS_MAX_*` caps or the control plane
+refuses to start (an empty/placeholder catalog fails loudly with
+`template catalog is empty` — by design, never a machine booting a bogus image).
+
 ### B3. Build + run
 
 ```bash

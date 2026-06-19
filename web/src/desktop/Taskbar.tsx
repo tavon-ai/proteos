@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ApiError, type MachineState, type Me } from '../api/client';
-import { useMachineMutations } from '../api/hooks';
+import { type MachineState, type Me } from '../api/client';
+import { useMachineMutations, useTemplates } from '../api/hooks';
 import { useSelectedMachine } from './selectedMachine';
 import { useWindowManager } from './windowManagerContext';
 import { openHomeTerminal, openLogs, openProjects, openSettings } from './openers';
+import { CreateMachineDialog } from './CreateMachineDialog';
+import { MachineDetails } from './MachineDetails';
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
   'requested',
@@ -80,27 +82,19 @@ export function Taskbar({
 // the per-user cap), and rename the active one.
 function MachineSwitcher() {
   const { machines, selected, selectedId, setSelectedId } = useSelectedMachine();
-  const { create, start, stop, destroy, rename } = useMachineMutations();
+  const { start, stop, destroy, rename } = useMachineMutations();
+  const { data: templates = [] } = useTemplates();
   const [open, setOpen] = useState(false);
+  // Which modal (if any) is showing. 'create' is the new-machine flow; 'details'
+  // shows the active machine's spec.
+  const [modal, setModal] = useState<'none' | 'create' | 'details'>('none');
 
   const state = selected?.state;
   const busy =
     (state ? TRANSITIONAL.has(state) : false) ||
-    create.isPending ||
     start.isPending ||
     stop.isPending ||
     destroy.isPending;
-
-  const atLimit = create.error instanceof ApiError && create.error.code === 'machine_limit';
-
-  const onCreate = () => {
-    create.mutate(undefined, {
-      onSuccess: (m) => {
-        setSelectedId(m.id);
-        setOpen(false);
-      },
-    });
-  };
 
   const onRename = () => {
     if (!selected) return;
@@ -185,16 +179,46 @@ function MachineSwitcher() {
             ))}
             <div className="machine-menu-sep" />
             {selected && (
+              <button
+                className="machine-menu-action"
+                onClick={() => {
+                  setModal('details');
+                  setOpen(false);
+                }}
+              >
+                Details
+              </button>
+            )}
+            {selected && (
               <button className="machine-menu-action" onClick={onRename}>
                 Rename “{selected.name}”
               </button>
             )}
-            <button className="machine-menu-action" onClick={onCreate} disabled={create.isPending}>
-              {create.isPending ? 'Creating…' : '+ New machine'}
+            <button
+              className="machine-menu-action"
+              onClick={() => {
+                setModal('create');
+                setOpen(false);
+              }}
+            >
+              + New machine
             </button>
-            {atLimit && <div className="machine-menu-error">Machine limit reached</div>}
           </div>
         </>
+      )}
+
+      {modal === 'create' && (
+        <CreateMachineDialog
+          templates={templates}
+          onClose={() => setModal('none')}
+          onCreated={(m) => {
+            setSelectedId(m.id);
+            setModal('none');
+          }}
+        />
+      )}
+      {modal === 'details' && selected && (
+        <MachineDetails machine={selected} templates={templates} onClose={() => setModal('none')} />
       )}
     </div>
   );

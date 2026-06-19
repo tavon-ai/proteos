@@ -102,6 +102,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machines/{id}/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
 
+	// Machine-template catalog (read-only): backs the create-machine picker.
+	mux.Handle("GET /api/templates", s.requireAuth(http.HandlerFunc(s.handleListTemplates)))
+
 	// Machine-web session mint (Phase 8): the main-origin endpoint that issues the
 	// short-lived editor URL. Enabled only when machine-web is configured.
 	if s.MachineWeb != nil {

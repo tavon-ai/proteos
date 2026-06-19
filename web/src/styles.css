@@ -698,6 +698,198 @@ body {
   color: var(--error);
 }
 
+/* === Machine templates: modal, create form, details ==================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 1rem;
+}
+.modal {
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.modal-close:hover {
+  color: var(--text);
+}
+.modal-body {
+  padding: 1rem;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+}
+
+.create-machine {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.field-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.field-hint-inline {
+  font-weight: 400;
+  color: var(--muted);
+}
+.field-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.9rem;
+}
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent, #2f81f7);
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.template-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.template-option:hover {
+  border-color: var(--muted);
+}
+.template-option.is-selected {
+  border-color: var(--accent, #2f81f7);
+  background: rgba(47, 129, 247, 0.08);
+}
+.template-option input {
+  margin-top: 0.2rem;
+}
+.template-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.template-option-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.template-option-desc {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.template-option-specs {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.advanced-toggle {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  color: var(--accent, #2f81f7);
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0.1rem 0;
+}
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+.resource-note {
+  grid-column: 1 / -1;
+}
+
+.form-error {
+  color: var(--error);
+  font-size: 0.82rem;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+}
+
+.details-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+.details-row {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.details-row:last-child {
+  border-bottom: none;
+}
+.details-key {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.details-val {
+  margin: 0;
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+.mono {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+}
+
 /* === Phase 9: project-centric desktop ================================= */
 
 .desktop {

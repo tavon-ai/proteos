@@ -86,9 +86,22 @@ ssh <host> 'curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:9090/h
 - **The token is the only required input.** Bumping a pinned version
   (firecracker, kernel, Go) and re-running upgrades the host in place; the
   firecracker/kernel/rootfs steps are guarded so unchanged artifacts are a no-op.
-- **Forcing a rootfs rebuild:** delete `/var/lib/proteos/images/manifest.lock` (and,
-  to also rebuild the base, `ubuntu-24.04.ext4`) on the host and re-run. The guest
-  SSH key is preserved across rebuilds.
+- **Machine templates:** the node_agent role bakes **one rootfs image per entry**
+  in `proteos_templates` (default: `base`, `go`, `node`, `python`, `full`) —
+  `proteos-rootfs-<id>-<base>-ga<sha>.ext4`, each with its own
+  `manifest-<id>.lock`. It then renders `proteos-templates.json` (the control
+  plane's `PROTEOS_TEMPLATES_FILE`) and fetches it to
+  `{{ proteos_templates_fetch_dir }}` on the controller for the app-stack deploy
+  to install. The platform layer (guest agent, git, vim, taskfile, code-server,
+  dev user, Claude) is common to every template; `go`/`node`/`python` select the
+  language layer. The npm provider CLIs (Gemini/Codex/pi.dev) ride on the Node
+  layer, so they bake **only** into templates with `node: true`. Baking the full
+  set is slow (~10–20 min each) — trim `proteos_templates` while iterating.
+- **Forcing a rootfs rebuild:** delete the relevant `manifest-<id>.lock` under
+  `/var/lib/proteos/images/` (one template), or all of them (the whole set); to
+  also rebuild the base, delete `ubuntu-24.04.ext4` too. Re-run the playbook. A
+  source change rebakes every template automatically (the git SHA is in each image
+  name). The guest SSH key is preserved across rebuilds.
 - **Baking Claude Code (Phase 5):** controlled by `proteos_claude_install`:
   - `bootstrap` (**default**) — the bake fetches the official `claude` native
     binary from Anthropic's release endpoint and verifies it against the published
@@ -117,7 +130,7 @@ ssh <host> 'curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:9090/h
     `setup_command` (`codex login --with-api-key`) — no extra Ansible config.
 
   **Bumping the version/channel on an already-baked host needs a forced rebuild**
-  (delete `manifest.lock`), since the bake is guarded on source changes, not on
-  these vars.
+  (delete the per-template `manifest-<id>.lock` files), since the bake is guarded
+  on source changes, not on these vars.
 - The optional port firewall uses its **own** nft table + a oneshot unit, so it
   never clobbers the ruleset the node-agent manages for guest taps.

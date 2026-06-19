@@ -18,11 +18,15 @@ export class SessionExpiredError extends Error {
 export class ApiError extends Error {
   status: number;
   code: string;
-  constructor(status: number, code: string) {
+  // detail is the optional human-readable elaboration some endpoints attach
+  // (e.g. invalid_resources → "vcpus must be 1..8"). Undefined when absent.
+  detail?: string;
+  constructor(status: number, code: string, detail?: string) {
     super(`api error ${status}: ${code}`);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -62,6 +66,9 @@ export interface MachineSummary {
   guest_ip: string | null;
   kernel_ref: string;
   rootfs_ref: string;
+  // The catalog template the machine was created from; null for legacy machines
+  // created before templates existed.
+  template_id: string | null;
   resource_spec: { vcpus: number; mem_mib: number; disk_mib?: number };
   last_error: string | null;
   created_at: string;
@@ -71,6 +78,48 @@ export interface MachineSummary {
   disk_id: string | null;
   disk_mib: number | null;
   snapshot: SnapshotSummary | null;
+}
+
+// A machine's resource spec: pinned vCPUs, memory, and disk (MiB). Reached
+// through MachineTemplate; not exported on its own.
+interface MachineResources {
+  vcpus: number;
+  mem_mib: number;
+  disk_mib: number;
+}
+
+// Inclusive [min,max] range for one resource dimension.
+interface ResourceBound {
+  min: number;
+  max: number;
+}
+
+interface ResourceLimits {
+  vcpus: ResourceBound;
+  mem_mib: ResourceBound;
+  disk_mib: ResourceBound;
+}
+
+// MachineTemplate is one entry of GET /api/templates: a selectable machine image
+// with default resources and the caps that bound a user's overrides. The rootfs/
+// kernel refs are intentionally not exposed.
+export interface MachineTemplate {
+  id: string;
+  label: string;
+  description: string;
+  defaults: MachineResources;
+  limits: ResourceLimits;
+}
+
+// CreateMachineInput is the optional body of POST /api/machines. Every field is
+// optional: empty name ⇒ auto-named; empty template_id ⇒ catalog default; unset
+// resources ⇒ the chosen template's defaults.
+export interface CreateMachineInput {
+  name?: string;
+  template_id?: string;
+  vcpus?: number;
+  mem_mib?: number;
+  disk_mib?: number;
 }
 
 export interface MachineEvent {
@@ -199,14 +248,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     let code = 'error';
+    let detail: string | undefined;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; detail?: string };
       if (body.error) code = body.error;
+      if (body.detail) detail = body.detail;
     } catch {
       // non-JSON error body; keep the generic code
     }
     log.warn('request error', { method, path, status: res.status, code });
-    throw new ApiError(res.status, code);
+    throw new ApiError(res.status, code, detail);
   }
   // 204 / empty body tolerance.
   const text = await res.text();
@@ -217,16 +268,23 @@ export const api = {
   me: () => request<Me>('/api/me'),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
+  // GET /api/templates returns the machine-template catalog for the create
+  // picker (possibly empty on a legacy single-image deployment).
+  getTemplates: () => request<MachineTemplate[]>('/api/templates'),
+
   // GET /api/machines returns all of the user's machines (possibly empty).
   listMachines: () => request<MachineSummary[]>('/api/machines'),
-  // POST /api/machines provisions a new machine, auto-named when no name given.
-  // 409 machine_limit (ApiError) when the per-user cap is reached.
-  createMachine: (name?: string) =>
-    request<MachineSummary>('/api/machines', {
+  // POST /api/machines provisions a new machine. The body is optional (empty ⇒
+  // auto-named, catalog default, default resources). 409 machine_limit, 400
+  // unknown_template / invalid_resources (ApiError; the latter carries a detail).
+  createMachine: (input: CreateMachineInput = {}) => {
+    const hasBody = Object.values(input).some((v) => v !== undefined && v !== '');
+    return request<MachineSummary>('/api/machines', {
       method: 'POST',
-      headers: name ? { 'Content-Type': 'application/json' } : {},
-      body: name ? JSON.stringify({ name }) : undefined,
-    }),
+      headers: hasBody ? { 'Content-Type': 'application/json' } : {},
+      body: hasBody ? JSON.stringify(input) : undefined,
+    });
+  },
   startMachine: (id: string) =>
     request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}/start`, { method: 'POST' }),
   stopMachine: (id: string) =>

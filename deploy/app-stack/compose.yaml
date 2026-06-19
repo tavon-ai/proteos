@@ -95,9 +95,26 @@ services:
       # Image refs stamped on each machine; must match files staged in the
       # agent's PROTEOS_AGENT_IMAGES_DIR.
       PROTEOS_KERNEL_REF: ${PROTEOS_KERNEL_REF:-vmlinux}
+      # With a template catalog set (below), PROTEOS_ROOTFS_REF is only the
+      # fallback used to synthesize the "base" template.
       PROTEOS_ROOTFS_REF: ${PROTEOS_ROOTFS_REF:-ubuntu-24.04.ext4}
       PROTEOS_MACHINE_VCPUS: ${PROTEOS_MACHINE_VCPUS:-2}
       PROTEOS_MACHINE_MEM_MIB: ${PROTEOS_MACHINE_MEM_MIB:-2048}
+      PROTEOS_MACHINE_DISK_MIB: ${PROTEOS_MACHINE_DISK_MIB:-10240}
+
+      # Machine-template catalog. UNSET (default) ⇒ a single "base" template is
+      # synthesized from PROTEOS_ROOTFS_REF, so a fresh stack works before any
+      # templates are baked. To offer the full catalog, copy the
+      # proteos-templates.json the node_agent Ansible role fetched
+      # (deploy/ansible/artifacts/) over the placeholder ./proteos-templates.json
+      # (mounted read-only below), then set this to /etc/proteos/templates.json.
+      PROTEOS_TEMPLATES_FILE: ${PROTEOS_TEMPLATES_FILE:-}
+      # Caps for the per-resource overrides users may request at create time. The
+      # floors are fixed (1 vcpu / 1024 MiB / 5120 MiB); every template's defaults
+      # must fit within these or the control plane fails startup.
+      PROTEOS_MAX_VCPUS: ${PROTEOS_MAX_VCPUS:-8}
+      PROTEOS_MAX_MEM_MIB: ${PROTEOS_MAX_MEM_MIB:-16384}
+      PROTEOS_MAX_DISK_MIB: ${PROTEOS_MAX_DISK_MIB:-51200}
 
       # Phase 8: per-machine code-server editor subdomains. Set to the parent
       # domain you point a wildcard DNS record + TLS cert at (e.g.
@@ -131,6 +148,11 @@ services:
       # The file may not exist until you run the init script; with the default
       # file backend the control plane never reads it.
       - ./openbao-secret-id:/run/secrets/openbao-secret-id:ro
+      # Machine-template catalog. The committed placeholder is an empty catalog;
+      # replace it with the fetched proteos-templates.json and set
+      # PROTEOS_TEMPLATES_FILE=/etc/proteos/templates.json to activate it. Until
+      # then PROTEOS_TEMPLATES_FILE is empty and this file is not read.
+      - ./proteos-templates.json:/etc/proteos/templates.json:ro
     # If you instead co-locate this stack on the SAME host as the node-agent,
     # set PROTEOS_NODE_AGENT_URL=http://host.docker.internal:9090 and uncomment:
     # extra_hosts:

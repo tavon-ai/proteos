@@ -93,10 +93,24 @@
   register: src_git_short
   when: proteos_src_git_repo | length == 0
 
-- name: Check for an existing baked rootfs manifest
+# Source-change flag: any rootfs rebake is keyed on the source moving (the git
+# short SHA is in every image name) or a template's manifest being absent.
+- name: Note whether the synced/cloned source changed this run
+  ansible.builtin.set_fact:
+    proteos_src_changed: >-
+      {{ (src_sync is defined and src_sync.changed)
+         or (src_git is defined and src_git.changed) }}
+
+# Per-template manifests (manifest-<id>.lock). A template is (re)baked when the
+# source changed or its own manifest is missing — so adding a template to the
+# catalog bakes just the new one, while a source bump rebakes the whole set.
+- name: Check for existing per-template rootfs manifests
   ansible.builtin.stat:
-    path: "{{ proteos_images_dir }}/manifest.lock"
-  register: rootfs_manifest
+    path: "{{ proteos_images_dir }}/manifest-{{ item.id }}.lock"
+  loop: "{{ proteos_templates }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: tmpl_manifests
 
 # Phase 5: Claude Code bake mode. "bootstrap" (default) lets build-rootfs.sh fetch
 # the official binary; "binary" stages a pre-fetched pinned binary here; "none"
@@ -168,7 +182,10 @@
     name: [curl, ca-certificates, xz-utils]
     state: present
     update_cache: true
-  when: proteos_npm_providers | bool
+  # Needed whenever Node is baked: any npm provider, OR any template with node: true.
+  when: >-
+    (proteos_npm_providers | bool)
+    or (proteos_templates | selectattr('node') | list | length > 0)
 
 - name: Phase 8 — ensure code-server bake prerequisites are present
   ansible.builtin.apt:
@@ -182,23 +199,26 @@
     name: [curl, ca-certificates, tar, gzip]
     state: present
     update_cache: true
-  when: (proteos_guest_go_install | bool) or (proteos_guest_taskfile_install | bool)
+  # Taskfile is platform-wide; Go is baked by any template with go: true.
+  when: >-
+    (proteos_guest_taskfile_install | bool)
+    or (proteos_templates | selectattr('go') | list | length > 0)
 
-- name: Bake the guest agent (and, if configured, the provider CLIs) into the base rootfs
+- name: Bake one rootfs image per machine template (guest agent + platform + language layer)
   ansible.builtin.command:
     cmd: >-
       {{ proteos_src_dir }}/image/build-rootfs.sh
       --base {{ proteos_images_dir }}/{{ proteos_base_rootfs_ref }}
       --out-dir {{ proteos_images_dir }}
-      {% if proteos_claude_install == 'bootstrap' %}--claude-bootstrap{% if proteos_claude_version | length > 0 %} --claude-version {{ proteos_claude_version }}{% endif %}{% elif proteos_claude_install == 'binary' %}--claude-binary {{ proteos_claude_staged }} --claude-version {{ proteos_claude_version }}{% if proteos_claude_sha256 | length > 0 %} --claude-sha256 {{ proteos_claude_sha256 }}{% endif %}{% endif %}
-      {% if proteos_gemini_install == 'latest' %} --gemini{% if proteos_gemini_version | length > 0 %} --gemini-version {{ proteos_gemini_version }}{% endif %}{% endif %}
-      {% if proteos_codex_install == 'latest' %} --codex{% if proteos_codex_version | length > 0 %} --codex-version {{ proteos_codex_version }}{% endif %}{% endif %}
-      {% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}
-      {% if proteos_npm_providers | bool and proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}
+      --template {{ item.id }}
+      {{ '--go' if item.go else '--no-go' }}{% if item.go and proteos_guest_go_version | length > 0 %} --go-version {{ proteos_guest_go_version }}{% endif %}
+      {{ '--node' if item.node else '--no-node' }}
+      {{ '--python' if item.python else '--no-python' }}
+      {% if proteos_claude_install == 'bootstrap' %} --claude-bootstrap{% if proteos_claude_version | length > 0 %} --claude-version {{ proteos_claude_version }}{% endif %}{% elif proteos_claude_install == 'binary' %} --claude-binary {{ proteos_claude_staged }} --claude-version {{ proteos_claude_version }}{% if proteos_claude_sha256 | length > 0 %} --claude-sha256 {{ proteos_claude_sha256 }}{% endif %}{% endif %}
+      {% if item.node %}{% if proteos_gemini_install == 'latest' %} --gemini{% if proteos_gemini_version | length > 0 %} --gemini-version {{ proteos_gemini_version }}{% endif %}{% endif %}{% if proteos_codex_install == 'latest' %} --codex{% if proteos_codex_version | length > 0 %} --codex-version {{ proteos_codex_version }}{% endif %}{% endif %}{% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}{% if proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}{% endif %}
       {% if not (proteos_git_install | bool) %} --no-git{% endif %}
       {% if not (proteos_codeserver_install | bool) %} --no-codeserver{% else %}{% if proteos_codeserver_version | length > 0 %} --codeserver-version {{ proteos_codeserver_version }}{% endif %}{% if proteos_codeserver_sha256 | length > 0 %} --codeserver-sha256 {{ proteos_codeserver_sha256 }}{% endif %}{% endif %}
       {% if not (proteos_guest_vim_install | bool) %} --no-vim{% endif %}
-      {% if not (proteos_guest_go_install | bool) %} --no-go{% else %}{% if proteos_guest_go_version | length > 0 %} --go-version {{ proteos_guest_go_version }}{% endif %}{% endif %}
       {% if not (proteos_guest_taskfile_install | bool) %} --no-taskfile{% else %}{% if proteos_guest_taskfile_version | length > 0 %} --taskfile-version {{ proteos_guest_taskfile_version }}{% endif %}{% endif %}
       {% for k, v in proteos_guest_aliases.items() %} --alias '{{ k }}={{ v }}'{% endfor %}
   environment:
@@ -207,31 +227,80 @@
     # synced tree has no .git). Empty on the git-clone path, where build-rootfs.sh
     # resolves the SHA from the cloned .git itself.
     PROTEOS_ROOTFS_GIT_SHORT: "{{ src_git_short.stdout | default('') | trim }}"
+  loop: "{{ proteos_templates }}"
+  loop_control:
+    label: "{{ item.id }}"
+    extended: true
   register: rootfs_bake
-  changed_when: rootfs_bake.rc == 0
+  changed_when: rootfs_bake is not skipped and rootfs_bake.rc == 0
+  # Rebake this template when the source moved or its manifest is absent. The
+  # per-template stat loop above iterates proteos_templates in the same order, so
+  # ansible_loop.index0 indexes the matching stat result.
   when: >-
-    (src_sync is defined and src_sync.changed) or
-    (src_git is defined and src_git.changed) or
-    not rootfs_manifest.stat.exists
+    proteos_src_changed
+    or not tmpl_manifests.results[ansible_loop.index0].stat.exists
   notify: restart node-agent
 
-- name: Read the baked rootfs manifest
+# Read every template's manifest back to learn its baked image name. Each
+# manifest-<id>.lock has a line: "image          = proteos-rootfs-<id>-<base>-ga<sha>.ext4".
+- name: Read each template's baked rootfs manifest
   ansible.builtin.slurp:
-    src: "{{ proteos_images_dir }}/manifest.lock"
-  register: rootfs_manifest_raw
+    src: "{{ proteos_images_dir }}/manifest-{{ item.id }}.lock"
+  loop: "{{ proteos_templates }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: tmpl_manifests_baked
 
-# manifest.lock has a line: "image          = proteos-rootfs-<base>-ga<sha>.ext4"
-- name: Pin PROTEOS_ROOTFS_REF to the baked image
+# Map template id → baked image name (the rootfs_ref). The slurp loop above
+# preserves proteos_templates order, so ids and parsed images zip 1:1.
+- name: Build the template id → image map
   ansible.builtin.set_fact:
-    proteos_rootfs_ref: >-
-      {{ (rootfs_manifest_raw.content | b64decode
-          | regex_search('(?m)^image\s*=\s*(\S+)', '\1') | first) }}
+    proteos_template_images: >-
+      {{ dict(proteos_templates | map(attribute='id') | list
+              | zip(tmpl_manifests_baked.results | map(attribute='content')
+                    | map('b64decode')
+                    | map('regex_findall', '(?m)^image\s*=\s*(\S+)')
+                    | map('first') | list)) }}
 
-- name: Assert the baked rootfs exists
+# PROTEOS_ROOTFS_REF (node-agent env + the single-image acceptance gates / smoke
+# boot below) tracks the PRIMARY template's image.
+- name: Pin PROTEOS_ROOTFS_REF to the primary template image
+  ansible.builtin.set_fact:
+    proteos_rootfs_ref: "{{ proteos_template_images[proteos_primary_template] }}"
+
+- name: Assert every template image exists
   ansible.builtin.stat:
-    path: "{{ proteos_images_dir }}/{{ proteos_rootfs_ref }}"
-  register: baked_rootfs
-  failed_when: not baked_rootfs.stat.exists
+    path: "{{ proteos_images_dir }}/{{ proteos_template_images[item.id] }}"
+  loop: "{{ proteos_templates }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: baked_template_images
+  failed_when: not baked_template_images.stat.exists
+
+# Generate the control-plane catalog (PROTEOS_TEMPLATES_FILE) from the template
+# set + baked image names, write it on the host, and fetch it to the controller
+# for the app-stack deploy to install. kernel_ref is omitted so the control plane
+# fills it from its own PROTEOS_KERNEL_REF (keeps the kernel name on one host).
+- name: Render the control-plane template catalog (proteos-templates.json)
+  ansible.builtin.template:
+    src: proteos-templates.json.j2
+    dest: "{{ proteos_images_dir }}/proteos-templates.json"
+    mode: "0644"
+
+- name: Ensure the controller artifacts dir exists
+  ansible.builtin.file:
+    path: "{{ proteos_templates_fetch_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Fetch the template catalog to the controller for the app-stack deploy
+  ansible.builtin.fetch:
+    src: "{{ proteos_images_dir }}/proteos-templates.json"
+    dest: "{{ proteos_templates_fetch_dir }}/proteos-templates.json"
+    flat: true
 
 # Phase 7 gate: verify the baked image actually contains git + the credential
 # helper subcommand and bakes NO token/gitconfig material. Loop-mount only (no VM

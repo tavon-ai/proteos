@@ -216,7 +216,7 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 	ctx := context.Background()
 
 	// Create the machine first (writes the provisioning event).
-	m, err := h.svc.Create(ctx, h.userID, "")
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestSSEReplaysFromLastEventID(t *testing.T) {
 	h := newSSEHarness(t)
 	ctx := context.Background()
 
-	m, err := h.svc.Create(ctx, h.userID, "") // provisioning event
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}) // provisioning event
 	if err != nil {
 		t.Fatal(err)
 	}
