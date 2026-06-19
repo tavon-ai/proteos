@@ -79,6 +79,21 @@ export function openEditor(wm: WindowManagerContext, machineId: string, project:
   });
 }
 
+// openPreview opens a window framing the machine's app on the given port (PP3).
+// One window per (machine, port): repeat opens of the same port focus the
+// existing window, while a different port opens its own — so several previews
+// coexist and switching ports leaves the others untouched.
+export function openPreview(wm: WindowManagerContext, machineId: string, port: number): void {
+  wm.open({
+    id: `preview-${machineId}-${port}`,
+    kind: 'preview',
+    title: `App — port ${port}`,
+    machineId,
+    port,
+    dedupeKey: `${machineId}|${port}`,
+  });
+}
+
 export function openSettings(wm: WindowManagerContext): void {
   wm.open({ id: 'settings', kind: 'settings', title: 'Settings', dedupeKey: 'settings' });
 }

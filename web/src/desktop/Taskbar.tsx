@@ -3,9 +3,10 @@ import { type MachineState, type Me } from '../api/client';
 import { useMachineMutations, useTemplates } from '../api/hooks';
 import { useSelectedMachine } from './selectedMachine';
 import { useWindowManager } from './windowManagerContext';
-import { openHomeTerminal, openLogs, openProjects, openSettings } from './openers';
+import { openHomeTerminal, openLogs, openPreview, openProjects, openSettings } from './openers';
 import { CreateMachineDialog } from './CreateMachineDialog';
 import { MachineDetails } from './MachineDetails';
+import { OpenAppDialog } from './OpenAppDialog';
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
   'requested',
@@ -30,6 +31,7 @@ export function Taskbar({
   const wm = useWindowManager();
   const { selectedId } = useSelectedMachine();
   const clock = useClock();
+  const [appDialog, setAppDialog] = useState(false);
 
   // Projects/Terminal open in the ACTIVE machine (disabled when there is none);
   // Settings/Activity are global (one window across all machines).
@@ -55,6 +57,13 @@ export function Taskbar({
         >
           Terminal
         </button>
+        <button
+          className="taskbar-app"
+          onClick={() => selectedId && setAppDialog(true)}
+          disabled={!selectedId}
+        >
+          Open app…
+        </button>
         <button className="taskbar-app" onClick={() => openSettings(wm)}>
           Settings
         </button>
@@ -73,6 +82,16 @@ export function Taskbar({
           {loggingOut ? 'Signing out…' : 'Sign out'}
         </button>
       </div>
+
+      {appDialog && selectedId && (
+        <OpenAppDialog
+          onClose={() => setAppDialog(false)}
+          onOpen={(port) => {
+            openPreview(wm, selectedId, port);
+            setAppDialog(false);
+          }}
+        />
+      )}
     </header>
   );
 }

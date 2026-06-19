@@ -13,6 +13,7 @@ type WindowKind =
   | 'terminal'
   | 'agent'
   | 'editor'
+  | 'preview'
   | 'logs'
   | 'settings'
   | 'projects'
@@ -46,6 +47,9 @@ export interface WindowState {
   provider?: string;
   cwd?: string;
   folder?: string;
+  // The in-machine application port a preview window proxies (PP3). Set only for
+  // the 'preview' kind; the window mints a per-port web-session and frames it.
+  port?: number;
 
   geometry: Geometry;
   zIndex: number;
@@ -68,6 +72,7 @@ const DEFAULT_SIZE: Record<WindowKind, { width: number; height: number }> = {
   terminal: { width: 720, height: 460 },
   agent: { width: 760, height: 520 },
   editor: { width: 1000, height: 680 },
+  preview: { width: 900, height: 640 },
   logs: { width: 560, height: 420 },
   settings: { width: 640, height: 540 },
   projects: { width: 600, height: 480 },
@@ -91,6 +96,7 @@ export interface OpenSpec {
   provider?: string;
   cwd?: string;
   folder?: string;
+  port?: number;
   dedupeKey?: string;
   geometry?: Partial<Geometry>;
 }
@@ -137,6 +143,8 @@ function dedupeKeyOf(w: WindowState): string | undefined {
   switch (w.kind) {
     case 'editor':
       return `${w.machineId ?? ''}|${w.folder ?? w.projectId ?? ''}`;
+    case 'preview':
+      return `${w.machineId ?? ''}|${w.port ?? ''}`;
     case 'projects':
       return `projects|${w.machineId ?? ''}`;
     case 'settings':
@@ -174,6 +182,7 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         provider: action.spec.provider,
         cwd: action.spec.cwd,
         folder: action.spec.folder,
+        port: action.spec.port,
         geometry,
         zIndex: z,
         mode: 'normal',
@@ -297,6 +306,7 @@ export interface PersistedWindow {
   provider?: string;
   cwd?: string;
   folder?: string;
+  port?: number;
   geometry: Geometry;
   mode?: WindowMode;
 }
@@ -326,6 +336,7 @@ export function serializeLayout(state: DesktopState, machineId?: string): Persis
       provider: w.provider,
       cwd: w.cwd,
       folder: w.folder,
+      port: w.port,
       // A maximized window persists at its restore geometry, not full-screen.
       geometry: w.mode === 'maximized' ? (w.restore ?? w.geometry) : w.geometry,
       mode: w.mode === 'minimized' ? 'minimized' : 'normal',
@@ -355,6 +366,7 @@ function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopStat
     provider: w.provider,
     cwd: w.cwd,
     folder: w.folder,
+    port: w.port,
     geometry: w.geometry,
     zIndex: kept.length + i + 1,
     mode: w.mode === 'minimized' ? 'minimized' : 'normal',
@@ -386,6 +398,7 @@ function hydrateMachine(
     provider: w.provider,
     cwd: w.cwd,
     folder: w.folder,
+    port: w.port,
     geometry: w.geometry,
     zIndex: 0, // renumbered below
     mode: w.mode === 'minimized' ? 'minimized' : 'normal',

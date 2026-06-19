@@ -309,6 +309,17 @@ export const api = {
       body: folder ? JSON.stringify({ folder }) : undefined,
     }),
 
+  // Mint a one-shot preview URL for a running machine's app on `port` (PP3): the
+  // same endpoint with ?port=, returning a URL on the m-<uuid>-p<port> origin.
+  // 400 bad_request if the port is reserved or outside the configured range; 409
+  // machine_not_running / 404 no_machine as ApiError. The token is single-use, so
+  // each consumer (the iframe, an "open in new tab") mints its own.
+  previewSession: (machineID: string, port: number) =>
+    request<WebSession>(
+      `/api/machine/web-session?machine=${encodeURIComponent(machineID)}&port=${port}`,
+      { method: 'POST' },
+    ),
+
   // Projects + desktop layout (Phase 9), scoped to a specific machine via
   // ?machine=. listProjects 409s when the machine is not running. getDesktop/
   // putDesktop relay the opaque layout to/from that machine's SQLite; putDesktop

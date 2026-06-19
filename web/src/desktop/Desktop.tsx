@@ -4,6 +4,7 @@ import type { MachineEvent, MachineState, MachineSummary, Me, Provider } from '.
 import { useLogout, useMachineEvents, useMachines, useProviders } from '../api/hooks';
 import { Terminal } from '../components/Terminal';
 import { EditorWindow } from '../windows/EditorWindow';
+import { PreviewWindow } from '../windows/PreviewWindow';
 import { LogsWindow } from '../windows/LogsWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
@@ -187,6 +188,14 @@ function WindowBody({
           machineId={win.machineId ?? null}
           machineState={machineState}
           folder={win.folder}
+        />
+      );
+    case 'preview':
+      return (
+        <PreviewWindow
+          machineId={win.machineId ?? null}
+          machineState={machineState}
+          port={win.port}
         />
       );
     case 'logs':
