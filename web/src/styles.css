@@ -1528,3 +1528,180 @@ body {
 .placeholder-body {
   padding: 1rem;
 }
+
+/* Tasks window (AT1/AT2): create + list on the left, live event stream right. */
+.tasks-window {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.tasks-left {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.tasks-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.tasks-form-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.tasks-prompt {
+  resize: vertical;
+  font: inherit;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.tasks-form-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+.tasks-form-hint,
+.tasks-form-err {
+  font-size: 0.8rem;
+  margin: 0;
+}
+.tasks-form-err {
+  color: var(--error);
+}
+.tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+.tasks-empty {
+  padding: 0.8rem;
+}
+.tasks-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.tasks-row:hover {
+  background: var(--panel);
+}
+.tasks-row.is-selected {
+  background: var(--panel);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tasks-status {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.tasks-running {
+  color: var(--accent);
+}
+.tasks-done {
+  color: #2e9e5b;
+}
+.tasks-failed,
+.tasks-canceled {
+  color: var(--error);
+}
+.tasks-queued {
+  color: var(--muted);
+}
+.tasks-row-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.tasks-row-summary,
+.tasks-row-error {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tasks-row-error {
+  color: var(--error);
+}
+.tasks-stream {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.tasks-stream-empty {
+  padding: 1rem;
+}
+.tasks-events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem;
+}
+.tasks-ev {
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+.tasks-ev-text {
+  white-space: pre-wrap;
+}
+.tasks-ev-tool {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  color: var(--muted);
+}
+.tasks-ev-toolname {
+  font-weight: 600;
+  color: var(--accent);
+}
+.tasks-ev-input {
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tasks-ev-output {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.tasks-ev-result.is-error .tasks-ev-output {
+  border-color: var(--error);
+}
+.tasks-result {
+  margin-top: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 4px;
+  background: var(--panel);
+  font-weight: 600;
+}
+.tasks-result.is-error {
+  color: var(--error);
+}
+.tasks-result-meta {
+  font-weight: 400;
+  color: var(--muted);
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon/proteos/controlplane/internal/taskevents"
 )
 
 // Server holds the dependencies shared by all handlers.
@@ -77,6 +78,10 @@ type Server struct {
 	// it. Nil (or Providers/GitWorktree/Secrets unset) disables the
 	// /api/machines/{id}/tasks routes.
 	TaskChannel TaskChannel
+
+	// AT2: the live agent-task event fan-out the task SSE endpoint subscribes to.
+	// Nil disables GET /api/machines/{id}/tasks/{tid}/events.
+	TaskEvents *taskevents.Hub
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
@@ -173,6 +178,14 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/machines/{id}/tasks", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateTask))))
 		mux.Handle("GET /api/machines/{id}/tasks", s.requireAuth(http.HandlerFunc(s.handleListTasks)))
 		mux.Handle("GET /api/machines/{id}/tasks/{tid}", s.requireAuth(http.HandlerFunc(s.handleGetTask)))
+	}
+
+	// AT2: live agent-event SSE for one task. A GET stream (no CSRF — like the
+	// machine SSE; EventSource cannot set headers and it is read-only). It only
+	// reads the task row + the event hub, so it is wired independently of the
+	// dispatch stack (which needs the provider/secret/worktree surfaces).
+	if s.TaskEvents != nil {
+		mux.Handle("GET /api/machines/{id}/tasks/{tid}/events", s.requireAuth(http.HandlerFunc(s.handleTaskEvents)))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check

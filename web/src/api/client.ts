@@ -270,6 +270,60 @@ export interface PRCreated {
   number: number;
 }
 
+// AgentTask is one row of the headless task lane (AT1/AT2). status moves
+// queued → running → done | failed | canceled; terminal states are immutable.
+// The result fields populate once the run ends. usage carries the agent's
+// reported cost/turns/duration. The run leaves a dirty working tree — committing
+// is the separate, explicit git-review flow.
+export interface AgentTask {
+  id: string;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'canceled';
+  provider: string;
+  project: string;
+  agent_session_id?: string;
+  usage?: Record<string, unknown>;
+  result_summary?: string;
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  ended_at?: string;
+}
+
+export interface TasksResponse {
+  tasks: AgentTask[];
+}
+
+// TaskCreated is the 202 body of POST /api/machines/{id}/tasks.
+export interface TaskCreated {
+  task_id: string;
+}
+
+export interface CreateTaskInput {
+  prompt: string;
+  provider: string;
+  project: string;
+}
+
+// TaskEvent is one normalized frame from the task SSE stream (AT2). kind
+// discriminates the shape: assistant_text (prose), tool_use (a tool call),
+// tool_result (its output), and the terminal result. Payloads are normalized on
+// the guest and carry no secrets.
+export interface TaskEvent {
+  kind: 'assistant_text' | 'tool_use' | 'tool_result' | 'result';
+  text?: string;
+  tool?: string;
+  tool_id?: string;
+  input?: unknown;
+  output?: string;
+  is_error?: boolean;
+  // result-only fields:
+  status?: string;
+  cost_usd?: number;
+  num_turns?: number;
+  duration_ms?: number;
+  error?: string;
+}
+
 // DesktopLayout is the opaque serialized window layout stored in machine SQLite
 // (Phase 9 decision #6). The control plane relays it verbatim; only the desktop
 // understands its shape. null ⇒ no layout saved yet.
@@ -465,7 +519,32 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project, title, body, head }),
     }),
+
+  // Headless agent tasks (AT1/AT2). createTask dispatches a run and returns 202 +
+  // task_id immediately; the run streams structured events over the task SSE and
+  // ends leaving a dirty working tree. 400 provider_not_headless / bad_project;
+  // 409 no_provider_key / machine_not_running — all ApiError. listTasks/getTask
+  // are reads (getTask works even on a stopped machine).
+  listTasks: (machineID: string) =>
+    request<TasksResponse>(`/api/machines/${encodeURIComponent(machineID)}/tasks`),
+  getTask: (machineID: string, taskID: string) =>
+    request<AgentTask>(
+      `/api/machines/${encodeURIComponent(machineID)}/tasks/${encodeURIComponent(taskID)}`,
+    ),
+  createTask: (machineID: string, input: CreateTaskInput) =>
+    request<TaskCreated>(`/api/machines/${encodeURIComponent(machineID)}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
 };
+
+// taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),
+// consumed by useTaskEvents via the browser EventSource API (cookie auth, no
+// custom headers — Last-Event-ID replay is automatic on reconnect).
+export function taskEventsUrl(machineID: string, taskID: string): string {
+  return `/api/machines/${encodeURIComponent(machineID)}/tasks/${encodeURIComponent(taskID)}/events`;
+}
 
 // SSE endpoint for live machine state; consumed by useMachineEvents via the
 // browser EventSource API (cookie auth, no custom headers).

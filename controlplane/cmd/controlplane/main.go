@@ -25,6 +25,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon/proteos/controlplane/internal/taskevents"
 )
 
 func main() {
@@ -131,6 +132,11 @@ func run(migrate, migrateOnly bool) error {
 		return err
 	}
 	broker := machine.NewBroker()
+
+	// AT2: the in-process fan-out for headless agent-task event streams. The
+	// guest control channel publishes normalized agent.event frames here; the task
+	// SSE endpoint subscribes per task. Bounded + ephemeral (DB holds the outcome).
+	taskHub := taskevents.New(taskevents.DefaultBufferSize, taskevents.DefaultRetention)
 
 	// Machine-template catalog (static config): load from PROTEOS_TEMPLATES_FILE
 	// when set, else synthesize a single "base" template from the global image
@@ -252,7 +258,7 @@ func run(migrate, migrateOnly bool) error {
 		// control channel per running machine, serving on-demand git.credential
 		// requests through its single authorization choke point.
 		tokenSrc = github.NewTokenSource(ghClient, q, sec)
-		guestCtl = guestctl.New(nodes, broker, q, tokenSrc, auditRec, cfg.GitHost)
+		guestCtl = guestctl.New(nodes, broker, q, tokenSrc, auditRec, taskHub, cfg.GitHost)
 		go guestCtl.Run(ctx)
 	}
 
@@ -282,6 +288,8 @@ func run(migrate, migrateOnly bool) error {
 		// AT1: and the headless agent-run dispatch surface.
 		srv.TaskChannel = guestCtl
 	}
+	// AT2: the live agent-task event stream (independent of the OAuth/git stack).
+	srv.TaskEvents = taskHub
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

@@ -5,7 +5,9 @@ import {
   ApiError,
   machineEventsUrl,
   SessionExpiredError,
+  taskEventsUrl,
   type CreateMachineInput,
+  type CreateTaskInput,
   type MachineDestroyedData,
   type MachineEvent,
   type MachineEventData,
@@ -13,6 +15,8 @@ import {
   type ProjectsResponse,
   type ReposResponse,
   type SnapshotData,
+  type TaskEvent,
+  type TasksResponse,
 } from './client';
 import { logger } from '../lib/logger';
 
@@ -301,6 +305,70 @@ export function useGitPR(machineId: string | null, project: string) {
     mutationFn: ({ title, body, head }: { title: string; body: string; head: string }) =>
       api.gitPR(machineId as string, project, title, body, head),
   });
+}
+
+// tasksKey is the query cache key for a machine's agent tasks (keyed by machine
+// so switching machines refetches the right set).
+const tasksKey = (machineId: string | null) => ['tasks', machineId] as const;
+
+// useTasks loads a machine's headless agent tasks (AT1/AT2), newest first. While
+// the window is open it polls every few seconds so a task's status (and a new
+// task created elsewhere) stays current without an extra event channel; the live
+// per-task stream (useTaskEvents) is the high-resolution view.
+export function useTasks(machineId: string | null, enabled: boolean) {
+  return useQuery<TasksResponse>({
+    queryKey: tasksKey(machineId),
+    queryFn: () => api.listTasks(machineId as string),
+    enabled: enabled && !!machineId,
+    refetchInterval: 4000,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useCreateTask dispatches a headless run; on success it invalidates the task
+// list so the new (queued/running) row appears immediately.
+export function useCreateTask(machineId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTaskInput) => api.createTask(machineId as string, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: tasksKey(machineId) }),
+  });
+}
+
+// useTaskEvents subscribes to one task's live agent-event SSE stream (AT2),
+// accumulating normalized events for display. The browser EventSource replays
+// Last-Event-ID on its own reconnect; we close it on the terminal `result` frame
+// so it does not loop. Switching the selected task resets the buffer.
+export function useTaskEvents(machineId: string | null, taskId: string | null): TaskEvent[] {
+  const qc = useQueryClient();
+  const [events, setEvents] = useState<TaskEvent[]>([]);
+
+  useEffect(() => {
+    setEvents([]);
+    if (!machineId || !taskId) return;
+    const es = new EventSource(taskEventsUrl(machineId, taskId), { withCredentials: true });
+
+    es.addEventListener('agent', (e) => {
+      const ev = JSON.parse((e as MessageEvent).data) as TaskEvent;
+      setEvents((prev) => [...prev, ev]);
+      if (ev.kind === 'result') {
+        es.close(); // terminal — stop here rather than auto-reconnecting
+        // The run ended; refresh the list so its row flips to done/failed.
+        qc.invalidateQueries({ queryKey: tasksKey(machineId) });
+      }
+    });
+    es.addEventListener('error', () => {
+      log.debug('task stream error', { readyState: es.readyState });
+    });
+
+    return () => es.close();
+  }, [machineId, taskId, qc]);
+
+  return events;
 }
 
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.

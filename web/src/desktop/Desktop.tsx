@@ -6,6 +6,7 @@ import { Terminal } from '../components/Terminal';
 import { EditorWindow } from '../windows/EditorWindow';
 import { PreviewWindow } from '../windows/PreviewWindow';
 import { ChangesWindow } from '../windows/ChangesWindow';
+import { TasksWindow } from '../windows/TasksWindow';
 import { LogsWindow } from '../windows/LogsWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
@@ -206,6 +207,14 @@ function WindowBody({
           machineState={machineState}
           projectPath={win.projectId}
           events={events}
+        />
+      );
+    case 'tasks':
+      return (
+        <TasksWindow
+          machineId={win.machineId ?? null}
+          machineState={machineState}
+          projectPath={win.projectId}
         />
       );
     case 'logs':

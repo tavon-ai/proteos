@@ -19,6 +19,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon/proteos/controlplane/internal/taskevents"
 )
 
 // ErrNoChannel means the machine has no live control channel (it is not running,
@@ -49,6 +50,7 @@ type Manager struct {
 	q       *store.Queries
 	tokens  *github.TokenSource
 	audit   *audit.Recorder
+	tasks   *taskevents.Hub // AT2 live agent-event fan-out (may be nil)
 	gitHost string
 
 	baseCtx context.Context
@@ -60,7 +62,9 @@ type Manager struct {
 
 // New wires a Manager. gitHost is the only host credentials are minted for and
 // the only host clones target (config PROTEOS_GIT_HOST, default github.com).
-func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *github.TokenSource, rec *audit.Recorder, gitHost string) *Manager {
+// tasks is the AT2 agent-event fan-out the headless run streams into (nil ⇒ live
+// events are simply not relayed; agent.done still records the final result).
+func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *github.TokenSource, rec *audit.Recorder, tasks *taskevents.Hub, gitHost string) *Manager {
 	if gitHost == "" {
 		gitHost = "github.com"
 	}
@@ -70,6 +74,7 @@ func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *g
 		q:           q,
 		tokens:      tokens,
 		audit:       rec,
+		tasks:       tasks,
 		gitHost:     gitHost,
 		supervisors: map[string]context.CancelFunc{},
 		conns:       map[string]*conn{},
@@ -249,6 +254,9 @@ func (m *Manager) makeHandler(machineID, userID string) reqHandler {
 		case guestwire.OpGitPushDone:
 			m.handlePushDone(ctx, machineID, payload)
 			return nil, nil
+		case guestwire.OpAgentEvent:
+			m.handleAgentEvent(payload)
+			return nil, nil
 		case guestwire.OpAgentDone:
 			m.handleAgentDone(ctx, payload)
 			return nil, nil
@@ -370,42 +378,95 @@ func (m *Manager) handlePushDone(ctx context.Context, machineID string, payload 
 	slog.Info("guestctl: push done", "machine", machineID, "op_id", done.OpID, "ok", done.OK)
 }
 
+// handleAgentEvent fans one normalized agent.event (AT2) out to the task's live
+// SSE stream. The payload is already normalized + bounded by the guest and
+// carries no secret, so the CP relays it verbatim (minus the task id, which the
+// stream is keyed by). Best-effort — a malformed payload is dropped.
+func (m *Manager) handleAgentEvent(payload json.RawMessage) {
+	if m.tasks == nil {
+		return
+	}
+	var ev guestwire.AgentEventPayload
+	if err := json.Unmarshal(payload, &ev); err != nil || ev.TaskID == "" {
+		slog.Warn("guestctl: bad agent.event payload", "err", err)
+		return
+	}
+	taskID := ev.TaskID
+	ev.TaskID = "" // the SSE stream is task-scoped; don't echo the id in every frame
+	if m.tasks.Publish(taskID, mustJSON(ev), false) {
+		slog.Info("guestctl: agent event history truncated", "task", taskID)
+	}
+}
+
 // handleAgentDone records a headless agent-run completion (AT1) onto its
 // agent_tasks row: terminal status, the agent's session id (for resume), usage,
-// the result summary, and any sanitized error. Best-effort — a malformed payload
-// or DB error is logged, not propagated (the guest does not retry).
+// the result summary, and any sanitized error. It then publishes the terminal
+// `result` frame onto the task's live stream (AT2) so subscribers close cleanly.
+// Best-effort — a malformed payload or DB error is logged, not propagated (the
+// guest does not retry).
 func (m *Manager) handleAgentDone(ctx context.Context, payload json.RawMessage) {
 	var done guestwire.AgentDonePayload
 	if err := json.Unmarshal(payload, &done); err != nil {
 		slog.Warn("guestctl: bad agent.done payload", "err", err)
 		return
 	}
-	id, err := machine.ParseUUID(done.TaskID)
-	if err != nil {
-		slog.Warn("guestctl: bad agent.done task id", "task", done.TaskID, "err", err)
+	if done.TaskID == "" {
+		slog.Warn("guestctl: agent.done with empty task id")
 		return
 	}
 	status := "done"
 	if !done.OK {
 		status = "failed"
 	}
-	usage, _ := json.Marshal(map[string]any{
+
+	// Durable record (best effort). A bad id or DB blip must not stop the live
+	// stream from closing — the result frame below is independent of this.
+	if id, err := machine.ParseUUID(done.TaskID); err != nil {
+		slog.Warn("guestctl: bad agent.done task id", "task", done.TaskID, "err", err)
+	} else {
+		usage, _ := json.Marshal(map[string]any{
+			"cost_usd":    done.CostUSD,
+			"num_turns":   done.NumTurns,
+			"duration_ms": done.DurationMS,
+		})
+		if err := m.q.FinishAgentTask(ctx, store.FinishAgentTaskParams{
+			ID:             id,
+			Status:         status,
+			AgentSessionID: done.SessionID,
+			Usage:          usage,
+			ResultSummary:  done.Summary,
+			Error:          done.Error,
+		}); err != nil {
+			slog.Error("guestctl: finish agent task", "task", done.TaskID, "err", err)
+		}
+	}
+
+	// Close the live stream with the single terminal result frame (always).
+	m.publishTaskResult(done, status)
+	slog.Info("guestctl: agent task done", "task", done.TaskID, "status", status)
+}
+
+// publishTaskResult emits the single terminal `result` frame for a finished run
+// onto the task's live stream (AT2). It is the only source of the result kind —
+// the guest deliberately does not relay the stream's result line — so a live
+// subscriber sees exactly one result and then the stream closes.
+func (m *Manager) publishTaskResult(done guestwire.AgentDonePayload, status string) {
+	if m.tasks == nil {
+		return
+	}
+	result := map[string]any{
+		"kind":        guestwire.AgentEventResult,
+		"status":      status,
+		"is_error":    !done.OK,
+		"text":        done.Summary,
 		"cost_usd":    done.CostUSD,
 		"num_turns":   done.NumTurns,
 		"duration_ms": done.DurationMS,
-	})
-	if err := m.q.FinishAgentTask(ctx, store.FinishAgentTaskParams{
-		ID:             id,
-		Status:         status,
-		AgentSessionID: done.SessionID,
-		Usage:          usage,
-		ResultSummary:  done.Summary,
-		Error:          done.Error,
-	}); err != nil {
-		slog.Error("guestctl: finish agent task", "task", done.TaskID, "err", err)
-		return
 	}
-	slog.Info("guestctl: agent task done", "task", done.TaskID, "status", status)
+	if done.Error != "" {
+		result["error"] = done.Error
+	}
+	m.tasks.Publish(done.TaskID, mustJSON(result), true)
 }
 
 // RunAgent dispatches a headless agent run (AT1) and returns once the guest acks

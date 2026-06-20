@@ -45,16 +45,37 @@ type agentResult struct {
 }
 
 // streamEvent is the subset of a Claude Code stream-json line we read. Lines are
-// one JSON object each: system/assistant/user events, then a final "result".
+// one JSON object each: a system/init event, assistant/user message events (whose
+// content blocks carry text + tool_use / tool_result), then a final "result".
 type streamEvent struct {
-	Type      string  `json:"type"`
-	Subtype   string  `json:"subtype"`
-	SessionID string  `json:"session_id"`
-	IsError   bool    `json:"is_error"`
-	Result    string  `json:"result"`
-	TotalCost float64 `json:"total_cost_usd"`
-	NumTurns  int     `json:"num_turns"`
-	Duration  int     `json:"duration_ms"`
+	Type      string      `json:"type"`
+	Subtype   string      `json:"subtype"`
+	SessionID string      `json:"session_id"`
+	IsError   bool        `json:"is_error"`
+	Result    string      `json:"result"`
+	TotalCost float64     `json:"total_cost_usd"`
+	NumTurns  int         `json:"num_turns"`
+	Duration  int         `json:"duration_ms"`
+	Message   *rawMessage `json:"message"`
+}
+
+// rawMessage is the assistant/user message envelope of a stream-json event; its
+// content is an array of typed blocks.
+type rawMessage struct {
+	Content []rawBlock `json:"content"`
+}
+
+// rawBlock is one content block of a message: text, a tool_use (assistant calling
+// a tool), or a tool_result (user channel returning a tool's output).
+type rawBlock struct {
+	Type      string          `json:"type"` // text | tool_use | tool_result
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`          // tool_use id
+	Name      string          `json:"name"`        // tool_use tool name
+	Input     json.RawMessage `json:"input"`       // tool_use input
+	ToolUseID string          `json:"tool_use_id"` // tool_result back-reference
+	Content   json.RawMessage `json:"content"`     // tool_result output (string or block array)
+	IsError   bool            `json:"is_error"`    // tool_result error flag
 }
 
 // runAgentTask runs the headless agent and reports the outcome (agent.done).
@@ -62,7 +83,11 @@ func (m *Manager) runAgentTask(p guestwire.AgentRunPayload) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentTaskTimeout)
 	defer cancel()
 
-	res, err := m.runHeadless(ctx, p.Provider, p.Prompt, p.Path)
+	emit := func(ev guestwire.AgentEventPayload) {
+		ev.TaskID = p.TaskID
+		m.emitAgentEvent(ev)
+	}
+	res, err := m.runHeadless(ctx, p.Provider, p.Prompt, p.Path, emit)
 	if err != nil {
 		slog.Warn("control: agent.run failed", "task", p.TaskID, "err", err)
 		m.reportAgentDone(guestwire.AgentDonePayload{TaskID: p.TaskID, OK: false, Error: sanitizeAgentErr(err.Error())})
@@ -87,8 +112,9 @@ func (m *Manager) runAgentTask(p guestwire.AgentRunPayload) {
 }
 
 // runHeadless resolves the provider's injected command + env, spawns the agent
-// in print mode in dir with the prompt on stdin, and parses its stream-json.
-func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string) (agentResult, error) {
+// in print mode in dir with the prompt on stdin, and parses its stream-json,
+// relaying each normalized step to emit as it arrives (AT2).
+func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string, emit func(guestwire.AgentEventPayload)) (agentResult, error) {
 	if m.sec == nil {
 		return agentResult{}, fmt.Errorf("no provider secrets injected")
 	}
@@ -122,7 +148,7 @@ func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string)
 	if err := cmd.Start(); err != nil {
 		return agentResult{}, err
 	}
-	res, sawResult, perr := parseStreamJSON(stdout)
+	res, sawResult, perr := parseStreamJSON(stdout, emit)
 	waitErr := cmd.Wait()
 
 	// A parsed result event is authoritative (it carries is_error), even if the
@@ -162,9 +188,11 @@ func headlessArgv(def guestwire.ProviderDef) ([]string, error) {
 }
 
 // parseStreamJSON reads a headless run's stream-json (one JSON object per line),
-// tracking the session id and capturing the final "result" event. It tolerates
-// non-JSON noise lines. sawResult is false when no result event appeared.
-func parseStreamJSON(r io.Reader) (res agentResult, sawResult bool, err error) {
+// tracking the session id, relaying each normalized assistant/tool step to emit
+// (AT2), and capturing the final "result" event. It tolerates non-JSON noise
+// lines. sawResult is false when no result event appeared. emit may be nil (AT1
+// callers that only want the final result).
+func parseStreamJSON(r io.Reader, emit func(guestwire.AgentEventPayload)) (res agentResult, sawResult bool, err error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // tool outputs can be large
 	for sc.Scan() {
@@ -187,9 +215,96 @@ func parseStreamJSON(r io.Reader) (res agentResult, sawResult bool, err error) {
 			res.CostUSD = ev.TotalCost
 			res.NumTurns = ev.NumTurns
 			res.DurationMS = ev.Duration
+			continue // the terminal result is reported via agent.done, not agent.event
+		}
+		if emit != nil && ev.Message != nil {
+			for _, ne := range normalizeBlocks(ev.Type, ev.Message.Content) {
+				emit(ne)
+			}
 		}
 	}
 	return res, sawResult, sc.Err()
+}
+
+// normalizeBlocks turns one message's content blocks into normalized agent
+// events (AT2). assistant messages yield assistant_text / tool_use; user messages
+// yield tool_result. Empty text blocks are skipped. Text fields are bounded.
+func normalizeBlocks(msgType string, blocks []rawBlock) []guestwire.AgentEventPayload {
+	var out []guestwire.AgentEventPayload
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if t := strings.TrimSpace(b.Text); t != "" {
+				out = append(out, guestwire.AgentEventPayload{
+					Kind: guestwire.AgentEventAssistantText,
+					Text: truncate(b.Text, guestwire.AgentEventTextCap),
+				})
+			}
+		case "tool_use":
+			out = append(out, guestwire.AgentEventPayload{
+				Kind:   guestwire.AgentEventToolUse,
+				Tool:   b.Name,
+				ToolID: b.ID,
+				Input:  boundedJSON(b.Input, guestwire.AgentEventToolCap),
+			})
+		case "tool_result":
+			out = append(out, guestwire.AgentEventPayload{
+				Kind:    guestwire.AgentEventToolResult,
+				ToolID:  b.ToolUseID,
+				Output:  truncate(toolResultText(b.Content), guestwire.AgentEventToolCap),
+				IsError: b.IsError,
+			})
+		}
+	}
+	return out
+}
+
+// toolResultText flattens a tool_result content value, which is either a JSON
+// string or an array of {type:"text",text:...} blocks, into plain text.
+func toolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []rawBlock
+	if json.Unmarshal(raw, &blocks) == nil {
+		var b strings.Builder
+		for _, blk := range blocks {
+			if blk.Type == "text" || blk.Text != "" {
+				b.WriteString(blk.Text)
+			}
+		}
+		return b.String()
+	}
+	return string(raw) // last resort: the raw JSON, still bounded by the caller
+}
+
+// boundedJSON returns raw if it fits the cap, else a small JSON placeholder so a
+// huge tool input never balloons a frame (and the truncation is never invalid
+// JSON the CP would choke on).
+func boundedJSON(raw json.RawMessage, limit int) json.RawMessage {
+	if len(raw) == 0 || len(raw) <= limit {
+		return raw
+	}
+	return json.RawMessage(`{"_truncated":true}`)
+}
+
+// emitAgentEvent relays one normalized event to the CP over the live channel
+// (AT2). Best-effort: a missing channel or write error drops the event — the SSE
+// client recovers the run's outcome from the authoritative agent.done.
+func (m *Manager) emitAgentEvent(ev guestwire.AgentEventPayload) {
+	c := m.currentConn()
+	if c == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.notify(ctx, guestwire.OpAgentEvent, ev); err != nil {
+		slog.Debug("control: emit agent.event failed", "task", ev.TaskID, "err", err)
+	}
 }
 
 // reportAgentDone notifies the CP of an agent run completion (agent.done).

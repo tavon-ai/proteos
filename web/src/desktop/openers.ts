@@ -81,6 +81,20 @@ export function openChanges(wm: WindowManagerContext, machineId: string, project
   });
 }
 
+// openTasks opens the headless task lane for a project (AT1/AT2): one window per
+// (machine, project), so reopening focuses the existing one. Ephemeral (not
+// persisted) — the task list + live event stream are fetched on open.
+export function openTasks(wm: WindowManagerContext, machineId: string, project: Project): void {
+  wm.open({
+    id: `tasks-${machineId}-${project.path}`,
+    kind: 'tasks',
+    title: `Tasks — ${projectLabel(project)}`,
+    machineId,
+    projectId: project.path,
+    dedupeKey: `${machineId}|${project.path}`,
+  });
+}
+
 export function openEditor(wm: WindowManagerContext, machineId: string, project: Project): void {
   wm.open({
     id: `editor-${machineId}-${project.path}`,

@@ -22,6 +22,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon/proteos/controlplane/internal/taskevents"
 	"github.com/tavon/proteos/controlplane/internal/testutil"
 )
 
@@ -150,7 +151,7 @@ func (d tcpDialer) DialGuest(ctx context.Context, _ string, _ uint32) (net.Conn,
 	return nd.DialContext(ctx, "tcp", d.addr)
 }
 
-func setupManager(t *testing.T) (*guestctl.Manager, *machine.Broker, *fakeGuest, store.Machine, *store.Queries) {
+func setupManager(t *testing.T) (*guestctl.Manager, *machine.Broker, *fakeGuest, store.Machine, *store.Queries, *taskevents.Hub) {
 	t.Helper()
 	_, q := testutil.Postgres(t)
 
@@ -197,12 +198,13 @@ func setupManager(t *testing.T) (*guestctl.Manager, *machine.Broker, *fakeGuest,
 	addr := strings.TrimPrefix(ts.URL, "http://")
 
 	broker := machine.NewBroker()
-	mgr := guestctl.New(tcpDialer{addr: addr}, broker, q, tokens, audit.NewRecorder(q), "github.com")
-	return mgr, broker, fg, mc, q
+	hub := taskevents.New(taskevents.DefaultBufferSize, taskevents.DefaultRetention)
+	mgr := guestctl.New(tcpDialer{addr: addr}, broker, q, tokens, audit.NewRecorder(q), hub, "github.com")
+	return mgr, broker, fg, mc, q, hub
 }
 
 func TestControlChannel_ConfigureCredentialClone(t *testing.T) {
-	mgr, broker, fg, mc, q := setupManager(t)
+	mgr, broker, fg, mc, q, _ := setupManager(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go mgr.Run(ctx)
@@ -280,7 +282,7 @@ func TestControlChannel_ConfigureCredentialClone(t *testing.T) {
 }
 
 func TestControlChannel_AgentDone(t *testing.T) {
-	mgr, broker, fg, mc, q := setupManager(t)
+	mgr, broker, fg, mc, q, _ := setupManager(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go mgr.Run(ctx)
@@ -325,6 +327,75 @@ func TestControlChannel_AgentDone(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("agent task never reached done")
+}
+
+func TestControlChannel_AgentEventFanOut(t *testing.T) {
+	mgr, broker, fg, mc, _, hub := setupManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	machineID := machine.UUIDString(mc.ID)
+	go func() {
+		for i := 0; i < 60; i++ {
+			if mgr.HasChannel(machineID) {
+				return
+			}
+			broker.Publish(machine.Update{Machine: mc})
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	waitChannel(t, mgr, machineID)
+
+	const taskID = "task-evt-1"
+	// The guest relays a normalized assistant_text event, then the run finishes.
+	fg.guestRequest(t, guestwire.OpAgentEvent, guestwire.AgentEventPayload{
+		TaskID: taskID, Kind: guestwire.AgentEventAssistantText, Text: "working on it",
+	})
+
+	// Subscribe and confirm the event reached the hub (snapshot of the ring).
+	var backlog []taskevents.Frame
+	for i := 0; i < 80; i++ {
+		var cancelSub func()
+		backlog, _, cancelSub, _ = hub.Subscribe(taskID, 0)
+		cancelSub()
+		if len(backlog) > 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(backlog) != 1 {
+		t.Fatalf("want 1 buffered event, got %d", len(backlog))
+	}
+	if !strings.Contains(string(backlog[0].Data), "assistant_text") || !strings.Contains(string(backlog[0].Data), "working on it") {
+		t.Fatalf("unexpected event payload: %s", backlog[0].Data)
+	}
+	// The task id is stripped from the per-frame payload (the stream is task-scoped).
+	if strings.Contains(string(backlog[0].Data), taskID) {
+		t.Errorf("event payload should not echo the task id: %s", backlog[0].Data)
+	}
+
+	// Completion publishes a terminal result frame that closes subscribers.
+	fg.guestRequest(t, guestwire.OpAgentDone, guestwire.AgentDonePayload{
+		TaskID: taskID, OK: true, Summary: "all set",
+	})
+	var terminal bool
+	for i := 0; i < 80; i++ {
+		var cancelSub func()
+		backlog, _, cancelSub, terminal = hub.Subscribe(taskID, 0)
+		cancelSub()
+		if terminal {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !terminal {
+		t.Fatal("stream never marked terminal after agent.done")
+	}
+	last := backlog[len(backlog)-1]
+	if !last.Terminal || !strings.Contains(string(last.Data), "\"kind\":\"result\"") {
+		t.Fatalf("final frame not a terminal result: %+v", last)
+	}
 }
 
 func waitChannel(t *testing.T, mgr *guestctl.Manager, machineID string) {

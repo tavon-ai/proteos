@@ -168,6 +168,13 @@ const (
 	OpAgentRun  = "agent.run"  // CP → guest (acked; completion via OpAgentDone)
 	OpAgentDone = "agent.done" // guest → CP (completion notification)
 
+	// AT2 live event stream. As a headless run produces stream-json, the guest
+	// normalizes each event and relays it as a one-way agent.event notification
+	// (guest → CP), which the CP fans out to the task SSE stream. The terminal
+	// "result" event is NOT sent here — it is derived from the authoritative
+	// agent.done so there is exactly one result per run.
+	OpAgentEvent = "agent.event" // guest → CP (one-way; live progress)
+
 	// Phase 9 (CP → guest). projects.list scans the workspace for git repos;
 	// kv.get/kv.set read and write the machine SQLite kv table (the desktop
 	// layout). All three act only on THIS machine's own disk — the authorization
@@ -313,6 +320,41 @@ type AgentDonePayload struct {
 	NumTurns   int     `json:"num_turns,omitempty"`
 	DurationMS int     `json:"duration_ms,omitempty"`
 	Error      string  `json:"error,omitempty"`
+}
+
+// AgentEvent kinds (the Kind field of an AgentEventPayload). These are the
+// normalized, CLI-agnostic event types the headless run streams — callers render
+// these directly and never parse raw provider JSON. The terminal "result" kind is
+// emitted by the CP from agent.done, not by the guest stream relay.
+const (
+	AgentEventAssistantText = "assistant_text" // a chunk of assistant prose
+	AgentEventToolUse       = "tool_use"       // the agent invoked a tool
+	AgentEventToolResult    = "tool_result"    // a tool returned its output
+	AgentEventResult        = "result"         // terminal: the run finished (CP-synthesized)
+)
+
+// agentEventTextCap / agentEventToolCap bound a single normalized event's text
+// fields so a chatty agent (huge tool output) cannot balloon a frame. The guest
+// truncates to these before sending; the CP stores them as-is.
+const (
+	AgentEventTextCap = 16 << 10 // 16 KiB of assistant text per event
+	AgentEventToolCap = 8 << 10  // 8 KiB of tool input/output per event
+)
+
+// AgentEventPayload is the body of a guest → CP agent.event notification (AT2): a
+// single normalized step of a headless run, correlated to its task by TaskID.
+// Only the fields relevant to Kind are populated. Payloads carry NO secrets — the
+// provider key lives only in the injected env, never in an event — and text
+// fields are bounded (AgentEventTextCap / AgentEventToolCap).
+type AgentEventPayload struct {
+	TaskID  string          `json:"task_id"`
+	Kind    string          `json:"kind"`
+	Text    string          `json:"text,omitempty"`     // assistant_text
+	Tool    string          `json:"tool,omitempty"`     // tool_use: tool name
+	ToolID  string          `json:"tool_id,omitempty"`  // tool_use/tool_result correlation id
+	Input   json.RawMessage `json:"input,omitempty"`    // tool_use: bounded tool input (raw JSON)
+	Output  string          `json:"output,omitempty"`   // tool_result: bounded textual output
+	IsError bool            `json:"is_error,omitempty"` // tool_result: the tool reported an error
 }
 
 // ValidCommitPath reports whether p is a safe repo-relative pathspec for a
