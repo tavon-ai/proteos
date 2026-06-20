@@ -745,6 +745,132 @@ body {
   font-size: 0.85rem;
 }
 
+/* ── AC1: personal access tokens panel ───────────────────────────────────── */
+.tokens-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: min(560px, 100%);
+  text-align: left;
+  margin-top: 1.5rem;
+}
+
+.tokens-panel h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+}
+
+.token-create-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.token-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.token-create-form .btn {
+  margin-top: 0;
+}
+
+/* The one-time plaintext banner: highlighted so the user notices to copy it. */
+.token-new-banner {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.token-new-warning {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+}
+
+.token-new-value {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.token-secret {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.token-new-banner .btn,
+.token-new-banner .btn-ghost {
+  margin-top: 0;
+}
+
+.token-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.token-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.token-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.token-name {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.token-prefix {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.token-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.token-row-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.token-row-actions .btn-ghost {
+  margin-top: 0;
+}
+
 /* ── Phase 7: repositories panel ─────────────────────────────────────────── */
 .repos-panel {
   background: var(--panel);

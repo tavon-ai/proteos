@@ -169,6 +169,29 @@ export interface Provider {
   secret_fields: SecretField[];
 }
 
+// AccessToken is one row of GET /api/tokens (AC1) — a personal access token the
+// user minted for the CLI. The secret is never returned here; only the non-secret
+// `prefix` (the token's leading characters) is shown so tokens are distinguishable.
+// Timestamps are RFC3339; expires_at/last_used_at are omitted when null.
+export interface AccessToken {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at?: string;
+  expires_at?: string;
+}
+
+// CreatedToken is the POST /api/tokens response — the ONLY time the plaintext
+// `token` is returned. It cannot be recovered later.
+export interface CreatedToken {
+  id: string;
+  name: string;
+  token: string;
+  prefix: string;
+  expires_at?: string;
+}
+
 // Repo is one row of GET /api/git/repos — a repository the user has granted the
 // GitHub App access to (Phase 7). pushed_at is RFC3339.
 export interface Repo {
@@ -455,6 +478,19 @@ export const api = {
     }),
   deleteProviderKey: (key: string) =>
     request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+
+  // Personal access tokens (AC1): the user mints/revokes CLI credentials here.
+  // createToken returns the plaintext exactly once (shown then discarded);
+  // listTokens never returns it. expiresInDays omitted / 0 ⇒ never expires.
+  listTokens: () => request<{ tokens: AccessToken[] }>('/api/tokens').then((r) => r.tokens),
+  createToken: (name: string, expiresInDays?: number) =>
+    request<CreatedToken>('/api/tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, expires_in_days: expiresInDays ?? 0 }),
+    }),
+  revokeToken: (id: string) =>
+    request<void>(`/api/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // Git operations (Phase 7). listRepos may throw ApiError 409 reconnect_github
   // when the GitHub grant is revoked; cloneRepo returns an op_id and the clone

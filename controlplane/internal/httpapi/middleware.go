@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tavon/proteos/controlplane/internal/auth"
@@ -33,6 +34,7 @@ type ctxKey int
 const (
 	userCtxKey ctxKey = iota
 	sessionIDCtxKey
+	tokenAuthCtxKey
 )
 
 // userFromContext returns the authenticated user attached by requireAuth.
@@ -49,10 +51,31 @@ func sessionIDFromContext(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
-// requireAuth rejects requests without a valid session cookie with 401 JSON,
-// otherwise attaches the user and session id to the request context.
+// requireAuth authenticates a request by either an Authorization: Bearer
+// personal access token (CLI / programmatic callers) or the browser session
+// cookie, and attaches the user to the request context. A Bearer token, when
+// present, takes precedence and is authoritative — an invalid one is rejected
+// rather than silently falling back to the cookie. Token-authenticated requests
+// are marked so csrfHeader can exempt them (a bearer token is not an ambient
+// browser credential, so the CSRF header is unnecessary).
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tok := bearerToken(r); tok != "" {
+			if s.PATs == nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			user, _, err := s.PATs.Authenticate(r.Context(), tok)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			ctx := context.WithValue(r.Context(), userCtxKey, user)
+			ctx = context.WithValue(ctx, tokenAuthCtxKey, true)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
 		cookie, err := r.Cookie(auth.SessionCookieName)
 		if err != nil || cookie.Value == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
@@ -69,15 +92,38 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// csrfHeader rejects state-changing requests lacking the X-Requested-By header.
+// csrfHeader rejects state-changing cookie-authenticated requests lacking the
+// X-Requested-By header. Bearer-token requests are exempt: the token is not sent
+// automatically by a browser, so cross-site forgery does not apply.
 func (s *Server) csrfHeader(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isTokenAuth(r.Context()) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Header.Get(csrfHeaderName) != csrfHeaderValue {
 			writeError(w, http.StatusForbidden, "csrf_required")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// bearerToken extracts the credential from an "Authorization: Bearer <token>"
+// header, or "" if absent/malformed.
+func bearerToken(r *http.Request) string {
+	const scheme = "bearer "
+	h := r.Header.Get("Authorization")
+	if len(h) > len(scheme) && strings.EqualFold(h[:len(scheme)], scheme) {
+		return strings.TrimSpace(h[len(scheme):])
+	}
+	return ""
+}
+
+// isTokenAuth reports whether the request was authenticated by a bearer token.
+func isTokenAuth(ctx context.Context) bool {
+	v, _ := ctx.Value(tokenAuthCtxKey).(bool)
+	return v
 }
 
 // statusRecorder captures the response status for logging.

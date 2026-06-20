@@ -101,6 +101,44 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 	return i, err
 }
 
+const createPAT = `-- name: CreatePAT :one
+INSERT INTO personal_access_tokens (user_id, name, token_hash, prefix, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, user_id, name, token_hash, prefix, created_at, expires_at, last_used_at, revoked_at
+`
+
+type CreatePATParams struct {
+	UserID    pgtype.UUID        `json:"user_id"`
+	Name      string             `json:"name"`
+	TokenHash []byte             `json:"token_hash"`
+	Prefix    string             `json:"prefix"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+// Mint a personal access token (AC1). expires_at NULL means it never expires.
+func (q *Queries) CreatePAT(ctx context.Context, arg CreatePATParams) (PersonalAccessToken, error) {
+	row := q.db.QueryRow(ctx, createPAT,
+		arg.UserID,
+		arg.Name,
+		arg.TokenHash,
+		arg.Prefix,
+		arg.ExpiresAt,
+	)
+	var i PersonalAccessToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.TokenHash,
+		&i.Prefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (user_id, token_hash, expires_at)
 VALUES ($1, $2, $3)
@@ -298,6 +336,47 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+	)
+	return i, err
+}
+
+const getPATByTokenHash = `-- name: GetPATByTokenHash :one
+SELECT
+    personal_access_tokens.id, personal_access_tokens.user_id, personal_access_tokens.name, personal_access_tokens.token_hash, personal_access_tokens.prefix, personal_access_tokens.created_at, personal_access_tokens.expires_at, personal_access_tokens.last_used_at, personal_access_tokens.revoked_at,
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at
+FROM personal_access_tokens
+JOIN users ON users.id = personal_access_tokens.user_id
+WHERE personal_access_tokens.token_hash = $1
+  AND personal_access_tokens.revoked_at IS NULL
+  AND (personal_access_tokens.expires_at IS NULL OR personal_access_tokens.expires_at > now())
+`
+
+type GetPATByTokenHashRow struct {
+	PersonalAccessToken PersonalAccessToken `json:"personal_access_token"`
+	User                User                `json:"user"`
+}
+
+// Look up a live (unexpired, unrevoked) token by its hash, with the owning user.
+func (q *Queries) GetPATByTokenHash(ctx context.Context, tokenHash []byte) (GetPATByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getPATByTokenHash, tokenHash)
+	var i GetPATByTokenHashRow
+	err := row.Scan(
+		&i.PersonalAccessToken.ID,
+		&i.PersonalAccessToken.UserID,
+		&i.PersonalAccessToken.Name,
+		&i.PersonalAccessToken.TokenHash,
+		&i.PersonalAccessToken.Prefix,
+		&i.PersonalAccessToken.CreatedAt,
+		&i.PersonalAccessToken.ExpiresAt,
+		&i.PersonalAccessToken.LastUsedAt,
+		&i.PersonalAccessToken.RevokedAt,
+		&i.User.ID,
+		&i.User.GithubUserID,
+		&i.User.Login,
+		&i.User.Email,
+		&i.User.AvatarUrl,
+		&i.User.Status,
+		&i.User.CreatedAt,
 	)
 	return i, err
 }
@@ -771,6 +850,44 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 	return items, nil
 }
 
+const listPATsByUserID = `-- name: ListPATsByUserID :many
+SELECT id, user_id, name, token_hash, prefix, created_at, expires_at, last_used_at, revoked_at FROM personal_access_tokens
+WHERE user_id = $1 AND revoked_at IS NULL
+ORDER BY created_at DESC
+`
+
+// A user's tokens, newest first. Never selects token_hash for display callers, but
+// the row carries it; the API layer projects only non-secret fields.
+func (q *Queries) ListPATsByUserID(ctx context.Context, userID pgtype.UUID) ([]PersonalAccessToken, error) {
+	rows, err := q.db.Query(ctx, listPATsByUserID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PersonalAccessToken{}
+	for rows.Next() {
+		var i PersonalAccessToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.TokenHash,
+			&i.Prefix,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProviders = `-- name: ListProviders :many
 SELECT key, display_name, launch_command, enabled, created_at, secret_fields, setup_command FROM providers ORDER BY key
 `
@@ -965,6 +1082,26 @@ func (q *Queries) RestartAgentTask(ctx context.Context, arg RestartAgentTaskPara
 	return err
 }
 
+const revokePAT = `-- name: RevokePAT :one
+UPDATE personal_access_tokens SET revoked_at = now()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+RETURNING id
+`
+
+type RevokePATParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+// Revoke a live token owned by the user, returning its id. No row (ErrNoRows)
+// means it was unknown, not the caller's, or already revoked — a no-op/404.
+func (q *Queries) RevokePAT(ctx context.Context, arg RevokePATParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, revokePAT, arg.ID, arg.UserID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const revokeSession = `-- name: RevokeSession :one
 UPDATE sessions SET revoked_at = now()
 WHERE token_hash = $1 AND revoked_at IS NULL
@@ -1107,6 +1244,16 @@ UPDATE providers SET enabled = (key = ANY($1::text[]))
 // actually baked into the rootfs.
 func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error {
 	_, err := q.db.Exec(ctx, setProvidersEnabled, keys)
+	return err
+}
+
+const touchPATLastUsed = `-- name: TouchPATLastUsed :exec
+UPDATE personal_access_tokens SET last_used_at = now() WHERE id = $1
+`
+
+// Best-effort last-used bump on authentication (throttled by the caller).
+func (q *Queries) TouchPATLastUsed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchPATLastUsed, id)
 	return err
 }
 

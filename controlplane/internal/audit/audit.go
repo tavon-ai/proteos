@@ -22,6 +22,11 @@ const (
 	ActionSecretRead   = "secret.read"   // the injector read a secret for injection
 	ActionAgentLaunch  = "agent.launch"  // a user launched an agent session
 
+	// AC1 personal access tokens. Target is the token id; metadata carries name +
+	// prefix — NEVER the secret.
+	ActionTokenCreate = "token.create" // a user minted a personal access token
+	ActionTokenRevoke = "token.revoke" // a user revoked a personal access token
+
 	// AT1/AT3/AT4 headless task lane. Target is the project name (run/message) or task id (cancel).
 	ActionAgentTaskRun     = "agent.task.run"     // a user dispatched a headless agent task
 	ActionAgentTaskCancel  = "agent.task.cancel"  // a user canceled a running task

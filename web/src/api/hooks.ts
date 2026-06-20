@@ -157,6 +157,42 @@ export function useProviderMutations() {
   return { setKey, deleteKey };
 }
 
+// tokensKey is the query cache key for the user's personal access tokens.
+const tokensKey = ['tokens'] as const;
+
+// useTokens loads the user's personal access tokens (AC1). The secret is never
+// part of this data — only metadata + the non-secret prefix.
+export function useTokens() {
+  return useQuery({
+    queryKey: tokensKey,
+    queryFn: api.listTokens,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useTokenMutations exposes create/revoke of personal access tokens. Both
+// invalidate the tokens query so the listing re-renders from the server. create
+// returns the one-time plaintext to its caller (via the mutation result) so the
+// UI can show it once; it is never cached.
+export function useTokenMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: tokensKey });
+
+  const create = useMutation({
+    mutationFn: ({ name, expiresInDays }: { name: string; expiresInDays?: number }) =>
+      api.createToken(name, expiresInDays),
+    onSuccess: invalidate,
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeToken(id),
+    onSuccess: invalidate,
+  });
+  return { create, revoke };
+}
+
 // reposKey is the query cache key for the user's accessible repos.
 const reposKey = ['repos'] as const;
 

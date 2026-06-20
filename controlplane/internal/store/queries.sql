@@ -285,3 +285,38 @@ SET status = 'running',
     error = '',
     ended_at = NULL
 WHERE id = $1;
+
+-- name: CreatePAT :one
+-- Mint a personal access token (AC1). expires_at NULL means it never expires.
+INSERT INTO personal_access_tokens (user_id, name, token_hash, prefix, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: GetPATByTokenHash :one
+-- Look up a live (unexpired, unrevoked) token by its hash, with the owning user.
+SELECT
+    sqlc.embed(personal_access_tokens),
+    sqlc.embed(users)
+FROM personal_access_tokens
+JOIN users ON users.id = personal_access_tokens.user_id
+WHERE personal_access_tokens.token_hash = $1
+  AND personal_access_tokens.revoked_at IS NULL
+  AND (personal_access_tokens.expires_at IS NULL OR personal_access_tokens.expires_at > now());
+
+-- name: ListPATsByUserID :many
+-- A user's tokens, newest first. Never selects token_hash for display callers, but
+-- the row carries it; the API layer projects only non-secret fields.
+SELECT * FROM personal_access_tokens
+WHERE user_id = $1 AND revoked_at IS NULL
+ORDER BY created_at DESC;
+
+-- name: TouchPATLastUsed :exec
+-- Best-effort last-used bump on authentication (throttled by the caller).
+UPDATE personal_access_tokens SET last_used_at = now() WHERE id = $1;
+
+-- name: RevokePAT :one
+-- Revoke a live token owned by the user, returning its id. No row (ErrNoRows)
+-- means it was unknown, not the caller's, or already revoked — a no-op/404.
+UPDATE personal_access_tokens SET revoked_at = now()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+RETURNING id;

@@ -23,3 +23,6 @@ deploy/app-stack/openbao-init.json
 # Web build output / deps
 web/node_modules/
 web/dist/
+
+# CLI build output
+cli/dist/

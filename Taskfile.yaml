@@ -40,11 +40,12 @@ tasks:
       - task: cp:ci
       - task: na:ci
       - task: ga:ci
+      - task: cli:ci
       - task: web:ci
 
   build:
     desc: Build all deliverables
-    deps: [cp:build, na:build, ga:build, web:build]
+    deps: [cp:build, na:build, ga:build, cli:build, web:build]
 
   test:
     desc: Run all Go + web tests (race detector on)
@@ -52,6 +53,7 @@ tasks:
       - task: cp:test
       - task: na:test
       - task: ga:test
+      - task: cli:test
       - task: web:typecheck
 
   vet:
@@ -61,18 +63,19 @@ tasks:
       - task: na:vet
       - task: na:vet:fc
       - task: ga:vet
+      - task: cli:vet
 
   fmt:
     desc: Format all code (Go + web)
     cmds:
-      - gofmt -w controlplane nodeagent guestagent
+      - gofmt -w controlplane nodeagent guestagent cli
       - task: web:fmt
 
   fmt:check:
     desc: Fail if any Go or web file is not formatter-clean
     cmds:
       - |
-        unformatted=$(gofmt -l controlplane nodeagent guestagent)
+        unformatted=$(gofmt -l controlplane nodeagent guestagent cli)
         if [ -n "$unformatted" ]; then echo "needs gofmt:"; echo "$unformatted"; exit 1; fi
       - task: web:fmt:check
     silent: true
@@ -90,6 +93,8 @@ tasks:
       - go -C controlplane clean
       - go -C nodeagent clean
       - go -C guestagent clean
+      - go -C cli clean
+      - rm -rf cli/dist
 
   setup:
     desc: Install local tooling (sqlc) and web deps
@@ -158,6 +163,56 @@ tasks:
       PROTEOS_HOST_NAME: "local"
     cmds:
       - go run ./cmd/controlplane -migrate
+
+  # ---------------------------------------------------------------------------
+  # CLI (Go) — ./cli — the `proteos` command-line client
+  # ---------------------------------------------------------------------------
+
+  cli:ci:
+    desc: "CLI: vet, build, test (mirrors CI)"
+    cmds:
+      - task: cli:vet
+      - task: cli:build
+      - task: cli:test
+
+  cli:build:
+    desc: "CLI: build the proteos binary into cli/dist"
+    dir: cli
+    vars:
+      VERSION: '{{.VERSION | default "dev"}}'
+    cmds:
+      - go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos ./cmd/proteos
+
+  cli:vet:
+    desc: "CLI: go vet"
+    dir: cli
+    cmds:
+      - go vet ./...
+
+  cli:test:
+    desc: "CLI: tests (race)"
+    dir: cli
+    cmds:
+      - go test -race ./...
+
+  cli:install:
+    desc: "CLI: go install the proteos binary into GOBIN"
+    dir: cli
+    vars:
+      VERSION: '{{.VERSION | default "dev"}}'
+    cmds:
+      - go install -ldflags "-X main.version={{.VERSION}}" ./cmd/proteos
+
+  cli:cross:
+    desc: "CLI: cross-compile release binaries (darwin/linux, amd64/arm64) into cli/dist"
+    dir: cli
+    vars:
+      VERSION: '{{.VERSION | default "dev"}}'
+    cmds:
+      - GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-darwin-amd64 ./cmd/proteos
+      - GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-darwin-arm64 ./cmd/proteos
+      - GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-linux-amd64 ./cmd/proteos
+      - GOOS=linux GOARCH=arm64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-linux-arm64 ./cmd/proteos
 
   # ---------------------------------------------------------------------------
   # Node-agent (Go) — ./nodeagent

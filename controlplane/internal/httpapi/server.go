@@ -16,12 +16,18 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	"github.com/tavon/proteos/controlplane/internal/taskevents"
+	"github.com/tavon/proteos/controlplane/internal/token"
 )
 
 // Server holds the dependencies shared by all handlers.
 type Server struct {
 	Sessions *session.Manager
 	Auth     *auth.Handler
+
+	// PATs validates Authorization: Bearer personal access tokens (AC1) and backs
+	// the /api/tokens management routes. When nil, bearer auth is rejected and the
+	// token routes are disabled — only the browser session cookie works.
+	PATs *token.Manager
 
 	// Machines drives the machine lifecycle (Phase 2). Required by /api/me and
 	// the /api/machine routes.
@@ -103,6 +109,16 @@ func (s *Server) Handler() http.Handler {
 
 	// Current user (authenticated).
 	mux.Handle("GET /api/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
+
+	// Personal access tokens (AC1): the user manages their own CLI credentials.
+	// Reads are auth-only; create/revoke mutate so they also require the CSRF
+	// header (cookie-authed browser settings page) — bearer-authed callers are
+	// exempt inside csrfHeader. Enabled only when the token manager is wired.
+	if s.PATs != nil {
+		mux.Handle("GET /api/tokens", s.requireAuth(http.HandlerFunc(s.handleListTokens)))
+		mux.Handle("POST /api/tokens", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateToken))))
+		mux.Handle("DELETE /api/tokens/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleRevokeToken))))
+	}
 
 	// Machine routes. Multi-machine: a RESTful collection (/api/machines) plus
 	// per-machine ops keyed by {id}. Reads are auth-only; mutations also require

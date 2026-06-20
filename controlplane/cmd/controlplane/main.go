@@ -26,6 +26,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/session"
 	"github.com/tavon/proteos/controlplane/internal/store"
 	"github.com/tavon/proteos/controlplane/internal/taskevents"
+	"github.com/tavon/proteos/controlplane/internal/token"
 )
 
 func main() {
@@ -113,6 +114,9 @@ func run(migrate, migrateOnly bool) error {
 	slog.Info("secrets backend", "backend", cfg.SecretsBackend)
 
 	sessions := session.NewManager(q, cfg.SessionTTL)
+	// AC1: personal access tokens back bearer auth for the CLI and the
+	// /api/tokens management routes (browser settings page mints them).
+	patManager := token.NewManager(q)
 
 	// Phase 2: seed the single host this control plane manages, wire the
 	// node-agent client, and build the machine lifecycle (service + poller +
@@ -264,6 +268,7 @@ func run(migrate, migrateOnly bool) error {
 
 	srv := &httpapi.Server{
 		Sessions:   sessions,
+		PATs:       patManager,
 		Auth:       authHandler,
 		Machines:   machineSvc,
 		Broker:     broker,
