@@ -216,15 +216,25 @@ func TestGitClone_202(t *testing.T) {
 	}
 }
 
-func TestGitClone_404NotListable(t *testing.T) {
+// A repo outside the user's granted set is still clonable: the URL is
+// host-pinned and the credential helper only supplies the user's own token, so
+// the gate would only block harmless public clones. The dispatched URL must
+// still target s.GitHost with no embedded token.
+func TestGitClone_202NotListable(t *testing.T) {
 	fx := setupGit(t, false, string(machine.StateRunning))
-	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"someone/private"}`, true)
+	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"someone/public"}`, true)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
 	}
-	if fx.ch.cloneCalled {
-		t.Fatal("clone must not be dispatched for a non-listable repo")
+	if !fx.ch.cloneCalled {
+		t.Fatal("clone was not dispatched for an ad-hoc repo")
+	}
+	if fx.ch.lastURL != "https://github.com/someone/public.git" {
+		t.Fatalf("clone url = %q (token must not be embedded)", fx.ch.lastURL)
+	}
+	if fx.ch.lastDest != "/workspace/public" {
+		t.Fatalf("clone dest = %q", fx.ch.lastDest)
 	}
 }
 

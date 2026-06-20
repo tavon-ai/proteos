@@ -1,6 +1,7 @@
-[ ] users would like to run apps in their mmicroVMs and have them exposed via url.
+[x] users would like to run apps in their mmicroVMs and have them exposed via url.
 [x] machine templates: go development, node dev, python, Go + Python + Node + build essentials... etc.
 [x] machine details
 [x] bug: bottom bar shows 3 terminals. We have 1 terminal in each machine, 3 machine running. It would be good to have them there, but when you click on the terminal in machine 2, go to machine 2.
 [ ] update README.md
-[ ] The bottom of terminal window cuts a bit on the terminal text. We should have a little bit more of room.
+[x] The bottom of terminal window cuts a bit on the terminal text. We should have a little bit more of room.
+[x] When a terminal is maximized, there's no way to un-maximize it.

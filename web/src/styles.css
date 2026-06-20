@@ -1219,6 +1219,19 @@ body {
   border: 1px solid var(--border);
   border-radius: 9px;
 }
+.clone-url {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.clone-url-input {
+  flex: 1;
+  min-width: 0;
+}
+.clone-url-error {
+  margin: 0 0 0.5rem;
+  color: var(--danger, #f85149);
+}
 .clone-list {
   list-style: none;
   margin: 0;
@@ -1226,10 +1239,15 @@ body {
 }
 .clone-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0;
   border-bottom: 1px solid #21262d;
+}
+.clone-hint {
+  flex-basis: 100%;
+  margin: 0;
 }
 .clone-row-action {
   margin-left: auto;

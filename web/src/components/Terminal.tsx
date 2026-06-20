@@ -54,8 +54,10 @@ export function Terminal({
 
     let socket: TerminalSocket | null = null;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
 
     const fitAndResize = () => {
+      if (disposed) return;
       try {
         fit.fit();
       } catch {
@@ -72,6 +74,17 @@ export function Terminal({
     } catch {
       /* ignore */
     }
+
+    // The first fit can run before the font metrics finalize: the cell height is
+    // measured a hair too small, fit computes one row too many, and that extra
+    // row renders taller than the surface and is clipped by the window frame's
+    // `overflow: hidden`. The ResizeObserver only reacts to size changes, so a
+    // metrics reflow leaves the bottom row cut until a manual resize. Refit once
+    // the next frame is laid out and again when fonts are ready to settle this.
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(fitAndResize);
+    });
+    void document.fonts?.ready.then(fitAndResize);
 
     const url = provider
       ? agentURL(machineID, provider, session, cwd)
@@ -114,6 +127,8 @@ export function Terminal({
     observer.observe(container);
 
     return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
       observer.disconnect();
       if (resizeTimer) clearTimeout(resizeTimer);
       container.removeEventListener('mouseup', copySelection);

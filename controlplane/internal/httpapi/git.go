@@ -92,9 +92,13 @@ type cloneResponse struct {
 	OpID string `json:"op_id"`
 }
 
-// handleGitClone validates the target against the user's listable repo set and
-// dispatches an async clone into the machine's workspace. Completion arrives as a
-// machine_events row (type git.clone) over the SSE stream.
+// handleGitClone dispatches an async clone into the machine's workspace.
+// Completion arrives as a machine_events row (type git.clone) over the SSE
+// stream. The target need not appear in the user's granted set: the URL is
+// host-pinned to s.GitHost and fullNameRe rejects traversal, so the worst case
+// is cloning a public repo. The credential helper only ever supplies the user's
+// own token, so a private repo they have not granted simply fails at the git
+// layer (reported as a failed git.clone event) rather than leaking access.
 func (s *Server) handleGitClone(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
@@ -123,22 +127,6 @@ func (s *Server) handleGitClone(w http.ResponseWriter, r *http.Request) {
 	machineID := machine.UUIDString(mc.ID)
 	if machine.State(mc.State) != machine.StateRunning || !s.GitChannel.HasChannel(machineID) {
 		writeError(w, http.StatusConflict, "machine_not_running")
-		return
-	}
-
-	// Validate the target appears in the user's listable (granted) set — the
-	// control plane is not a clone-anything proxy.
-	repos, err := s.listRepos(r.Context(), uid)
-	if errors.Is(err, github.ErrReconnectGitHub) {
-		writeError(w, http.StatusConflict, "reconnect_github")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "github_unavailable")
-		return
-	}
-	if !containsRepo(repos, req.FullName) {
-		writeError(w, http.StatusNotFound, "repo_not_listable")
 		return
 	}
 
@@ -184,15 +172,6 @@ func (s *Server) grantsURL() string {
 		return ""
 	}
 	return fmt.Sprintf("https://github.com/apps/%s/installations/new", s.GitHubAppSlug)
-}
-
-func containsRepo(repos []github.Repo, fullName string) bool {
-	for _, r := range repos {
-		if r.FullName == fullName {
-			return true
-		}
-	}
-	return false
 }
 
 // repoDir is the workspace directory name for a repo full-name (the part after
