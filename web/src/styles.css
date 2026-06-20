@@ -460,6 +460,23 @@ body {
   padding: 0.6rem;
 }
 
+.changes-push-ok,
+.changes-push-err {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.changes-push-ok {
+  color: #1a7f37;
+}
+
+.changes-push-err {
+  color: #cf222e;
+}
+
 .branch-form {
   flex: 0 0 auto;
   display: flex;

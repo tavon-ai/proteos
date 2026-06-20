@@ -205,6 +205,7 @@ function WindowBody({
           machineId={win.machineId ?? null}
           machineState={machineState}
           projectPath={win.projectId}
+          events={events}
         />
       );
     case 'logs':

@@ -329,6 +329,66 @@ func TestGitCommit_NothingToCommit(t *testing.T) {
 	}
 }
 
+// initBareRemote creates a bare repo to serve as a local push target (a file
+// path remote needs no credential helper).
+func initBareRemote(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "remote.git")
+	cmd := exec.Command("git", "init", "--bare", "-q", dir)
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("init bare: %v\n%s", err, out)
+	}
+	return dir
+}
+
+func remoteHasBranch(remote, branch string) bool {
+	cmd := exec.Command("git", "--git-dir="+remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return cmd.Run() == nil
+}
+
+func TestPushBranch(t *testing.T) {
+	work := t.TempDir()
+	m := newCommitManager(t, work)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+	remote := initBareRemote(t)
+	gitRunner(t, repo)("remote", "add", "origin", remote)
+
+	// First push with -u: the bare remote gains the branch.
+	out, err := m.pushBranch(context.Background(), repo, "main", true)
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	if !remoteHasBranch(remote, "main") {
+		t.Errorf("remote should have main after push")
+	}
+
+	// A second push (no -u) of new work still lands.
+	if err := os.WriteFile(filepath.Join(repo, "two.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, cerr := m.gitCommit(context.Background(), repo, "second", nil); cerr != nil {
+		t.Fatalf("commit: %+v", cerr)
+	}
+	if out, err := m.pushBranch(context.Background(), repo, "main", false); err != nil {
+		t.Fatalf("second push: %v\n%s", err, out)
+	}
+}
+
+func TestPushBranch_Failure(t *testing.T) {
+	work := t.TempDir()
+	m := newCommitManager(t, work)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+	gitRunner(t, repo)("remote", "add", "origin", initBareRemote(t))
+
+	// Pushing a branch that does not exist locally fails (no such ref).
+	if _, err := m.pushBranch(context.Background(), repo, "ghost", false); err == nil {
+		t.Errorf("pushing a nonexistent branch should fail")
+	}
+}
+
 func TestGitStatus_NotARepo(t *testing.T) {
 	work := t.TempDir()
 	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)

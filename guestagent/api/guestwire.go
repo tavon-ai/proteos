@@ -155,6 +155,12 @@ const (
 	OpGitCloneDone  = "git.clone.done" // guest → CP (completion notification)
 	OpGitCredential = "git.credential" // guest → CP
 
+	// GR4 push. git.push is acked immediately; the push runs asynchronously
+	// (network-bound) and its outcome arrives later as a guest → CP git.push.done
+	// frame, mirroring the git.clone / git.clone.done pair.
+	OpGitPush     = "git.push"      // CP → guest (acked; completion via OpGitPushDone)
+	OpGitPushDone = "git.push.done" // guest → CP (completion notification)
+
 	// Phase 9 (CP → guest). projects.list scans the workspace for git repos;
 	// kv.get/kv.set read and write the machine SQLite kv table (the desktop
 	// layout). All three act only on THIS machine's own disk — the authorization
@@ -255,6 +261,25 @@ type GitCommitPayload struct {
 type GitCommitResponse struct {
 	Sha     string `json:"sha"`
 	Subject string `json:"subject"`
+}
+
+// GitPushPayload is the req payload of git.push (GR4). Path is the absolute repo
+// path (CP-resolved). Branch is the local branch to push to origin; SetUpstream
+// adds -u (first push of a new branch). OpID correlates the later git.push.done.
+type GitPushPayload struct {
+	Path        string `json:"path"`
+	Branch      string `json:"branch"`
+	SetUpstream bool   `json:"set_upstream"`
+	OpID        string `json:"op_id"`
+}
+
+// GitPushDonePayload is the body of a guest → CP git.push.done req: the outcome
+// of an earlier git.push, correlated by OpID. Detail is a sanitized failure
+// message (never a token) — e.g. a non-fast-forward rejection.
+type GitPushDonePayload struct {
+	OpID   string `json:"op_id"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // ValidCommitPath reports whether p is a safe repo-relative pathspec for a

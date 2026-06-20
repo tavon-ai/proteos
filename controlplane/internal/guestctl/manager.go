@@ -246,6 +246,9 @@ func (m *Manager) makeHandler(machineID, userID string) reqHandler {
 		case guestwire.OpGitCloneDone:
 			m.handleCloneDone(ctx, machineID, payload)
 			return nil, nil
+		case guestwire.OpGitPushDone:
+			m.handlePushDone(ctx, machineID, payload)
+			return nil, nil
 		default:
 			slog.Warn("guestctl: unknown op from guest", "machine", machineID, "op", op)
 			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "unknown op"}
@@ -325,6 +328,59 @@ func (m *Manager) handleCloneDone(ctx context.Context, machineID string, payload
 	}
 	m.broker.Publish(machine.Update{Machine: mc, Event: ev})
 	slog.Info("guestctl: clone done", "machine", machineID, "op_id", done.OpID, "ok", done.OK)
+}
+
+// handlePushDone records a push completion as a machine_events row (type
+// git.push) and publishes it so the SSE stream delivers it to the dashboard.
+// Mirrors handleCloneDone.
+func (m *Manager) handlePushDone(ctx context.Context, machineID string, payload json.RawMessage) {
+	var done guestwire.GitPushDonePayload
+	if err := json.Unmarshal(payload, &done); err != nil {
+		slog.Warn("guestctl: bad push.done payload", "machine", machineID, "err", err)
+		return
+	}
+	mid, err := machine.ParseUUID(machineID)
+	if err != nil {
+		return
+	}
+	body, _ := json.Marshal(map[string]any{
+		"op_id":  done.OpID,
+		"ok":     done.OK,
+		"detail": done.Detail,
+	})
+	ev, err := m.q.InsertMachineEvent(ctx, store.InsertMachineEventParams{
+		MachineID: mid,
+		Type:      audit.ActionGitPush, // "git.push"
+		Actor:     "system:guestctl",
+		Payload:   body,
+	})
+	if err != nil {
+		slog.Error("guestctl: record push event", "machine", machineID, "err", err)
+		return
+	}
+	mc, err := m.q.GetMachineByID(ctx, mid)
+	if err != nil {
+		slog.Error("guestctl: load machine for push event", "machine", machineID, "err", err)
+		return
+	}
+	m.broker.Publish(machine.Update{Machine: mc, Event: ev})
+	slog.Info("guestctl: push done", "machine", machineID, "op_id", done.OpID, "ok", done.OK)
+}
+
+// Push sends a git.push over the machine's channel and returns once the guest
+// acks (the push runs asynchronously; completion arrives as a git.push.done →
+// machine_events row). ErrNoChannel if the machine has no live channel.
+func (m *Manager) Push(ctx context.Context, machineID, repoPath, branch string, setUpstream bool, opID string) error {
+	c := m.getConn(machineID)
+	if c == nil {
+		return ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	_, err := c.request(rctx, guestwire.OpGitPush, guestwire.GitPushPayload{
+		Path: repoPath, Branch: branch, SetUpstream: setUpstream, OpID: opID,
+	})
+	return err
 }
 
 // Clone sends a git.clone over the machine's channel and returns once the guest

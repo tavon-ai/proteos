@@ -284,6 +284,16 @@ export function useGitCommit(machineId: string | null, project: string) {
   });
 }
 
+// useGitPush dispatches a push of a branch to origin (GR4). It returns the op_id
+// immediately (202); completion arrives as a git.push machine event over SSE, so
+// there is nothing to invalidate here — the caller correlates by op_id.
+export function useGitPush(machineId: string | null, project: string) {
+  return useMutation({
+    mutationFn: ({ branch, setUpstream }: { branch: string; setUpstream: boolean }) =>
+      api.gitPush(machineId as string, project, branch, setUpstream),
+  });
+}
+
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
 export function reconnectRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';

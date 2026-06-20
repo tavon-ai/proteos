@@ -124,9 +124,9 @@ export interface CreateMachineInput {
 
 export interface MachineEvent {
   id: number;
-  // "git.clone" is a Phase 7 info-style event carrying a clone completion
-  // (payload: { op_id, ok, detail }).
-  type: 'transition' | 'error' | 'info' | 'git.clone';
+  // "git.clone"/"git.push" are info-style events carrying an async git op
+  // completion (payload: { op_id, ok, detail }).
+  type: 'transition' | 'error' | 'info' | 'git.clone' | 'git.push';
   from_state: string | null;
   to_state: string | null;
   actor: string;
@@ -254,6 +254,12 @@ export interface GitBranchResponse {
 export interface GitCommitResponse {
   sha: string;
   subject: string;
+}
+
+// PushStarted is the 202 body of POST /api/machines/{id}/git/push (GR4): the op
+// id to correlate with the later git.push machine event over SSE.
+export interface PushStarted {
+  op_id: string;
 }
 
 // DesktopLayout is the opaque serialized window layout stored in machine SQLite
@@ -429,6 +435,16 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project, message, paths: paths && paths.length ? paths : undefined }),
+    }),
+
+  // Push a branch to origin (GR4). Returns 202 + op_id immediately; completion
+  // arrives as a git.push machine event over SSE. 400 invalid_branch_name /
+  // bad_request; 409 machine_not_running — all ApiError.
+  gitPush: (machineID: string, project: string, branch: string, setUpstream: boolean) =>
+    request<PushStarted>(`/api/machines/${encodeURIComponent(machineID)}/git/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, branch, set_upstream: setUpstream }),
     }),
 };
 

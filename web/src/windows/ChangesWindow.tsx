@@ -1,6 +1,12 @@
-import { useState } from 'react';
-import { ApiError, type GitFileStatus, type MachineState } from '../api/client';
-import { useGitBranch, useGitCommit, useGitDiff, useGitStatus } from '../api/hooks';
+import { useEffect, useState } from 'react';
+import { ApiError, type GitFileStatus, type MachineEvent, type MachineState } from '../api/client';
+import { useGitBranch, useGitCommit, useGitDiff, useGitPush, useGitStatus } from '../api/hooks';
+
+interface PushState {
+  opId: string;
+  status: 'pushing' | 'done' | 'failed';
+  detail?: string;
+}
 
 // ChangesWindow is the review surface (GR1): it shows what a coding agent (or the
 // user) changed in a project's working tree before anything is committed — the
@@ -11,12 +17,14 @@ export function ChangesWindow({
   machineId,
   machineState,
   projectPath,
+  events,
 }: {
   machineId: string | null;
   machineState: MachineState;
   // Absolute /workspace path; the project name (the API parameter) is its
   // basename, since clones land at /workspace/<name>.
   projectPath?: string;
+  events: MachineEvent[];
 }) {
   const running = machineState === 'running';
   const project = basename(projectPath);
@@ -24,9 +32,40 @@ export function ChangesWindow({
   const [showBranch, setShowBranch] = useState(false);
   // Files the user has unchecked for the next commit (default: all selected).
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
+  // The in-flight/last push, tracked by op_id against the git.push SSE event.
+  const [push, setPush] = useState<PushState | null>(null);
 
   const status = useGitStatus(machineId, project, running);
   const diff = useGitDiff(machineId, project, staged, running);
+  const pushMut = useGitPush(machineId, project);
+  const branch = status.data?.branch;
+
+  // Resolve an in-flight push when its git.push completion event arrives.
+  useEffect(() => {
+    if (!push || push.status !== 'pushing') return;
+    for (const ev of events) {
+      if (ev.type !== 'git.push') continue;
+      const payload = ev.payload as Record<string, unknown>;
+      if (String(payload.op_id ?? '') !== push.opId) continue;
+      const ok = Boolean(payload.ok);
+      setPush({
+        opId: push.opId,
+        status: ok ? 'done' : 'failed',
+        detail: String(payload.detail ?? ''),
+      });
+    }
+  }, [events, push]);
+
+  const startPush = () => {
+    if (!branch) return;
+    pushMut.mutate(
+      { branch, setUpstream: true },
+      {
+        onSuccess: (res) => setPush({ opId: res.op_id, status: 'pushing' }),
+        onError: () => setPush({ opId: '', status: 'failed', detail: 'dispatch failed' }),
+      },
+    );
+  };
 
   const toggle = (path: string) =>
     setDeselected((prev) => {
@@ -88,12 +127,31 @@ export function ChangesWindow({
         </button>
         <button
           className="btn-ghost"
+          onClick={startPush}
+          disabled={!branch || pushMut.isPending || push?.status === 'pushing'}
+          title={branch ? `Push ${branch} to origin` : 'No branch'}
+        >
+          {push?.status === 'pushing' || pushMut.isPending ? 'Pushing…' : 'Push'}
+        </button>
+        <button
+          className="btn-ghost"
           onClick={refresh}
           disabled={status.isFetching || diff.isFetching}
         >
           {status.isFetching || diff.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
+
+      {push && push.status !== 'pushing' && (
+        <p
+          className={push.status === 'done' ? 'muted changes-push-ok' : 'muted changes-push-err'}
+          role="status"
+        >
+          {push.status === 'done'
+            ? `Pushed ${branch ?? ''} to origin ✓`
+            : `Push failed${push.detail ? `: ${push.detail}` : ''}`}
+        </p>
+      )}
 
       {showBranch && (
         <NewBranchForm

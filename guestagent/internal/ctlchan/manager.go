@@ -233,6 +233,20 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		}
 		return mustJSON(resp), nil
 
+	case guestwire.OpGitPush:
+		var p guestwire.GitPushPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Path == "" || p.Branch == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "bad payload"}
+		}
+		if err := m.validateRepoPath(p.Path); err != nil {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "invalid repo"}
+		}
+		if !guestwire.ValidBranchName(p.Branch) {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeInvalidBranch}
+		}
+		go m.runPush(p)
+		return nil, nil // immediate ack; completion arrives as git.push.done
+
 	default:
 		slog.Warn("control: unknown op", "op", op)
 		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "unknown op: " + op}

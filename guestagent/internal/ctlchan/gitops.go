@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -25,6 +26,7 @@ const (
 	diffTimeout   = 30 * time.Second
 	branchTimeout = 30 * time.Second
 	commitTimeout = 30 * time.Second
+	pushTimeout   = 5 * time.Minute
 	// maxDiffBytes caps a single git.diff payload so an enormous (e.g. generated
 	// or binary-churn) diff cannot blow the control-channel frame or the browser.
 	// Hitting the cap sets Truncated; the UI then tells the user to inspect the
@@ -210,6 +212,47 @@ func (m *Manager) gitCommit(ctx context.Context, repoPath, message string, paths
 	resp.Sha = m.git(ctx, repoPath, "rev-parse", "--short", "HEAD")
 	resp.Subject = m.git(ctx, repoPath, "log", "-1", "--format=%s")
 	return resp, nil
+}
+
+// runPush pushes a branch to origin and reports the outcome over the channel
+// (GR4). The credential helper supplies the token at fetch time (the remote URL
+// holds none), so authentication is automatic. Mirrors runClone.
+func (m *Manager) runPush(p guestwire.GitPushPayload) {
+	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+	defer cancel()
+	out, err := m.pushBranch(ctx, p.Path, p.Branch, p.SetUpstream)
+	if err != nil {
+		m.reportPush(p.OpID, false, sanitizeGitErr(out, err))
+		return
+	}
+	m.reportPush(p.OpID, true, "")
+}
+
+// pushBranch runs `git push [-u] origin <branch>` as the unprivileged owner and
+// returns its combined output and error. The validated branch cannot be read as
+// an option (it follows the `origin` positional).
+func (m *Manager) pushBranch(ctx context.Context, repoPath, branch string, setUpstream bool) ([]byte, error) {
+	args := []string{"push"}
+	if setUpstream {
+		args = append(args, "-u")
+	}
+	args = append(args, "origin", branch)
+	return m.runGit(ctx, repoPath, args...)
+}
+
+// reportPush notifies the CP of a push completion (git.push.done). Mirrors
+// reportClone.
+func (m *Manager) reportPush(opID string, ok bool, detail string) {
+	c := m.currentConn()
+	if c == nil {
+		slog.Warn("control: cannot report push — no channel", "op_id", opID)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.notify(ctx, guestwire.OpGitPushDone, guestwire.GitPushDonePayload{OpID: opID, OK: ok, Detail: detail}); err != nil {
+		slog.Warn("control: report push failed", "op_id", opID, "err", err)
+	}
 }
 
 // branchExists reports whether refs/heads/<name> already exists.

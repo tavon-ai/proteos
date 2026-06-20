@@ -152,6 +152,8 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/machines/{id}/git/branch", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitBranch))))
 		// Commit mutates too (GR3) — the explicit, CSRF-guarded review gate.
 		mux.Handle("POST /api/machines/{id}/git/commit", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitCommit))))
+		// Push is async (GR4): 202 + op_id, completion over SSE. CSRF-guarded.
+		mux.Handle("POST /api/machines/{id}/git/push", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitPush))))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check

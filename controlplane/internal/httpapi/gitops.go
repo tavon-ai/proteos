@@ -27,6 +27,7 @@ type GitWorktree interface {
 	GitDiff(ctx context.Context, machineID, repoPath string, staged bool) (guestwire.GitDiffResponse, error)
 	GitBranch(ctx context.Context, machineID, repoPath, name string, checkout bool, from string) (guestwire.GitBranchResponse, error)
 	GitCommit(ctx context.Context, machineID, repoPath, message string, paths []string) (guestwire.GitCommitResponse, error)
+	Push(ctx context.Context, machineID, repoPath, branch string, setUpstream bool, opID string) error
 }
 
 // handleGitStatus returns the working-tree change set for a project in the
@@ -219,6 +220,68 @@ func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"sha": res.Sha, "paths": len(req.Paths)},
 	})
 	writeJSON(w, http.StatusOK, res)
+}
+
+// pushRequest is the body of POST /api/machines/{id}/git/push (GR4).
+type pushRequest struct {
+	Project     string `json:"project"`
+	Branch      string `json:"branch"`
+	SetUpstream bool   `json:"set_upstream"`
+}
+
+// pushResponse is the 202 body of POST /api/machines/{id}/git/push: the op id the
+// caller correlates to the later git.push SSE event.
+type pushResponse struct {
+	OpID string `json:"op_id"`
+}
+
+// handleGitPush dispatches an async push of a branch to origin (GR4). It returns
+// 202 + op_id immediately; completion arrives as a machine_events row (type
+// git.push) over the SSE stream. Auth to GitHub is supplied by the in-VM
+// credential helper, so no token travels in this request.
+func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req pushRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" || req.Branch == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !guestwire.ValidBranchName(req.Branch) {
+		writeError(w, http.StatusBadRequest, "invalid_branch_name")
+		return
+	}
+	machineID, ok := s.resolveWorktreeMachine(w, r, user)
+	if !ok {
+		return
+	}
+	repoPath, code := s.resolveProject(r.Context(), machineID, req.Project)
+	if code != "" {
+		writeError(w, projectErrorStatus(code), code)
+		return
+	}
+
+	opID := newOpID()
+	if err := s.GitWorktree.Push(r.Context(), machineID, repoPath, req.Branch, req.SetUpstream, opID); err != nil {
+		if errors.Is(err, guestctl.ErrNoChannel) {
+			writeError(w, http.StatusConflict, "machine_not_running")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "push_dispatch_failed")
+		return
+	}
+
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID:   uuidString(user.ID),
+		Actor:    audit.UserActor(uuidString(user.ID)),
+		Action:   audit.ActionGitPush,
+		Target:   req.Project,
+		Metadata: map[string]any{"op_id": opID, "branch": req.Branch},
+	})
+	writeJSON(w, http.StatusAccepted, pushResponse{OpID: opID})
 }
 
 // gitWorktreeContext resolves the common prelude for a worktree-review request:

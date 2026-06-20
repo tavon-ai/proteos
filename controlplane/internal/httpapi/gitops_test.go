@@ -35,6 +35,7 @@ type fakeWorktree struct {
 	diffErr   error
 	branchErr error
 	commitErr error
+	pushErr   error
 
 	lastStatusPath string
 	lastDiffPath   string
@@ -46,6 +47,10 @@ type fakeWorktree struct {
 	lastCommitPath string
 	lastMessage    string
 	lastPaths      []string
+	lastPushPath   string
+	lastPushBranch string
+	lastSetUp      bool
+	lastPushOpID   string
 }
 
 func (f *fakeWorktree) HasChannel(string) bool { return !f.noChan }
@@ -87,6 +92,11 @@ func (f *fakeWorktree) GitCommit(_ context.Context, _, repoPath, message string,
 		return guestwire.GitCommitResponse{}, f.commitErr
 	}
 	return f.commit, nil
+}
+
+func (f *fakeWorktree) Push(_ context.Context, _, repoPath, branch string, setUpstream bool, opID string) error {
+	f.lastPushPath, f.lastPushBranch, f.lastSetUp, f.lastPushOpID = repoPath, branch, setUpstream, opID
+	return f.pushErr
 }
 
 type wtFixture struct {
@@ -488,4 +498,66 @@ func TestGitCommit_409NotRunning(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", resp.StatusCode)
 	}
+}
+
+func TestGitPush_202(t *testing.T) {
+	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
+		`{"project":"alpha","branch":"feature/x","set_upstream":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	var body pushBody
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.OpID == "" {
+		t.Fatal("missing op_id")
+	}
+	if ch.lastPushBranch != "feature/x" || !ch.lastSetUp || ch.lastPushPath != "/workspace/alpha" {
+		t.Fatalf("guest call = branch %q setUpstream %v path %q", ch.lastPushBranch, ch.lastSetUp, ch.lastPushPath)
+	}
+	if ch.lastPushOpID != body.OpID {
+		t.Fatalf("op_id mismatch: dispatched %q, returned %q", ch.lastPushOpID, body.OpID)
+	}
+}
+
+func TestGitPush_400InvalidBranch(t *testing.T) {
+	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
+		`{"project":"alpha","branch":"-bad"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if ch.lastPushBranch != "" {
+		t.Errorf("invalid branch should not be dispatched")
+	}
+}
+
+func TestGitPush_RequiresCSRF(t *testing.T) {
+	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
+		`{"project":"alpha","branch":"main"}`, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF header)", resp.StatusCode)
+	}
+}
+
+func TestGitPush_409NotRunning(t *testing.T) {
+	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
+	fx := setupWorktree(t, string(machine.StateStopped), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
+		`{"project":"alpha","branch":"main"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+}
+
+type pushBody struct {
+	OpID string `json:"op_id"`
 }
