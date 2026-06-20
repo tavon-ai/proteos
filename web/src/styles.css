@@ -510,6 +510,11 @@ body {
   font-size: 0.85rem;
 }
 
+.changes-select {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 .changes-code {
   flex: 0 0 auto;
   width: 1.4rem;
@@ -559,6 +564,28 @@ body {
   line-height: 1.45;
   white-space: pre;
   tab-size: 2;
+}
+
+.commit-form {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.commit-message-input {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+  font-size: 0.85rem;
+}
+
+.commit-error {
+  flex: 1 0 100%;
+  margin: 0;
+  color: #cf222e;
 }
 
 /* --- Phase 5: providers panel + agent launch ------------------------------- */

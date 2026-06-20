@@ -428,6 +428,30 @@ func (m *Manager) GitBranch(ctx context.Context, machineID, repoPath, name strin
 	return resp, nil
 }
 
+// GitCommit stages the requested paths (or all changes) and commits them in a
+// project over the channel (GR3). On failure the error is a *ControlError whose
+// Code the HTTP layer maps (empty_message, nothing_to_commit, git_failed).
+// ErrNoChannel if the machine has no live channel.
+func (m *Manager) GitCommit(ctx context.Context, machineID, repoPath, message string, paths []string) (guestwire.GitCommitResponse, error) {
+	c := m.getConn(machineID)
+	if c == nil {
+		return guestwire.GitCommitResponse{}, ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	raw, err := c.request(rctx, guestwire.OpGitCommit, guestwire.GitCommitPayload{
+		Path: repoPath, Message: message, Paths: paths,
+	})
+	if err != nil {
+		return guestwire.GitCommitResponse{}, err
+	}
+	var resp guestwire.GitCommitResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return guestwire.GitCommitResponse{}, err
+	}
+	return resp, nil
+}
+
 // KVGet reads a value from the machine's SQLite kv table over the channel
 // (Phase 9 decision #6). A nil return with nil error means the key is unset.
 // ErrNoChannel if the machine has no live channel.

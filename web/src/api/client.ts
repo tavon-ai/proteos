@@ -249,6 +249,13 @@ export interface GitBranchResponse {
   branch: string;
 }
 
+// GitCommitResponse is POST /api/machines/{id}/git/commit (GR3): the new HEAD
+// short sha and its subject line.
+export interface GitCommitResponse {
+  sha: string;
+  subject: string;
+}
+
 // DesktopLayout is the opaque serialized window layout stored in machine SQLite
 // (Phase 9 decision #6). The control plane relays it verbatim; only the desktop
 // understands its shape. null ⇒ no layout saved yet.
@@ -412,6 +419,16 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project, name, checkout, from: from || undefined }),
+    }),
+
+  // Stage (the given paths, or all changes) and commit them in a project (GR3).
+  // 400 empty_message / bad_request; 409 nothing_to_commit / machine_not_running;
+  // 422 commit_failed — all ApiError. Omit paths to commit everything.
+  gitCommit: (machineID: string, project: string, message: string, paths?: string[]) =>
+    request<GitCommitResponse>(`/api/machines/${encodeURIComponent(machineID)}/git/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, message, paths: paths && paths.length ? paths : undefined }),
     }),
 };
 

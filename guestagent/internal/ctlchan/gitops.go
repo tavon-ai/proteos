@@ -2,6 +2,7 @@ package ctlchan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,7 @@ const (
 	statusTimeout = 15 * time.Second
 	diffTimeout   = 30 * time.Second
 	branchTimeout = 30 * time.Second
+	commitTimeout = 30 * time.Second
 	// maxDiffBytes caps a single git.diff payload so an enormous (e.g. generated
 	// or binary-churn) diff cannot blow the control-channel frame or the browser.
 	// Hitting the cap sets Truncated; the UI then tells the user to inspect the
@@ -142,6 +144,71 @@ func (m *Manager) gitBranch(ctx context.Context, repoPath, name string, checkout
 	}
 
 	resp.Branch = m.git(ctx, repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	return resp, nil
+}
+
+// gitCommit stages the requested paths (or all changes when paths is empty) and
+// commits them with the identity git.configure wrote to ~/.gitconfig (GR3). It
+// returns a typed control error so the CP maps empty-message / nothing-to-commit
+// to distinct statuses. Runs as the unprivileged owner.
+func (m *Manager) gitCommit(ctx context.Context, repoPath, message string, paths []string) (guestwire.GitCommitResponse, *guestwire.ControlErrorPayload) {
+	ctx, cancel := context.WithTimeout(ctx, commitTimeout)
+	defer cancel()
+
+	var resp guestwire.GitCommitResponse
+	if err := m.validateRepoPath(repoPath); err != nil {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "invalid repo"}
+	}
+	if strings.TrimSpace(message) == "" {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeEmptyMessage}
+	}
+	for _, p := range paths {
+		if !guestwire.ValidCommitPath(p) {
+			return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "bad path"}
+		}
+	}
+
+	// Stage: all changes, or just the named paths. The "--" separator means the
+	// validated paths cannot be read as options.
+	if len(paths) == 0 {
+		if out, err := m.runGit(ctx, repoPath, "add", "-A"); err != nil {
+			return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: sanitizeGitErr(out, err)}
+		}
+	} else {
+		args := append([]string{"add", "--"}, paths...)
+		if out, err := m.runGit(ctx, repoPath, args...); err != nil {
+			return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: sanitizeGitErr(out, err)}
+		}
+	}
+
+	// Nothing staged ⇒ nothing to commit. `diff --cached --quiet` exits 0 when
+	// there is no staged change, 1 when there is, >1 on error.
+	diffArgs := []string{"diff", "--cached", "--quiet"}
+	if len(paths) > 0 {
+		diffArgs = append(append(diffArgs, "--"), paths...)
+	}
+	if _, err := m.runGit(ctx, repoPath, diffArgs...); err == nil {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeNothingToCommit}
+	} else {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 1 {
+			return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "status check failed"}
+		}
+	}
+
+	// Commit. Force signing off — the microVM has no signing key, and an inherited
+	// commit.gpgsign would otherwise fail the commit. The configured user.name/
+	// user.email (from git.configure) authors it.
+	commitArgs := []string{"-c", "commit.gpgsign=false", "commit", "-m", message}
+	if len(paths) > 0 {
+		commitArgs = append(append(commitArgs, "--"), paths...)
+	}
+	if out, err := m.runGit(ctx, repoPath, commitArgs...); err != nil {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: sanitizeGitErr(out, err)}
+	}
+
+	resp.Sha = m.git(ctx, repoPath, "rev-parse", "--short", "HEAD")
+	resp.Subject = m.git(ctx, repoPath, "log", "-1", "--format=%s")
 	return resp, nil
 }
 

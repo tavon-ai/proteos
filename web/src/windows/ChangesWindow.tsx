@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ApiError, type GitFileStatus, type MachineState } from '../api/client';
-import { useGitBranch, useGitDiff, useGitStatus } from '../api/hooks';
+import { useGitBranch, useGitCommit, useGitDiff, useGitStatus } from '../api/hooks';
 
 // ChangesWindow is the review surface (GR1): it shows what a coding agent (or the
 // user) changed in a project's working tree before anything is committed — the
@@ -22,9 +22,19 @@ export function ChangesWindow({
   const project = basename(projectPath);
   const [staged, setStaged] = useState(false);
   const [showBranch, setShowBranch] = useState(false);
+  // Files the user has unchecked for the next commit (default: all selected).
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
 
   const status = useGitStatus(machineId, project, running);
   const diff = useGitDiff(machineId, project, staged, running);
+
+  const toggle = (path: string) =>
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
 
   const refresh = () => {
     status.refetch();
@@ -47,6 +57,7 @@ export function ChangesWindow({
   }
 
   const files = status.data?.files ?? [];
+  const selectedPaths = files.filter((f) => !deselected.has(f.path)).map((f) => f.path);
 
   return (
     <div className="changes-window">
@@ -100,6 +111,13 @@ export function ChangesWindow({
         <ul className="changes-files">
           {files.map((f) => (
             <li key={f.path} className="changes-file">
+              <input
+                type="checkbox"
+                className="changes-select"
+                checked={!deselected.has(f.path)}
+                onChange={() => toggle(f.path)}
+                aria-label={`Include ${f.path} in commit`}
+              />
               <span className={`changes-code changes-code-${codeClass(f)}`} title={statusTitle(f)}>
                 {codeBadge(f)}
               </span>
@@ -127,8 +145,91 @@ export function ChangesWindow({
           <p className="muted">{staged ? 'Nothing staged.' : 'No working-tree diff.'}</p>
         )}
       </div>
+
+      {files.length > 0 && (
+        <CommitForm
+          machineId={machineId}
+          project={project}
+          selectedPaths={selectedPaths}
+          allSelected={selectedPaths.length === files.length}
+          onCommitted={() => setDeselected(new Set())}
+        />
+      )}
     </div>
   );
+}
+
+// CommitForm commits the selected changes (GR3) — the human review gate. It
+// sends the explicit path list for a partial commit, or omits it (commit all)
+// when every file is selected. On success the mutation invalidates status/diff/
+// projects so the tree shows clean.
+function CommitForm({
+  machineId,
+  project,
+  selectedPaths,
+  allSelected,
+  onCommitted,
+}: {
+  machineId: string | null;
+  project: string;
+  selectedPaths: string[];
+  allSelected: boolean;
+  onCommitted: () => void;
+}) {
+  const [message, setMessage] = useState('');
+  const commit = useGitCommit(machineId, project);
+
+  const submit = () => {
+    const msg = message.trim();
+    if (!msg || selectedPaths.length === 0) return;
+    commit.mutate(
+      { message: msg, paths: allSelected ? undefined : selectedPaths },
+      {
+        onSuccess: () => {
+          setMessage('');
+          onCommitted();
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="commit-form">
+      <input
+        type="text"
+        className="commit-message-input"
+        placeholder="Commit message"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit();
+        }}
+      />
+      <button
+        className="btn-primary"
+        disabled={!message.trim() || selectedPaths.length === 0 || commit.isPending}
+        onClick={submit}
+      >
+        {commit.isPending ? 'Committing…' : `Commit ${selectedPaths.length}`}
+      </button>
+      {commit.error && <p className="muted commit-error">{commitErrorMessage(commit.error)}</p>}
+    </div>
+  );
+}
+
+// commitErrorMessage turns a commit failure into a short message.
+function commitErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'empty_message':
+        return 'Enter a commit message.';
+      case 'nothing_to_commit':
+        return 'Nothing selected to commit.';
+      case 'machine_not_running':
+        return 'Machine is not running.';
+    }
+  }
+  return 'Could not commit.';
 }
 
 // NewBranchForm creates (and optionally switches to) a branch in the project

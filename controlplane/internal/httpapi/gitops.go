@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
 
@@ -25,6 +26,7 @@ type GitWorktree interface {
 	GitStatus(ctx context.Context, machineID, repoPath string) (guestwire.GitStatusResponse, error)
 	GitDiff(ctx context.Context, machineID, repoPath string, staged bool) (guestwire.GitDiffResponse, error)
 	GitBranch(ctx context.Context, machineID, repoPath, name string, checkout bool, from string) (guestwire.GitBranchResponse, error)
+	GitCommit(ctx context.Context, machineID, repoPath, message string, paths []string) (guestwire.GitCommitResponse, error)
 }
 
 // handleGitStatus returns the working-tree change set for a project in the
@@ -146,6 +148,75 @@ func (s *Server) handleGitBranch(w http.ResponseWriter, r *http.Request) {
 		Action:   audit.ActionGitBranch,
 		Target:   req.Project,
 		Metadata: map[string]any{"name": req.Name, "checkout": req.Checkout},
+	})
+	writeJSON(w, http.StatusOK, res)
+}
+
+// commitRequest is the body of POST /api/machines/{id}/git/commit (GR3).
+type commitRequest struct {
+	Project string   `json:"project"`
+	Message string   `json:"message"`
+	Paths   []string `json:"paths"`
+}
+
+// handleGitCommit stages the requested paths (or all changes) and commits them
+// (GR3). This is the human review gate: there is no path that commits on the
+// agent's behalf — it only fires from this explicit, CSRF-guarded request.
+func (s *Server) handleGitCommit(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req commitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		writeError(w, http.StatusBadRequest, "empty_message")
+		return
+	}
+	machineID, ok := s.resolveWorktreeMachine(w, r, user)
+	if !ok {
+		return
+	}
+	repoPath, code := s.resolveProject(r.Context(), machineID, req.Project)
+	if code != "" {
+		writeError(w, projectErrorStatus(code), code)
+		return
+	}
+
+	res, err := s.GitWorktree.GitCommit(r.Context(), machineID, repoPath, req.Message, req.Paths)
+	if err != nil {
+		if errors.Is(err, guestctl.ErrNoChannel) {
+			writeError(w, http.StatusConflict, "machine_not_running")
+			return
+		}
+		var ce *guestctl.ControlError
+		if errors.As(err, &ce) {
+			switch ce.Code {
+			case guestwire.ErrCodeEmptyMessage:
+				writeError(w, http.StatusBadRequest, "empty_message")
+				return
+			case guestwire.ErrCodeNothingToCommit:
+				writeError(w, http.StatusConflict, "nothing_to_commit")
+				return
+			case guestwire.ErrCodeGitFailed:
+				writeError(w, http.StatusUnprocessableEntity, "commit_failed")
+				return
+			}
+		}
+		writeError(w, http.StatusBadGateway, "guest_unreachable")
+		return
+	}
+
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID:   uuidString(user.ID),
+		Actor:    audit.UserActor(uuidString(user.ID)),
+		Action:   audit.ActionGitCommit,
+		Target:   req.Project,
+		Metadata: map[string]any{"sha": res.Sha, "paths": len(req.Paths)},
 	})
 	writeJSON(w, http.StatusOK, res)
 }

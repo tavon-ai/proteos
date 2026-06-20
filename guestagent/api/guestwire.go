@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -173,6 +174,12 @@ const (
 	// GR2 (CP → guest). git.branch creates (and optionally checks out) a branch
 	// in a listable project. Same identity/containment rules as GR1.
 	OpGitBranch = "git.branch" // CP → guest (resp: GitBranchResponse)
+
+	// GR3 (CP → guest). git.commit stages the requested paths (or all changes)
+	// and commits them with the identity git.configure wrote to ~/.gitconfig. The
+	// agent never commits on its own — this verb only fires from an explicit,
+	// CSRF-guarded user request (the human review gate).
+	OpGitCommit = "git.commit" // CP → guest (resp: GitCommitResponse)
 )
 
 // GitFileStatus is one changed path in a git.status response. Index and Worktree
@@ -231,6 +238,39 @@ type GitBranchPayload struct {
 // the operation (the new branch when Checkout was set, else unchanged).
 type GitBranchResponse struct {
 	Branch string `json:"branch"`
+}
+
+// GitCommitPayload is the req payload of git.commit (GR3). Path is the absolute
+// repo path (CP-resolved). Message is the commit message. Paths, when non-empty,
+// limits the commit to those repo-relative paths (a partial commit, leaving the
+// rest of the working tree as-is); empty Paths commits all changes.
+type GitCommitPayload struct {
+	Path    string   `json:"path"`
+	Message string   `json:"message"`
+	Paths   []string `json:"paths,omitempty"`
+}
+
+// GitCommitResponse is the resp payload of git.commit: the new HEAD short sha and
+// its subject line.
+type GitCommitResponse struct {
+	Sha     string `json:"sha"`
+	Subject string `json:"subject"`
+}
+
+// ValidCommitPath reports whether p is a safe repo-relative pathspec for a
+// commit: non-empty, not absolute, with no ".." segment that could escape the
+// worktree, and no NUL/control characters. (git itself also rejects pathspecs
+// outside the repo, but the CP validates first.)
+func ValidCommitPath(p string) bool {
+	if p == "" || len(p) > 4096 || strings.HasPrefix(p, "/") {
+		return false
+	}
+	for _, r := range p {
+		if r == 0 || r < ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return !slices.Contains(strings.Split(p, "/"), "..")
 }
 
 // branchNameMaxLen bounds a branch name; git itself has no hard cap but a sane
@@ -350,8 +390,16 @@ const (
 	// validates first, so this is a defence-in-depth guard.
 	ErrCodeInvalidBranch = "invalid_branch"
 	// ErrCodeGitFailed: a git command failed for another reason (e.g. a bad start
-	// point) — a 4xx the CP reports as branch_failed.
+	// point) — a 4xx the CP reports as branch_failed/commit_failed.
 	ErrCodeGitFailed = "git_failed"
+
+	// GR3 git.commit outcomes.
+	// ErrCodeEmptyMessage: the commit message was empty (400). The CP validates
+	// first; this is a defence-in-depth guard.
+	ErrCodeEmptyMessage = "empty_message"
+	// ErrCodeNothingToCommit: nothing was staged to commit (409) — an empty
+	// selection or an already-clean tree.
+	ErrCodeNothingToCommit = "nothing_to_commit"
 )
 
 // ControlFrame is the envelope for every control-channel message. ID pairs a

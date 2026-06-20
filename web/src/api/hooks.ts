@@ -267,6 +267,23 @@ export function useGitBranch(machineId: string | null, project: string) {
   });
 }
 
+// useGitCommit stages and commits changes in a project (GR3). On success it
+// invalidates the project's status/diff (the tree goes clean) and the projects
+// list (its last-commit updates).
+export function useGitCommit(machineId: string | null, project: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ message, paths }: { message: string; paths?: string[] }) =>
+      api.gitCommit(machineId as string, project, message, paths),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: gitStatusKey(machineId, project) });
+      qc.invalidateQueries({ queryKey: gitDiffKey(machineId, project, false) });
+      qc.invalidateQueries({ queryKey: gitDiffKey(machineId, project, true) });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+}
+
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
 export function reconnectRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';

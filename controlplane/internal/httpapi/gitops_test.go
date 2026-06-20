@@ -30,9 +30,11 @@ type fakeWorktree struct {
 	status    guestwire.GitStatusResponse
 	diff      guestwire.GitDiffResponse
 	branch    guestwire.GitBranchResponse
+	commit    guestwire.GitCommitResponse
 	statusErr error
 	diffErr   error
 	branchErr error
+	commitErr error
 
 	lastStatusPath string
 	lastDiffPath   string
@@ -41,6 +43,9 @@ type fakeWorktree struct {
 	lastBranchName string
 	lastCheckout   bool
 	lastFrom       string
+	lastCommitPath string
+	lastMessage    string
+	lastPaths      []string
 }
 
 func (f *fakeWorktree) HasChannel(string) bool { return !f.noChan }
@@ -74,6 +79,14 @@ func (f *fakeWorktree) GitBranch(_ context.Context, _, repoPath, name string, ch
 		return guestwire.GitBranchResponse{}, f.branchErr
 	}
 	return f.branch, nil
+}
+
+func (f *fakeWorktree) GitCommit(_ context.Context, _, repoPath, message string, paths []string) (guestwire.GitCommitResponse, error) {
+	f.lastCommitPath, f.lastMessage, f.lastPaths = repoPath, message, paths
+	if f.commitErr != nil {
+		return guestwire.GitCommitResponse{}, f.commitErr
+	}
+	return f.commit, nil
 }
 
 type wtFixture struct {
@@ -377,6 +390,100 @@ func TestGitBranch_409NotRunning(t *testing.T) {
 	fx := setupWorktree(t, string(machine.StateStopped), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
 		`{"project":"alpha","name":"feature/x","checkout":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+}
+
+func alphaCommitWorktree(commit guestwire.GitCommitResponse, commitErr error) *fakeWorktree {
+	return &fakeWorktree{
+		projects:  []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}},
+		commit:    commit,
+		commitErr: commitErr,
+	}
+}
+
+func TestGitCommit_200All(t *testing.T) {
+	ch := alphaCommitWorktree(guestwire.GitCommitResponse{Sha: "abc1234", Subject: "my commit"}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
+		`{"project":"alpha","message":"my commit"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body guestwire.GitCommitResponse
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Sha != "abc1234" || body.Subject != "my commit" {
+		t.Fatalf("unexpected commit body: %+v", body)
+	}
+	if ch.lastMessage != "my commit" || ch.lastCommitPath != "/workspace/alpha" || len(ch.lastPaths) != 0 {
+		t.Fatalf("guest call = msg %q path %q paths %v", ch.lastMessage, ch.lastCommitPath, ch.lastPaths)
+	}
+}
+
+func TestGitCommit_200Partial(t *testing.T) {
+	ch := alphaCommitWorktree(guestwire.GitCommitResponse{Sha: "def5678", Subject: "add a"}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
+		`{"project":"alpha","message":"add a","paths":["a.txt"]}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(ch.lastPaths) != 1 || ch.lastPaths[0] != "a.txt" {
+		t.Fatalf("paths forwarded = %v, want [a.txt]", ch.lastPaths)
+	}
+}
+
+func TestGitCommit_400EmptyMessage(t *testing.T) {
+	ch := alphaCommitWorktree(guestwire.GitCommitResponse{}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
+		`{"project":"alpha","message":"   "}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "empty_message" {
+		t.Fatalf("error = %q, want empty_message", code)
+	}
+	if ch.lastMessage != "" {
+		t.Errorf("empty message should not reach the guest")
+	}
+}
+
+func TestGitCommit_409NothingToCommit(t *testing.T) {
+	ch := alphaCommitWorktree(guestwire.GitCommitResponse{}, &guestctl.ControlError{Code: guestwire.ErrCodeNothingToCommit})
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
+		`{"project":"alpha","message":"noop"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "nothing_to_commit" {
+		t.Fatalf("error = %q, want nothing_to_commit", code)
+	}
+}
+
+func TestGitCommit_RequiresCSRF(t *testing.T) {
+	ch := alphaCommitWorktree(guestwire.GitCommitResponse{Sha: "x"}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
+		`{"project":"alpha","message":"m"}`, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF header)", resp.StatusCode)
+	}
+}
+
+func TestGitCommit_409NotRunning(t *testing.T) {
+	ch := alphaCommitWorktree(guestwire.GitCommitResponse{}, nil)
+	fx := setupWorktree(t, string(machine.StateStopped), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
+		`{"project":"alpha","message":"m"}`, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", resp.StatusCode)

@@ -238,6 +238,97 @@ func TestGitBranch_From(t *testing.T) {
 	}
 }
 
+// newCommitManager builds a Manager with an isolated HOME holding a committer
+// identity, so commits have an author (git.configure does this in production).
+func newCommitManager(t *testing.T, work string) *Manager {
+	t.Helper()
+	home := t.TempDir()
+	m := New([]string{"PROTEOS_WORKSPACE=" + work, "HOME=" + home}, runas.Root(), nil)
+	if err := m.writeGitConfig(guestwire.GitConfigurePayload{Name: "Tester", Email: "tester@example.com"}); err != nil {
+		t.Fatalf("writeGitConfig: %v", err)
+	}
+	return m
+}
+
+func TestGitCommit(t *testing.T) {
+	work := t.TempDir()
+	m := newCommitManager(t, work)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+
+	// Modify a tracked file and add a new one, then commit everything.
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "new.txt"), []byte("n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, cerr := m.gitCommit(context.Background(), repo, "my commit", nil)
+	if cerr != nil {
+		t.Fatalf("commit: %+v", cerr)
+	}
+	if res.Subject != "my commit" {
+		t.Errorf("subject = %q, want 'my commit'", res.Subject)
+	}
+	if res.Sha == "" {
+		t.Errorf("empty sha")
+	}
+	st, _ := m.gitStatus(context.Background(), repo)
+	if len(st.Files) != 0 {
+		t.Errorf("tree should be clean after full commit, got %+v", st.Files)
+	}
+}
+
+func TestGitCommit_Partial(t *testing.T) {
+	work := t.TempDir()
+	m := newCommitManager(t, work)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Commit only a.txt; b.txt must remain untracked.
+	if _, cerr := m.gitCommit(context.Background(), repo, "add a", []string{"a.txt"}); cerr != nil {
+		t.Fatalf("partial commit: %+v", cerr)
+	}
+	st, _ := m.gitStatus(context.Background(), repo)
+	got := byPath(st.Files)
+	if _, ok := got["a.txt"]; ok {
+		t.Errorf("a.txt should be committed, still in status")
+	}
+	if f, ok := got["b.txt"]; !ok || f.Worktree != "?" {
+		t.Errorf("b.txt should remain untracked, got %+v (ok=%v)", f, ok)
+	}
+}
+
+func TestGitCommit_EmptyMessage(t *testing.T) {
+	work := t.TempDir()
+	m := newCommitManager(t, work)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+	if err := os.WriteFile(filepath.Join(repo, "x.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, cerr := m.gitCommit(context.Background(), repo, "   ", nil); cerr == nil || cerr.Code != guestwire.ErrCodeEmptyMessage {
+		t.Errorf("empty message = %+v, want empty_message", cerr)
+	}
+}
+
+func TestGitCommit_NothingToCommit(t *testing.T) {
+	work := t.TempDir()
+	m := newCommitManager(t, work)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+	// Clean tree: nothing staged ⇒ nothing_to_commit.
+	if _, cerr := m.gitCommit(context.Background(), repo, "noop", nil); cerr == nil || cerr.Code != guestwire.ErrCodeNothingToCommit {
+		t.Errorf("clean-tree commit = %+v, want nothing_to_commit", cerr)
+	}
+}
+
 func TestGitStatus_NotARepo(t *testing.T) {
 	work := t.TempDir()
 	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)

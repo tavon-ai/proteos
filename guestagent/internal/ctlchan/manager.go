@@ -222,6 +222,17 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		}
 		return mustJSON(resp), nil
 
+	case guestwire.OpGitCommit:
+		var p guestwire.GitCommitPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Path == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "bad payload"}
+		}
+		resp, cerr := m.gitCommit(ctx, p.Path, p.Message, p.Paths)
+		if cerr != nil {
+			return nil, cerr
+		}
+		return mustJSON(resp), nil
+
 	default:
 		slog.Warn("control: unknown op", "op", op)
 		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "unknown op: " + op}
