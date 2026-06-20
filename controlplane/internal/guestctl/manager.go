@@ -404,6 +404,30 @@ func (m *Manager) GitDiff(ctx context.Context, machineID, repoPath string, stage
 	return resp, nil
 }
 
+// GitBranch creates (and optionally checks out) a branch in a project over the
+// channel (GR2). On failure the error is a *ControlError whose Code the HTTP
+// layer maps (branch_exists, invalid_branch, git_failed). ErrNoChannel if the
+// machine has no live channel.
+func (m *Manager) GitBranch(ctx context.Context, machineID, repoPath, name string, checkout bool, from string) (guestwire.GitBranchResponse, error) {
+	c := m.getConn(machineID)
+	if c == nil {
+		return guestwire.GitBranchResponse{}, ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	raw, err := c.request(rctx, guestwire.OpGitBranch, guestwire.GitBranchPayload{
+		Path: repoPath, Name: name, Checkout: checkout, From: from,
+	})
+	if err != nil {
+		return guestwire.GitBranchResponse{}, err
+	}
+	var resp guestwire.GitBranchResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return guestwire.GitBranchResponse{}, err
+	}
+	return resp, nil
+}
+
 // KVGet reads a value from the machine's SQLite kv table over the channel
 // (Phase 9 decision #6). A nil return with nil error means the key is unset.
 // ErrNoChannel if the machine has no live channel.

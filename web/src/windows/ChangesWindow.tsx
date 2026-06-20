@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { GitFileStatus, MachineState } from '../api/client';
-import { useGitDiff, useGitStatus } from '../api/hooks';
+import { ApiError, type GitFileStatus, type MachineState } from '../api/client';
+import { useGitBranch, useGitDiff, useGitStatus } from '../api/hooks';
 
 // ChangesWindow is the review surface (GR1): it shows what a coding agent (or the
 // user) changed in a project's working tree before anything is committed — the
@@ -21,6 +21,7 @@ export function ChangesWindow({
   const running = machineState === 'running';
   const project = basename(projectPath);
   const [staged, setStaged] = useState(false);
+  const [showBranch, setShowBranch] = useState(false);
 
   const status = useGitStatus(machineId, project, running);
   const diff = useGitDiff(machineId, project, staged, running);
@@ -71,6 +72,9 @@ export function ChangesWindow({
             Staged
           </button>
         </div>
+        <button className="btn-ghost" onClick={() => setShowBranch((s) => !s)}>
+          {showBranch ? 'Close' : '+ Branch'}
+        </button>
         <button
           className="btn-ghost"
           onClick={refresh}
@@ -79,6 +83,14 @@ export function ChangesWindow({
           {status.isFetching || diff.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
+
+      {showBranch && (
+        <NewBranchForm
+          machineId={machineId}
+          project={project}
+          onCreated={() => setShowBranch(false)}
+        />
+      )}
 
       {status.isError && <p className="muted changes-empty">Could not load status.</p>}
       {!status.isError && files.length === 0 && (
@@ -117,6 +129,79 @@ export function ChangesWindow({
       </div>
     </div>
   );
+}
+
+// NewBranchForm creates (and optionally switches to) a branch in the project
+// (GR2). On success it closes itself; the status/diff/projects queries are
+// invalidated by the mutation so the new current branch shows everywhere.
+function NewBranchForm({
+  machineId,
+  project,
+  onCreated,
+}: {
+  machineId: string | null;
+  project: string;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [checkout, setCheckout] = useState(true);
+  const branch = useGitBranch(machineId, project);
+
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    branch.mutate(
+      { name: trimmed, checkout },
+      {
+        onSuccess: () => {
+          setName('');
+          onCreated();
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="branch-form">
+      <input
+        type="text"
+        className="branch-name-input"
+        placeholder="feature/my-change"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit();
+        }}
+      />
+      <label className="branch-checkout">
+        <input type="checkbox" checked={checkout} onChange={(e) => setCheckout(e.target.checked)} />
+        Switch to it
+      </label>
+      <button
+        className="btn-secondary"
+        disabled={!name.trim() || branch.isPending}
+        onClick={submit}
+      >
+        {branch.isPending ? 'Creating…' : 'Create'}
+      </button>
+      {branch.error && <p className="muted branch-error">{branchErrorMessage(branch.error)}</p>}
+    </div>
+  );
+}
+
+// branchErrorMessage turns a branch-create failure into a short message.
+function branchErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'invalid_branch_name':
+        return 'Invalid branch name.';
+      case 'branch_exists':
+        return 'A branch with that name already exists.';
+      case 'machine_not_running':
+        return 'Machine is not running.';
+    }
+  }
+  return 'Could not create the branch.';
 }
 
 // basename returns the last path segment of an absolute /workspace path.

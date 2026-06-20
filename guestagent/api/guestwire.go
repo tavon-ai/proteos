@@ -169,6 +169,10 @@ const (
 	// re-checks containment + that it is a git repo — defence in depth).
 	OpGitStatus = "git.status" // CP → guest (resp: GitStatusResponse)
 	OpGitDiff   = "git.diff"   // CP → guest (resp: GitDiffResponse)
+
+	// GR2 (CP → guest). git.branch creates (and optionally checks out) a branch
+	// in a listable project. Same identity/containment rules as GR1.
+	OpGitBranch = "git.branch" // CP → guest (resp: GitBranchResponse)
 )
 
 // GitFileStatus is one changed path in a git.status response. Index and Worktree
@@ -211,6 +215,76 @@ type GitDiffPayload struct {
 type GitDiffResponse struct {
 	Diff      string `json:"diff"`
 	Truncated bool   `json:"truncated"`
+}
+
+// GitBranchPayload is the req payload of git.branch (GR2). Path is the absolute
+// repo path (CP-resolved). Name is the new branch; Checkout also switches to it;
+// From is an optional start point (a commit-ish — branch, tag, or sha).
+type GitBranchPayload struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Checkout bool   `json:"checkout"`
+	From     string `json:"from,omitempty"`
+}
+
+// GitBranchResponse is the resp payload of git.branch: the current branch after
+// the operation (the new branch when Checkout was set, else unchanged).
+type GitBranchResponse struct {
+	Branch string `json:"branch"`
+}
+
+// branchNameMaxLen bounds a branch name; git itself has no hard cap but a sane
+// limit keeps the wire payload and refs sensible.
+const branchNameMaxLen = 200
+
+// ValidBranchName reports whether name is a safe git branch name. It enforces a
+// practical subset of git check-ref-format: no leading '-' (which git would read
+// as an option), '/', or '.'; no trailing '/', '.', or ".lock"; no "..", "//",
+// "@{"; and none of the special chars git forbids (~^:?*[\), whitespace, or
+// control characters. The CP validates with this before dispatch; the guest
+// re-validates (defence in depth).
+func ValidBranchName(name string) bool {
+	if name == "" || len(name) > branchNameMaxLen {
+		return false
+	}
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") || strings.HasPrefix(name, ".") {
+		return false
+	}
+	if strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") {
+		return false
+	}
+	if strings.Contains(name, "..") || strings.Contains(name, "//") || strings.Contains(name, "@{") {
+		return false
+	}
+	for _, r := range name {
+		if r <= ' ' || r == 0x7f { // control chars, space, DEL
+			return false
+		}
+		switch r {
+		case '~', '^', ':', '?', '*', '[', '\\':
+			return false
+		}
+	}
+	return true
+}
+
+// ValidStartPoint reports whether from is a safe git start-point argument. It is
+// permissive (allowing HEAD~2, origin/main, tags, shas) but rejects anything
+// that could be read as an option (leading '-') or contains whitespace/control
+// characters. An empty start point is valid (means "from current HEAD").
+func ValidStartPoint(from string) bool {
+	if from == "" {
+		return true
+	}
+	if len(from) > branchNameMaxLen || strings.HasPrefix(from, "-") {
+		return false
+	}
+	for _, r := range from {
+		if r <= ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // Project is one cloned repository under WorkspaceRoot, as returned by
@@ -268,6 +342,16 @@ const (
 	// ErrCodeUnavailable: a transient failure (token store unreachable, no owner
 	// resolvable, etc.). The helper exits non-zero; git reports the failure.
 	ErrCodeUnavailable = "unavailable"
+
+	// GR2 git.branch outcomes the CP maps to distinct HTTP statuses.
+	// ErrCodeBranchExists: the requested branch already exists (409).
+	ErrCodeBranchExists = "branch_exists"
+	// ErrCodeInvalidBranch: the branch name failed validation (400). The CP
+	// validates first, so this is a defence-in-depth guard.
+	ErrCodeInvalidBranch = "invalid_branch"
+	// ErrCodeGitFailed: a git command failed for another reason (e.g. a bad start
+	// point) — a 4xx the CP reports as branch_failed.
+	ErrCodeGitFailed = "git_failed"
 )
 
 // ControlFrame is the envelope for every control-channel message. ID pairs a

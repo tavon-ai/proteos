@@ -22,6 +22,7 @@ import (
 const (
 	statusTimeout = 15 * time.Second
 	diffTimeout   = 30 * time.Second
+	branchTimeout = 30 * time.Second
 	// maxDiffBytes caps a single git.diff payload so an enormous (e.g. generated
 	// or binary-churn) diff cannot blow the control-channel frame or the browser.
 	// Hitting the cap sets Truncated; the UI then tells the user to inspect the
@@ -101,6 +102,80 @@ func (m *Manager) gitDiff(ctx context.Context, repoPath string, staged bool) (gu
 	// payload stays clean.
 	resp.Diff = strings.ToValidUTF8(string(data), "")
 	return resp, nil
+}
+
+// gitBranch creates (and optionally checks out) a branch in repoPath (GR2). It
+// returns a typed control error so the CP can map duplicates / bad names to
+// distinct HTTP statuses. Runs as the unprivileged owner.
+func (m *Manager) gitBranch(ctx context.Context, repoPath, name string, checkout bool, from string) (guestwire.GitBranchResponse, *guestwire.ControlErrorPayload) {
+	ctx, cancel := context.WithTimeout(ctx, branchTimeout)
+	defer cancel()
+
+	var resp guestwire.GitBranchResponse
+	if err := m.validateRepoPath(repoPath); err != nil {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "invalid repo"}
+	}
+	if !guestwire.ValidBranchName(name) {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeInvalidBranch}
+	}
+	if !guestwire.ValidStartPoint(from) {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "bad start point"}
+	}
+	if m.branchExists(ctx, repoPath, name) {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeBranchExists}
+	}
+
+	// checkout -b creates and switches; branch creates without switching. Both
+	// fail if the branch already exists (we pre-checked) or the start point is
+	// unknown. The validated name/from cannot be read as options.
+	var args []string
+	if checkout {
+		args = []string{"checkout", "-b", name}
+	} else {
+		args = []string{"branch", name}
+	}
+	if from != "" {
+		args = append(args, from)
+	}
+	if out, err := m.runGit(ctx, repoPath, args...); err != nil {
+		return resp, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: sanitizeGitErr(out, err)}
+	}
+
+	resp.Branch = m.git(ctx, repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	return resp, nil
+}
+
+// branchExists reports whether refs/heads/<name> already exists.
+func (m *Manager) branchExists(ctx context.Context, repoPath, name string) bool {
+	_, err := m.runGit(ctx, repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+name)
+	return err == nil
+}
+
+// runGit runs a (possibly mutating) git command and returns its combined output
+// and error, so callers can surface a sanitized failure detail. Runs as owner.
+func (m *Manager) runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	full := append([]string{"-C", dir}, args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd.Env = append(os.Environ(), "HOME="+m.homeDir, "GIT_TERMINAL_PROMPT=0")
+	if cred := m.owner.Credential(); cred != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+	}
+	return cmd.CombinedOutput()
+}
+
+// sanitizeGitErr returns a short, non-sensitive failure detail (last line, size
+// capped). git ops here carry no token in their output, but we cap anyway.
+func sanitizeGitErr(out []byte, err error) string {
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return err.Error()
+	}
+	lines := strings.Split(s, "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if len(last) > 200 {
+		last = last[:200]
+	}
+	return last
 }
 
 // validateRepoPath re-checks (defence in depth) that path is inside the

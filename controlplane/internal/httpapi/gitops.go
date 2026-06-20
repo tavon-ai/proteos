@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
 
+	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/guestctl"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -22,6 +24,7 @@ type GitWorktree interface {
 	ListProjects(ctx context.Context, machineID string) ([]guestwire.Project, error)
 	GitStatus(ctx context.Context, machineID, repoPath string) (guestwire.GitStatusResponse, error)
 	GitDiff(ctx context.Context, machineID, repoPath string, staged bool) (guestwire.GitDiffResponse, error)
+	GitBranch(ctx context.Context, machineID, repoPath, name string, checkout bool, from string) (guestwire.GitBranchResponse, error)
 }
 
 // handleGitStatus returns the working-tree change set for a project in the
@@ -77,20 +80,83 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d)
 }
 
+// branchRequest is the body of POST /api/machines/{id}/git/branch (GR2).
+type branchRequest struct {
+	Project  string `json:"project"`
+	Name     string `json:"name"`
+	Checkout bool   `json:"checkout"`
+	From     string `json:"from"`
+}
+
+// handleGitBranch creates (and optionally checks out) a branch in a project
+// (GR2). The branch name is validated before dispatch; the guest re-validates
+// and reports a duplicate as a distinct error.
+func (s *Server) handleGitBranch(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req branchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !guestwire.ValidBranchName(req.Name) {
+		writeError(w, http.StatusBadRequest, "invalid_branch_name")
+		return
+	}
+	machineID, ok := s.resolveWorktreeMachine(w, r, user)
+	if !ok {
+		return
+	}
+	repoPath, code := s.resolveProject(r.Context(), machineID, req.Project)
+	if code != "" {
+		writeError(w, projectErrorStatus(code), code)
+		return
+	}
+
+	res, err := s.GitWorktree.GitBranch(r.Context(), machineID, repoPath, req.Name, req.Checkout, req.From)
+	if err != nil {
+		if errors.Is(err, guestctl.ErrNoChannel) {
+			writeError(w, http.StatusConflict, "machine_not_running")
+			return
+		}
+		var ce *guestctl.ControlError
+		if errors.As(err, &ce) {
+			switch ce.Code {
+			case guestwire.ErrCodeBranchExists:
+				writeError(w, http.StatusConflict, "branch_exists")
+				return
+			case guestwire.ErrCodeInvalidBranch:
+				writeError(w, http.StatusBadRequest, "invalid_branch_name")
+				return
+			case guestwire.ErrCodeGitFailed:
+				writeError(w, http.StatusUnprocessableEntity, "branch_failed")
+				return
+			}
+		}
+		writeError(w, http.StatusBadGateway, "guest_unreachable")
+		return
+	}
+
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID:   uuidString(user.ID),
+		Actor:    audit.UserActor(uuidString(user.ID)),
+		Action:   audit.ActionGitBranch,
+		Target:   req.Project,
+		Metadata: map[string]any{"name": req.Name, "checkout": req.Checkout},
+	})
+	writeJSON(w, http.StatusOK, res)
+}
+
 // gitWorktreeContext resolves the common prelude for a worktree-review request:
 // the machine from {id} (owned by the user, running, with a live channel) and
 // the absolute repo path for ?project=. It writes the error response itself and
 // returns ok=false when the request cannot proceed.
 func (s *Server) gitWorktreeContext(w http.ResponseWriter, r *http.Request, user store.User) (machineID, repoPath string, ok bool) {
-	mc, err := s.resolveTerminalMachine(r.Context(), user, r.PathValue("id"))
-	if err != nil {
-		// Foreign/unknown/malformed id all map to 404 to avoid leaking existence.
-		writeError(w, http.StatusNotFound, "no_machine")
-		return "", "", false
-	}
-	machineID = machine.UUIDString(mc.ID)
-	if machine.State(mc.State) != machine.StateRunning || !s.GitWorktree.HasChannel(machineID) {
-		writeError(w, http.StatusConflict, "machine_not_running")
+	machineID, ok = s.resolveWorktreeMachine(w, r, user)
+	if !ok {
 		return "", "", false
 	}
 	path, code := s.resolveProject(r.Context(), machineID, r.URL.Query().Get("project"))
@@ -99,6 +165,23 @@ func (s *Server) gitWorktreeContext(w http.ResponseWriter, r *http.Request, user
 		return "", "", false
 	}
 	return machineID, path, true
+}
+
+// resolveWorktreeMachine resolves the {id} machine for a worktree request: owned
+// by the user, running, with a live channel. It writes the error itself.
+func (s *Server) resolveWorktreeMachine(w http.ResponseWriter, r *http.Request, user store.User) (machineID string, ok bool) {
+	mc, err := s.resolveTerminalMachine(r.Context(), user, r.PathValue("id"))
+	if err != nil {
+		// Foreign/unknown/malformed id all map to 404 to avoid leaking existence.
+		writeError(w, http.StatusNotFound, "no_machine")
+		return "", false
+	}
+	machineID = machine.UUIDString(mc.ID)
+	if machine.State(mc.State) != machine.StateRunning || !s.GitWorktree.HasChannel(machineID) {
+		writeError(w, http.StatusConflict, "machine_not_running")
+		return "", false
+	}
+	return machineID, true
 }
 
 // resolveProject matches a project name to its absolute path against the

@@ -148,6 +148,8 @@ func (s *Server) Handler() http.Handler {
 	if s.GitWorktree != nil {
 		mux.Handle("GET /api/machines/{id}/git/status", s.requireAuth(http.HandlerFunc(s.handleGitStatus)))
 		mux.Handle("GET /api/machines/{id}/git/diff", s.requireAuth(http.HandlerFunc(s.handleGitDiff)))
+		// Branch create/checkout mutates, so it also requires the CSRF header (GR2).
+		mux.Handle("POST /api/machines/{id}/git/branch", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitBranch))))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check

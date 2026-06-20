@@ -250,6 +250,23 @@ export function useGitDiff(
   });
 }
 
+// useGitBranch creates (and optionally checks out) a branch in a project (GR2).
+// On success it invalidates the project's status/diff and the projects list so
+// the new current branch shows everywhere it is displayed.
+export function useGitBranch(machineId: string | null, project: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, checkout, from }: { name: string; checkout: boolean; from?: string }) =>
+      api.gitBranch(machineId as string, project, name, checkout, from),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: gitStatusKey(machineId, project) });
+      qc.invalidateQueries({ queryKey: gitDiffKey(machineId, project, false) });
+      qc.invalidateQueries({ queryKey: gitDiffKey(machineId, project, true) });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+}
+
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
 export function reconnectRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';

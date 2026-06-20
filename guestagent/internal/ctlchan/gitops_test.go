@@ -167,6 +167,77 @@ func TestGitDiff_Truncated(t *testing.T) {
 	}
 }
 
+func TestGitBranch(t *testing.T) {
+	work := t.TempDir()
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+
+	// Create without checkout: branch exists, current branch stays main.
+	if _, cerr := m.gitBranch(context.Background(), repo, "feature/x", false, ""); cerr != nil {
+		t.Fatalf("create branch: %+v", cerr)
+	}
+	st, _ := m.gitStatus(context.Background(), repo)
+	if st.Branch != "main" {
+		t.Errorf("after create-only, branch = %q, want main", st.Branch)
+	}
+
+	// Create + checkout: current branch switches.
+	res, cerr := m.gitBranch(context.Background(), repo, "feature/y", true, "")
+	if cerr != nil {
+		t.Fatalf("create+checkout: %+v", cerr)
+	}
+	if res.Branch != "feature/y" {
+		t.Errorf("response branch = %q, want feature/y", res.Branch)
+	}
+	st, _ = m.gitStatus(context.Background(), repo)
+	if st.Branch != "feature/y" {
+		t.Errorf("after checkout, branch = %q, want feature/y", st.Branch)
+	}
+
+	// Duplicate name is rejected with a typed error.
+	if _, cerr := m.gitBranch(context.Background(), repo, "feature/x", false, ""); cerr == nil || cerr.Code != guestwire.ErrCodeBranchExists {
+		t.Errorf("duplicate branch = %+v, want branch_exists", cerr)
+	}
+
+	// Invalid name is rejected before any git runs.
+	if _, cerr := m.gitBranch(context.Background(), repo, "-nope", false, ""); cerr == nil || cerr.Code != guestwire.ErrCodeInvalidBranch {
+		t.Errorf("invalid name = %+v, want invalid_branch", cerr)
+	}
+}
+
+func TestGitBranch_From(t *testing.T) {
+	work := t.TempDir()
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+	run := gitRunner(t, repo)
+
+	// Make a second commit on main, then branch from the first commit (HEAD~1).
+	if err := os.WriteFile(filepath.Join(repo, "second.txt"), []byte("2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "second.txt")
+	run("commit", "-q", "-m", "second")
+
+	res, cerr := m.gitBranch(context.Background(), repo, "from-first", true, "HEAD~1")
+	if cerr != nil {
+		t.Fatalf("branch from HEAD~1: %+v", cerr)
+	}
+	if res.Branch != "from-first" {
+		t.Errorf("branch = %q, want from-first", res.Branch)
+	}
+	// The new branch tip is HEAD~1 (before "second"), so checkout removed the
+	// committed second.txt from the working tree and the tree is clean.
+	if _, err := os.Stat(filepath.Join(repo, "second.txt")); !os.IsNotExist(err) {
+		t.Errorf("second.txt should be absent on from-first (branched before it), stat err=%v", err)
+	}
+	st, _ := m.gitStatus(context.Background(), repo)
+	if len(st.Files) != 0 {
+		t.Errorf("from-first tree should be clean, got %+v", st.Files)
+	}
+}
+
 func TestGitStatus_NotARepo(t *testing.T) {
 	work := t.TempDir()
 	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)

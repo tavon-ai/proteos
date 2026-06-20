@@ -26,6 +26,9 @@ const (
 	ActionGitRepos      = "git.repos"      // a user listed their accessible repos
 	ActionGitClone      = "git.clone"      // a user cloned a repo into a machine
 	ActionGitCredential = "git.credential" // the credential handler minted a git token
+
+	// GR2 git mutation. Target is the project name — never a token.
+	ActionGitBranch = "git.branch" // a user created/checked out a branch in a project
 )
 
 // Actor prefixes identify who performed the action.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,12 +29,18 @@ type fakeWorktree struct {
 	noChan    bool
 	status    guestwire.GitStatusResponse
 	diff      guestwire.GitDiffResponse
+	branch    guestwire.GitBranchResponse
 	statusErr error
 	diffErr   error
+	branchErr error
 
 	lastStatusPath string
 	lastDiffPath   string
 	lastStaged     bool
+	lastBranchPath string
+	lastBranchName string
+	lastCheckout   bool
+	lastFrom       string
 }
 
 func (f *fakeWorktree) HasChannel(string) bool { return !f.noChan }
@@ -59,6 +66,14 @@ func (f *fakeWorktree) GitDiff(_ context.Context, _, repoPath string, staged boo
 		return guestwire.GitDiffResponse{}, f.diffErr
 	}
 	return f.diff, nil
+}
+
+func (f *fakeWorktree) GitBranch(_ context.Context, _, repoPath, name string, checkout bool, from string) (guestwire.GitBranchResponse, error) {
+	f.lastBranchPath, f.lastBranchName, f.lastCheckout, f.lastFrom = repoPath, name, checkout, from
+	if f.branchErr != nil {
+		return guestwire.GitBranchResponse{}, f.branchErr
+	}
+	return f.branch, nil
 }
 
 type wtFixture struct {
@@ -114,6 +129,21 @@ func (fx wtFixture) get(t *testing.T, path string) *http.Response {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
+	}
+	return resp
+}
+
+func (fx wtFixture) post(t *testing.T, path, body string, csrf bool) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, fx.url+path, strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fx.token})
+	req.Header.Set("Content-Type", "application/json")
+	if csrf {
+		req.Header.Set("X-Requested-By", "proteos")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
 	}
 	return resp
 }
@@ -238,5 +268,117 @@ func TestGitDiff_200WorktreeDefault(t *testing.T) {
 	}
 	if ch.lastStaged {
 		t.Errorf("staged should default to false")
+	}
+}
+
+func alphaWorktree(branch guestwire.GitBranchResponse, branchErr error) *fakeWorktree {
+	return &fakeWorktree{
+		projects:  []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}},
+		branch:    branch,
+		branchErr: branchErr,
+	}
+}
+
+func TestGitBranch_200Checkout(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{Branch: "feature/x"}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"alpha","name":"feature/x","checkout":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body guestwire.GitBranchResponse
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Branch != "feature/x" {
+		t.Fatalf("branch = %q, want feature/x", body.Branch)
+	}
+	if ch.lastBranchName != "feature/x" || !ch.lastCheckout || ch.lastBranchPath != "/workspace/alpha" {
+		t.Fatalf("guest call = name %q checkout %v path %q", ch.lastBranchName, ch.lastCheckout, ch.lastBranchPath)
+	}
+}
+
+func TestGitBranch_200CreateOnlyWithFrom(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{Branch: "main"}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"alpha","name":"feature/y","checkout":false,"from":"main"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ch.lastCheckout {
+		t.Errorf("checkout should be false")
+	}
+	if ch.lastFrom != "main" {
+		t.Errorf("from = %q, want main", ch.lastFrom)
+	}
+}
+
+func TestGitBranch_400InvalidName(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	// A leading '-' is rejected by ValidBranchName before any dispatch.
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"alpha","name":"-bad","checkout":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "invalid_branch_name" {
+		t.Fatalf("error = %q, want invalid_branch_name", code)
+	}
+	if ch.lastBranchName != "" {
+		t.Errorf("invalid name should not reach the guest, got %q", ch.lastBranchName)
+	}
+}
+
+func TestGitBranch_409Exists(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{}, &guestctl.ControlError{Code: guestwire.ErrCodeBranchExists})
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"alpha","name":"feature/dup","checkout":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "branch_exists" {
+		t.Fatalf("error = %q, want branch_exists", code)
+	}
+}
+
+func TestGitBranch_RequiresCSRF(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{Branch: "feature/x"}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"alpha","name":"feature/x","checkout":true}`, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF header)", resp.StatusCode)
+	}
+}
+
+func TestGitBranch_400BadProject(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{}, nil)
+	fx := setupWorktree(t, string(machine.StateRunning), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"ghost","name":"feature/x","checkout":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "bad_project" {
+		t.Fatalf("error = %q, want bad_project", code)
+	}
+}
+
+func TestGitBranch_409NotRunning(t *testing.T) {
+	ch := alphaWorktree(guestwire.GitBranchResponse{}, nil)
+	fx := setupWorktree(t, string(machine.StateStopped), ch)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
+		`{"project":"alpha","name":"feature/x","checkout":true}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
 	}
 }

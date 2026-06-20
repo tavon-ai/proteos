@@ -243,6 +243,12 @@ export interface GitDiffResponse {
   truncated: boolean;
 }
 
+// GitBranchResponse is POST /api/machines/{id}/git/branch (GR2): the current
+// branch after the op (the new branch when checkout was requested).
+export interface GitBranchResponse {
+  branch: string;
+}
+
 // DesktopLayout is the opaque serialized window layout stored in machine SQLite
 // (Phase 9 decision #6). The control plane relays it verbatim; only the desktop
 // understands its shape. null ⇒ no layout saved yet.
@@ -397,6 +403,16 @@ export const api = {
     request<GitDiffResponse>(
       `/api/machines/${encodeURIComponent(machineID)}/git/diff?project=${encodeURIComponent(project)}&staged=${staged ? 'true' : 'false'}`,
     ),
+
+  // Create (and optionally check out) a branch in a project (GR2). 400
+  // invalid_branch_name / bad_request; 409 branch_exists / machine_not_running;
+  // 422 branch_failed (e.g. a bad start point) — all ApiError.
+  gitBranch: (machineID: string, project: string, name: string, checkout: boolean, from?: string) =>
+    request<GitBranchResponse>(`/api/machines/${encodeURIComponent(machineID)}/git/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, name, checkout, from: from || undefined }),
+    }),
 };
 
 // SSE endpoint for live machine state; consumed by useMachineEvents via the

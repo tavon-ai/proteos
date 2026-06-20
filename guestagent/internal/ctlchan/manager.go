@@ -211,6 +211,17 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		}
 		return mustJSON(resp), nil
 
+	case guestwire.OpGitBranch:
+		var p guestwire.GitBranchPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Path == "" || p.Name == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeInvalidBranch, Message: "bad payload"}
+		}
+		resp, cerr := m.gitBranch(ctx, p.Path, p.Name, p.Checkout, p.From)
+		if cerr != nil {
+			return nil, cerr
+		}
+		return mustJSON(resp), nil
+
 	default:
 		slog.Warn("control: unknown op", "op", op)
 		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "unknown op: " + op}
