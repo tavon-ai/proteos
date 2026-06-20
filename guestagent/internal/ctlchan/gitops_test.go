@@ -34,7 +34,7 @@ func gitRunner(t *testing.T, dir string) func(args ...string) {
 
 func TestGitStatus(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "https://github.com/tavon/alpha.git")
 	run := gitRunner(t, repo)
@@ -82,7 +82,7 @@ func TestGitStatus(t *testing.T) {
 
 func TestGitStatus_Rename(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
 	run := gitRunner(t, repo)
@@ -112,7 +112,7 @@ func TestGitStatus_Rename(t *testing.T) {
 
 func TestGitDiff(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
 	run := gitRunner(t, repo)
@@ -145,7 +145,7 @@ func TestGitDiff(t *testing.T) {
 
 func TestGitDiff_Truncated(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
 
@@ -169,7 +169,7 @@ func TestGitDiff_Truncated(t *testing.T) {
 
 func TestGitBranch(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
 
@@ -208,7 +208,7 @@ func TestGitBranch(t *testing.T) {
 
 func TestGitBranch_From(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
 	run := gitRunner(t, repo)
@@ -243,7 +243,7 @@ func TestGitBranch_From(t *testing.T) {
 func newCommitManager(t *testing.T, work string) *Manager {
 	t.Helper()
 	home := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work, "HOME=" + home}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work, "HOME=" + home}, runas.Root(), nil, nil)
 	if err := m.writeGitConfig(guestwire.GitConfigurePayload{Name: "Tester", Email: "tester@example.com"}); err != nil {
 		t.Fatalf("writeGitConfig: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestPushBranch_Failure(t *testing.T) {
 
 func TestGitStatus_NotARepo(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	plain := filepath.Join(work, "plain")
 	if err := os.MkdirAll(plain, 0o755); err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func TestGitStatus_NotARepo(t *testing.T) {
 
 func TestGitStatus_OutsideWorkspace(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	if _, err := m.gitStatus(context.Background(), "/etc"); err == nil {
 		t.Errorf("gitStatus outside the workspace should error")
 	}

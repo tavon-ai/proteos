@@ -113,7 +113,7 @@ func run() error {
 	// Phase 7: the control channel (CP-dialed GET /control) and the local
 	// credential-helper socket. The manager holds the single live channel and
 	// resolves git credentials for the helper over it.
-	control := ctlchan.New(p.ShellEnv(), id, p)
+	control := ctlchan.New(p.ShellEnv(), id, p, sec)
 	helperSock := localsock.New(guestwire.AgentSockPath, control, id)
 	go func() {
 		if err := helperSock.Serve(ctx); err != nil {

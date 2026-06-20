@@ -72,6 +72,11 @@ type Server struct {
 	// listable project). *guestctl.Manager satisfies it. Nil disables the
 	// /api/machines/{id}/git/* routes.
 	GitWorktree GitWorktree
+
+	// AT1: the headless agent-run dispatch surface. *guestctl.Manager satisfies
+	// it. Nil (or Providers/GitWorktree/Secrets unset) disables the
+	// /api/machines/{id}/tasks routes.
+	TaskChannel TaskChannel
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
@@ -159,6 +164,15 @@ func (s *Server) Handler() http.Handler {
 		if s.GitHub != nil && s.Tokens != nil {
 			mux.Handle("POST /api/machines/{id}/git/pr", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitPR))))
 		}
+	}
+
+	// Headless agent tasks (AT1). Creating a task mutates + dispatches a run, so
+	// it needs the provider registry + secrets (key check) and the worktree
+	// surface (project resolution); reads are auth-only. POST is CSRF-guarded.
+	if s.TaskChannel != nil && s.Providers != nil && s.GitWorktree != nil && s.Secrets != nil {
+		mux.Handle("POST /api/machines/{id}/tasks", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateTask))))
+		mux.Handle("GET /api/machines/{id}/tasks", s.requireAuth(http.HandlerFunc(s.handleListTasks)))
+		mux.Handle("GET /api/machines/{id}/tasks/{tid}", s.requireAuth(http.HandlerFunc(s.handleGetTask)))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check

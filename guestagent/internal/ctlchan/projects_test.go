@@ -51,7 +51,7 @@ func gitInit(t *testing.T, dir, remote string) {
 
 func TestListProjects(t *testing.T) {
 	work := t.TempDir()
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 
 	gitInit(t, filepath.Join(work, "alpha"), "https://github.com/tavon/alpha.git")
 	gitInit(t, filepath.Join(work, "beta"), "")
@@ -121,7 +121,7 @@ func TestListProjects(t *testing.T) {
 }
 
 func TestListProjects_NoWorkspace(t *testing.T) {
-	m := New([]string{"PROTEOS_WORKSPACE=" + filepath.Join(t.TempDir(), "absent")}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + filepath.Join(t.TempDir(), "absent")}, runas.Root(), nil, nil)
 	got, err := m.listProjects(context.Background())
 	if err != nil {
 		t.Fatalf("listProjects on absent workspace: %v", err)
@@ -139,7 +139,7 @@ func (f *fakeKV) Set(key, value string) error   { f.m[key] = value; return nil }
 
 func TestKVHandlers(t *testing.T) {
 	kv := &fakeKV{m: map[string]string{}}
-	m := New(nil, runas.Root(), kv)
+	m := New(nil, runas.Root(), kv, nil)
 	ctx := context.Background()
 
 	// kv.get on an absent key returns a null value.
@@ -171,7 +171,7 @@ func TestKVHandlers(t *testing.T) {
 }
 
 func TestKVHandlers_NilKVIsNoOp(t *testing.T) {
-	m := New(nil, runas.Root(), nil)
+	m := New(nil, runas.Root(), nil, nil)
 	ctx := context.Background()
 	// kv.set on a diskless guest acks (no error) but does not persist.
 	raw, cerr := m.handle(ctx, guestwire.OpKVSet, mustJSON(guestwire.KVSetPayload{Key: "k", Value: "v"}))

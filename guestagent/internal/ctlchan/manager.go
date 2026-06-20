@@ -39,6 +39,14 @@ type KV interface {
 	Set(key, value string) error
 }
 
+// Secrets resolves an injected provider's launch command and environment, used
+// by the headless agent runner (AT1). *secrets.Store satisfies it. nil ⇒ no
+// provider is launchable, so agent.run fails cleanly.
+type Secrets interface {
+	Get(key string) (guestwire.ProviderDef, bool)
+	EnvList(key string) ([]string, bool)
+}
+
 // Manager owns the single live control channel for this guest and serves the
 // credential lookups the local helper socket relays. The control plane dials
 // HandleControl; while connected, Credential can resolve git tokens over it.
@@ -47,6 +55,7 @@ type Manager struct {
 	workDir string
 	owner   runas.Identity // unprivileged user that clones run as / owns ~/.gitconfig
 	kv      KV             // machine SQLite kv (Phase 9); nil ⇒ no persistence
+	sec     Secrets        // injected provider defs for the headless runner (AT1); nil ⇒ none
 
 	mu     sync.Mutex
 	active *conn
@@ -64,7 +73,7 @@ type credEntry struct {
 // HOME=... and PROTEOS_WORKSPACE=... determine where ~/.gitconfig is written and
 // where clones land. Sensible defaults apply when either is absent. kv is the
 // machine SQLite key/value store backing kv.get/kv.set (nil ⇒ no persistence).
-func New(env []string, owner runas.Identity, kv KV) *Manager {
+func New(env []string, owner runas.Identity, kv KV, sec Secrets) *Manager {
 	home, work := "/root", "/workspace"
 	for _, kvp := range env {
 		k, v, ok := strings.Cut(kvp, "=")
@@ -78,7 +87,7 @@ func New(env []string, owner runas.Identity, kv KV) *Manager {
 			work = v
 		}
 	}
-	return &Manager{homeDir: home, workDir: work, owner: owner, kv: kv, cache: map[string]credEntry{}}
+	return &Manager{homeDir: home, workDir: work, owner: owner, kv: kv, sec: sec, cache: map[string]credEntry{}}
 }
 
 // HandleControl upgrades GET /control and serves the control channel until the
@@ -246,6 +255,17 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		}
 		go m.runPush(p)
 		return nil, nil // immediate ack; completion arrives as git.push.done
+
+	case guestwire.OpAgentRun:
+		var p guestwire.AgentRunPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Path == "" || p.TaskID == "" || p.Provider == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "bad payload"}
+		}
+		if err := m.validateRepoPath(p.Path); err != nil {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "invalid project"}
+		}
+		go m.runAgentTask(p)
+		return nil, nil // immediate ack; completion arrives as agent.done
 
 	default:
 		slog.Warn("control: unknown op", "op", op)

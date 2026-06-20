@@ -37,21 +37,26 @@ type fakeWorktree struct {
 	branchErr error
 	commitErr error
 	pushErr   error
+	runErr    error
 
-	lastStatusPath string
-	lastDiffPath   string
-	lastStaged     bool
-	lastBranchPath string
-	lastBranchName string
-	lastCheckout   bool
-	lastFrom       string
-	lastCommitPath string
-	lastMessage    string
-	lastPaths      []string
-	lastPushPath   string
-	lastPushBranch string
-	lastSetUp      bool
-	lastPushOpID   string
+	lastStatusPath  string
+	lastDiffPath    string
+	lastStaged      bool
+	lastBranchPath  string
+	lastBranchName  string
+	lastCheckout    bool
+	lastFrom        string
+	lastCommitPath  string
+	lastMessage     string
+	lastPaths       []string
+	lastPushPath    string
+	lastPushBranch  string
+	lastSetUp       bool
+	lastPushOpID    string
+	lastRunTaskID   string
+	lastRunPath     string
+	lastRunPrompt   string
+	lastRunProvider string
 }
 
 func (f *fakeWorktree) HasChannel(string) bool { return !f.noChan }
@@ -98,6 +103,13 @@ func (f *fakeWorktree) GitCommit(_ context.Context, _, repoPath, message string,
 func (f *fakeWorktree) Push(_ context.Context, _, repoPath, branch string, setUpstream bool, opID string) error {
 	f.lastPushPath, f.lastPushBranch, f.lastSetUp, f.lastPushOpID = repoPath, branch, setUpstream, opID
 	return f.pushErr
+}
+
+// RunAgent records a headless-run dispatch (AT1). The fake satisfies both
+// GitWorktree and TaskChannel so a test can wire one object to both fields.
+func (f *fakeWorktree) RunAgent(_ context.Context, _, taskID, repoPath, prompt, provider string) error {
+	f.lastRunTaskID, f.lastRunPath, f.lastRunPrompt, f.lastRunProvider = taskID, repoPath, prompt, provider
+	return f.runErr
 }
 
 type wtFixture struct {

@@ -279,6 +279,8 @@ func run(migrate, migrateOnly bool) error {
 		srv.Projects = guestCtl
 		// GR1: and the worktree-review git status/diff surface.
 		srv.GitWorktree = guestCtl
+		// AT1: and the headless agent-run dispatch surface.
+		srv.TaskChannel = guestCtl
 	}
 
 	httpServer := &http.Server{

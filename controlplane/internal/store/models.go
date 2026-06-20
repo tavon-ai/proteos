@@ -10,6 +10,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AgentTask struct {
+	ID             pgtype.UUID        `json:"id"`
+	MachineID      pgtype.UUID        `json:"machine_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Provider       string             `json:"provider"`
+	Project        string             `json:"project"`
+	Prompt         string             `json:"prompt"`
+	Status         string             `json:"status"`
+	AgentSessionID string             `json:"agent_session_id"`
+	Usage          []byte             `json:"usage"`
+	ResultSummary  string             `json:"result_summary"`
+	Error          string             `json:"error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	EndedAt        pgtype.Timestamptz `json:"ended_at"`
+}
+
 type AuditLog struct {
 	ID       int64              `json:"id"`
 	Ts       pgtype.Timestamptz `json:"ts"`

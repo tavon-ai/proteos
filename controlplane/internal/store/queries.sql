@@ -242,3 +242,33 @@ UPDATE providers SET enabled = (key = ANY(@keys::text[]));
 INSERT INTO audit_log (user_id, actor, action, target, metadata)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
+
+-- name: InsertAgentTask :one
+-- Create a queued headless agent task (AT1). status defaults to 'queued'.
+INSERT INTO agent_tasks (machine_id, user_id, provider, project, prompt)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: GetAgentTask :one
+SELECT * FROM agent_tasks WHERE id = $1;
+
+-- name: ListAgentTasksByMachine :many
+-- A machine's tasks, newest first.
+SELECT * FROM agent_tasks WHERE machine_id = $1 ORDER BY created_at DESC;
+
+-- name: MarkAgentTaskRunning :exec
+-- Move a queued task to running once the run is dispatched.
+UPDATE agent_tasks
+SET status = 'running', started_at = now()
+WHERE id = $1 AND status = 'queued';
+
+-- name: FinishAgentTask :exec
+-- Record a terminal outcome (done|failed|canceled) with its result fields.
+UPDATE agent_tasks
+SET status = $2,
+    agent_session_id = $3,
+    usage = $4,
+    result_summary = $5,
+    error = $6,
+    ended_at = now()
+WHERE id = $1;

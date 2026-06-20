@@ -249,6 +249,9 @@ func (m *Manager) makeHandler(machineID, userID string) reqHandler {
 		case guestwire.OpGitPushDone:
 			m.handlePushDone(ctx, machineID, payload)
 			return nil, nil
+		case guestwire.OpAgentDone:
+			m.handleAgentDone(ctx, payload)
+			return nil, nil
 		default:
 			slog.Warn("guestctl: unknown op from guest", "machine", machineID, "op", op)
 			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "unknown op"}
@@ -365,6 +368,60 @@ func (m *Manager) handlePushDone(ctx context.Context, machineID string, payload 
 	}
 	m.broker.Publish(machine.Update{Machine: mc, Event: ev})
 	slog.Info("guestctl: push done", "machine", machineID, "op_id", done.OpID, "ok", done.OK)
+}
+
+// handleAgentDone records a headless agent-run completion (AT1) onto its
+// agent_tasks row: terminal status, the agent's session id (for resume), usage,
+// the result summary, and any sanitized error. Best-effort — a malformed payload
+// or DB error is logged, not propagated (the guest does not retry).
+func (m *Manager) handleAgentDone(ctx context.Context, payload json.RawMessage) {
+	var done guestwire.AgentDonePayload
+	if err := json.Unmarshal(payload, &done); err != nil {
+		slog.Warn("guestctl: bad agent.done payload", "err", err)
+		return
+	}
+	id, err := machine.ParseUUID(done.TaskID)
+	if err != nil {
+		slog.Warn("guestctl: bad agent.done task id", "task", done.TaskID, "err", err)
+		return
+	}
+	status := "done"
+	if !done.OK {
+		status = "failed"
+	}
+	usage, _ := json.Marshal(map[string]any{
+		"cost_usd":    done.CostUSD,
+		"num_turns":   done.NumTurns,
+		"duration_ms": done.DurationMS,
+	})
+	if err := m.q.FinishAgentTask(ctx, store.FinishAgentTaskParams{
+		ID:             id,
+		Status:         status,
+		AgentSessionID: done.SessionID,
+		Usage:          usage,
+		ResultSummary:  done.Summary,
+		Error:          done.Error,
+	}); err != nil {
+		slog.Error("guestctl: finish agent task", "task", done.TaskID, "err", err)
+		return
+	}
+	slog.Info("guestctl: agent task done", "task", done.TaskID, "status", status)
+}
+
+// RunAgent dispatches a headless agent run (AT1) and returns once the guest acks
+// (the run is asynchronous; completion arrives as agent.done → agent_tasks
+// update). ErrNoChannel if the machine has no live channel.
+func (m *Manager) RunAgent(ctx context.Context, machineID, taskID, repoPath, prompt, provider string) error {
+	c := m.getConn(machineID)
+	if c == nil {
+		return ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	_, err := c.request(rctx, guestwire.OpAgentRun, guestwire.AgentRunPayload{
+		TaskID: taskID, Path: repoPath, Prompt: prompt, Provider: provider,
+	})
+	return err
 }
 
 // Push sends a git.push over the machine's channel and returns once the guest

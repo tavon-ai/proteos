@@ -13,7 +13,7 @@ import (
 func TestWriteGitConfig_NoSecretAndIdempotent(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
-	m := New([]string{"HOME=" + home, "PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"HOME=" + home, "PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 
 	p := guestwire.GitConfigurePayload{Name: "Ivan Pedrazas", Email: "ivan@example.com", Helper: guestwire.HelperBinPath}
 	if err := m.writeGitConfig(p); err != nil {
@@ -49,7 +49,7 @@ func TestWriteGitConfig_NoSecretAndIdempotent(t *testing.T) {
 
 func TestValidateDest(t *testing.T) {
 	work := "/workspace"
-	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil)
+	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	cases := []struct {
 		dest string
 		ok   bool

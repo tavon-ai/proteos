@@ -279,6 +279,54 @@ func TestControlChannel_ConfigureCredentialClone(t *testing.T) {
 	waitCloneEvent(t, q, mc.ID, "op123")
 }
 
+func TestControlChannel_AgentDone(t *testing.T) {
+	mgr, broker, fg, mc, q := setupManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	machineID := machine.UUIDString(mc.ID)
+	go func() {
+		for i := 0; i < 60; i++ {
+			if mgr.HasChannel(machineID) {
+				return
+			}
+			broker.Publish(machine.Update{Machine: mc})
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	waitChannel(t, mgr, machineID)
+
+	// A queued task exists; the guest reports it done.
+	task, err := q.InsertAgentTask(ctx, store.InsertAgentTaskParams{
+		MachineID: mc.ID, UserID: mc.UserID, Provider: "claude", Project: "alpha", Prompt: "x",
+	})
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	taskID := machine.UUIDString(task.ID)
+
+	resp := fg.guestRequest(t, guestwire.OpAgentDone, guestwire.AgentDonePayload{
+		TaskID: taskID, OK: true, SessionID: "sess-1", Summary: "did it", CostUSD: 0.1, NumTurns: 2,
+	})
+	if resp.Kind != guestwire.ControlResp {
+		t.Fatalf("agent.done: expected resp, got %s (%s)", resp.Kind, resp.Payload)
+	}
+
+	// The task row reaches done with the agent's session id captured.
+	for i := 0; i < 80; i++ {
+		got, err := q.GetAgentTask(ctx, task.ID)
+		if err == nil && got.Status == "done" {
+			if got.AgentSessionID != "sess-1" || got.ResultSummary != "did it" {
+				t.Fatalf("unexpected finished task: %+v", got)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("agent task never reached done")
+}
+
 func waitChannel(t *testing.T, mgr *guestctl.Manager, machineID string) {
 	t.Helper()
 	for i := 0; i < 80; i++ {

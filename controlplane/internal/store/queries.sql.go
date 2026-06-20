@@ -148,6 +148,65 @@ func (q *Queries) DeleteSnapshot(ctx context.Context, machineID pgtype.UUID) err
 	return err
 }
 
+const finishAgentTask = `-- name: FinishAgentTask :exec
+UPDATE agent_tasks
+SET status = $2,
+    agent_session_id = $3,
+    usage = $4,
+    result_summary = $5,
+    error = $6,
+    ended_at = now()
+WHERE id = $1
+`
+
+type FinishAgentTaskParams struct {
+	ID             pgtype.UUID `json:"id"`
+	Status         string      `json:"status"`
+	AgentSessionID string      `json:"agent_session_id"`
+	Usage          []byte      `json:"usage"`
+	ResultSummary  string      `json:"result_summary"`
+	Error          string      `json:"error"`
+}
+
+// Record a terminal outcome (done|failed|canceled) with its result fields.
+func (q *Queries) FinishAgentTask(ctx context.Context, arg FinishAgentTaskParams) error {
+	_, err := q.db.Exec(ctx, finishAgentTask,
+		arg.ID,
+		arg.Status,
+		arg.AgentSessionID,
+		arg.Usage,
+		arg.ResultSummary,
+		arg.Error,
+	)
+	return err
+}
+
+const getAgentTask = `-- name: GetAgentTask :one
+SELECT id, machine_id, user_id, provider, project, prompt, status, agent_session_id, usage, result_summary, error, created_at, started_at, ended_at FROM agent_tasks WHERE id = $1
+`
+
+func (q *Queries) GetAgentTask(ctx context.Context, id pgtype.UUID) (AgentTask, error) {
+	row := q.db.QueryRow(ctx, getAgentTask, id)
+	var i AgentTask
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.UserID,
+		&i.Provider,
+		&i.Project,
+		&i.Prompt,
+		&i.Status,
+		&i.AgentSessionID,
+		&i.Usage,
+		&i.ResultSummary,
+		&i.Error,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
 const getDiskByMachineID = `-- name: GetDiskByMachineID :one
 SELECT id, machine_id, size_mib, created_at FROM disks WHERE machine_id = $1
 `
@@ -377,6 +436,49 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	return i, err
 }
 
+const insertAgentTask = `-- name: InsertAgentTask :one
+INSERT INTO agent_tasks (machine_id, user_id, provider, project, prompt)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, machine_id, user_id, provider, project, prompt, status, agent_session_id, usage, result_summary, error, created_at, started_at, ended_at
+`
+
+type InsertAgentTaskParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	UserID    pgtype.UUID `json:"user_id"`
+	Provider  string      `json:"provider"`
+	Project   string      `json:"project"`
+	Prompt    string      `json:"prompt"`
+}
+
+// Create a queued headless agent task (AT1). status defaults to 'queued'.
+func (q *Queries) InsertAgentTask(ctx context.Context, arg InsertAgentTaskParams) (AgentTask, error) {
+	row := q.db.QueryRow(ctx, insertAgentTask,
+		arg.MachineID,
+		arg.UserID,
+		arg.Provider,
+		arg.Project,
+		arg.Prompt,
+	)
+	var i AgentTask
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.UserID,
+		&i.Provider,
+		&i.Project,
+		&i.Prompt,
+		&i.Status,
+		&i.AgentSessionID,
+		&i.Usage,
+		&i.ResultSummary,
+		&i.Error,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
 const insertAuditLog = `-- name: InsertAuditLog :one
 INSERT INTO audit_log (user_id, actor, action, target, metadata)
 VALUES ($1, $2, $3, $4, $5)
@@ -451,6 +553,46 @@ func (q *Queries) InsertMachineEvent(ctx context.Context, arg InsertMachineEvent
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAgentTasksByMachine = `-- name: ListAgentTasksByMachine :many
+SELECT id, machine_id, user_id, provider, project, prompt, status, agent_session_id, usage, result_summary, error, created_at, started_at, ended_at FROM agent_tasks WHERE machine_id = $1 ORDER BY created_at DESC
+`
+
+// A machine's tasks, newest first.
+func (q *Queries) ListAgentTasksByMachine(ctx context.Context, machineID pgtype.UUID) ([]AgentTask, error) {
+	rows, err := q.db.Query(ctx, listAgentTasksByMachine, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTask{}
+	for rows.Next() {
+		var i AgentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.MachineID,
+			&i.UserID,
+			&i.Provider,
+			&i.Project,
+			&i.Prompt,
+			&i.Status,
+			&i.AgentSessionID,
+			&i.Usage,
+			&i.ResultSummary,
+			&i.Error,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listMachineEventsAfter = `-- name: ListMachineEventsAfter :many
@@ -748,6 +890,18 @@ func (q *Queries) ListUserMachineEventsRecent(ctx context.Context, arg ListUserM
 		return nil, err
 	}
 	return items, nil
+}
+
+const markAgentTaskRunning = `-- name: MarkAgentTaskRunning :exec
+UPDATE agent_tasks
+SET status = 'running', started_at = now()
+WHERE id = $1 AND status = 'queued'
+`
+
+// Move a queued task to running once the run is dispatched.
+func (q *Queries) MarkAgentTaskRunning(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markAgentTaskRunning, id)
+	return err
 }
 
 const renameMachine = `-- name: RenameMachine :one

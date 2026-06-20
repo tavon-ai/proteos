@@ -22,6 +22,9 @@ const (
 	ActionSecretRead   = "secret.read"   // the injector read a secret for injection
 	ActionAgentLaunch  = "agent.launch"  // a user launched an agent session
 
+	// AT1 headless task lane. Target is the project name.
+	ActionAgentTaskRun = "agent.task.run" // a user dispatched a headless agent task
+
 	// Phase 7 git actions. Targets are repo full-names / hosts — never tokens.
 	ActionGitRepos      = "git.repos"      // a user listed their accessible repos
 	ActionGitClone      = "git.clone"      // a user cloned a repo into a machine

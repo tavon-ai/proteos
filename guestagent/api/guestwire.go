@@ -161,6 +161,13 @@ const (
 	OpGitPush     = "git.push"      // CP → guest (acked; completion via OpGitPushDone)
 	OpGitPushDone = "git.push.done" // guest → CP (completion notification)
 
+	// AT1 headless agent run. agent.run is acked immediately; the coding agent
+	// runs non-interactively (claude -p, minutes long) and its outcome arrives
+	// later as a guest → CP agent.done frame — same async shape as git.push. The
+	// run only ever produces a dirty working tree; it never commits.
+	OpAgentRun  = "agent.run"  // CP → guest (acked; completion via OpAgentDone)
+	OpAgentDone = "agent.done" // guest → CP (completion notification)
+
 	// Phase 9 (CP → guest). projects.list scans the workspace for git repos;
 	// kv.get/kv.set read and write the machine SQLite kv table (the desktop
 	// layout). All three act only on THIS machine's own disk — the authorization
@@ -280,6 +287,32 @@ type GitPushDonePayload struct {
 	OpID   string `json:"op_id"`
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail,omitempty"`
+}
+
+// AgentRunPayload is the req payload of agent.run (AT1). Path is the absolute
+// project path (CP-resolved) the agent runs in; Provider is the (headless-
+// capable) provider key whose injected launch command + env the guest resolves;
+// TaskID correlates the later agent.done.
+type AgentRunPayload struct {
+	TaskID   string `json:"task_id"`
+	Path     string `json:"path"`
+	Prompt   string `json:"prompt"`
+	Provider string `json:"provider"`
+}
+
+// AgentDonePayload is the body of a guest → CP agent.done req: the outcome of an
+// earlier agent.run, correlated by TaskID. SessionID is the coding agent's own
+// session id (for resume). OK is false when the agent reported an error result
+// or the process failed; Error is then a sanitized detail (never a token).
+type AgentDonePayload struct {
+	TaskID     string  `json:"task_id"`
+	OK         bool    `json:"ok"`
+	SessionID  string  `json:"session_id,omitempty"`
+	Summary    string  `json:"summary,omitempty"`
+	CostUSD    float64 `json:"cost_usd,omitempty"`
+	NumTurns   int     `json:"num_turns,omitempty"`
+	DurationMS int     `json:"duration_ms,omitempty"`
+	Error      string  `json:"error,omitempty"`
 }
 
 // ValidCommitPath reports whether p is a safe repo-relative pathspec for a
