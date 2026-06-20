@@ -20,6 +20,9 @@ import (
 // agent.done and updates the task row directly; the HTTP layer only dispatches.
 type TaskChannel interface {
 	RunAgent(ctx context.Context, machineID, taskID, repoPath, prompt, provider string) error
+	// CancelAgent signals a running task to stop (AT3). The terminal `canceled`
+	// status arrives asynchronously via agent.done.
+	CancelAgent(ctx context.Context, machineID, taskID string) error
 }
 
 // createTaskRequest is the body of POST /api/machines/{id}/tasks.
@@ -190,6 +193,61 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toTaskView(task))
+}
+
+// handleCancelTask requests cancellation of a running task (AT3). It dispatches
+// agent.cancel to the guest and returns 202; the terminal `canceled` status
+// arrives asynchronously via agent.done (observable on the task SSE / GET). It is
+// idempotent: an already-terminal task is a 200 no-op (never re-dispatched). The
+// partial working tree is left as-is for review via the git-review flow.
+func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	mc, err := s.resolveTerminalMachine(r.Context(), user, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no_machine")
+		return
+	}
+	tid, err := machine.ParseUUID(r.PathValue("tid"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no_task")
+		return
+	}
+	task, err := s.Queries.GetAgentTask(r.Context(), tid)
+	if err != nil || machine.UUIDString(task.MachineID) != machine.UUIDString(mc.ID) {
+		writeError(w, http.StatusNotFound, "no_task")
+		return
+	}
+
+	// Already finished: nothing to cancel (idempotent no-op).
+	if isTerminalTaskStatus(task.Status) {
+		writeJSON(w, http.StatusOK, toTaskView(task))
+		return
+	}
+
+	machineID := machine.UUIDString(mc.ID)
+	taskID := machine.UUIDString(task.ID)
+	if err := s.TaskChannel.CancelAgent(r.Context(), machineID, taskID); err != nil {
+		if errors.Is(err, guestctl.ErrNoChannel) {
+			writeError(w, http.StatusConflict, "machine_not_running")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "dispatch_failed")
+		return
+	}
+
+	uid := uuidString(user.ID)
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID:   uid,
+		Actor:    audit.UserActor(uid),
+		Action:   audit.ActionAgentTaskCancel,
+		Target:   taskID,
+		Metadata: map[string]any{"project": task.Project},
+	})
+	writeJSON(w, http.StatusAccepted, taskIDResponse{TaskID: taskID})
 }
 
 func toTaskView(t store.AgentTask) taskView {

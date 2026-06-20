@@ -62,6 +62,9 @@ type Manager struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]credEntry
+
+	runMu sync.Mutex           // guards runs + each agentRun's fields
+	runs  map[string]*agentRun // in-flight headless runs, by task id (AT3 cancel)
 }
 
 type credEntry struct {
@@ -87,7 +90,7 @@ func New(env []string, owner runas.Identity, kv KV, sec Secrets) *Manager {
 			work = v
 		}
 	}
-	return &Manager{homeDir: home, workDir: work, owner: owner, kv: kv, sec: sec, cache: map[string]credEntry{}}
+	return &Manager{homeDir: home, workDir: work, owner: owner, kv: kv, sec: sec, cache: map[string]credEntry{}, runs: map[string]*agentRun{}}
 }
 
 // HandleControl upgrades GET /control and serves the control channel until the
@@ -264,8 +267,23 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		if err := m.validateRepoPath(p.Path); err != nil {
 			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "invalid project"}
 		}
-		go m.runAgentTask(p)
+		// Register the run synchronously (before the ack) so an agent.cancel racing
+		// the ack still finds a live run to stop.
+		runCtx, cancel := context.WithTimeout(context.Background(), agentTaskTimeout)
+		run := &agentRun{cancel: cancel}
+		m.registerRun(p.TaskID, run)
+		go m.runAgentTask(runCtx, run, p)
 		return nil, nil // immediate ack; completion arrives as agent.done
+
+	case guestwire.OpAgentCancel:
+		var p guestwire.AgentCancelPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.TaskID == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeGitFailed, Message: "bad payload"}
+		}
+		// Idempotent: a no-op if the task is not running on this guest (already
+		// finished, or never here). The canceled run reports agent.done(Canceled).
+		m.cancelRun(p.TaskID)
+		return nil, nil
 
 	default:
 		slog.Warn("control: unknown op", "op", op)

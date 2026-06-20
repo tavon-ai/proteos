@@ -78,23 +78,45 @@ type rawBlock struct {
 	IsError   bool            `json:"is_error"`    // tool_result error flag
 }
 
-// runAgentTask runs the headless agent and reports the outcome (agent.done).
-func (m *Manager) runAgentTask(p guestwire.AgentRunPayload) {
-	ctx, cancel := context.WithTimeout(context.Background(), agentTaskTimeout)
-	defer cancel()
+// agentRun tracks one in-flight headless run so agent.cancel (AT3) can stop it.
+// canceled records that a cancel was requested, so the terminated run reports
+// `canceled` rather than `failed`. Its fields are guarded by Manager.runMu.
+type agentRun struct {
+	cancel   context.CancelFunc
+	canceled bool
+}
+
+// runAgentTask runs the headless agent and reports the outcome (agent.done). ctx
+// (with its cancel held in run) bounds the run and is the cancellation handle;
+// run is already registered by the dispatcher before this goroutine starts, so a
+// cancel arriving immediately after the ack still lands on a live run.
+func (m *Manager) runAgentTask(ctx context.Context, run *agentRun, p guestwire.AgentRunPayload) {
+	defer run.cancel()
+	defer m.unregisterRun(p.TaskID)
 
 	emit := func(ev guestwire.AgentEventPayload) {
 		ev.TaskID = p.TaskID
 		m.emitAgentEvent(ev)
 	}
 	res, err := m.runHeadless(ctx, p.Provider, p.Prompt, p.Path, emit)
-	if err != nil {
+	if err != nil && !m.runWasCanceled(p.TaskID) {
 		slog.Warn("control: agent.run failed", "task", p.TaskID, "err", err)
-		m.reportAgentDone(guestwire.AgentDonePayload{TaskID: p.TaskID, OK: false, Error: sanitizeAgentErr(err.Error())})
-		return
+	}
+	m.reportAgentDone(agentDonePayload(p.TaskID, res, err, m.runWasCanceled(p.TaskID)))
+}
+
+// agentDonePayload maps a run's outcome to the agent.done completion frame. A
+// canceled run is reported as canceled (not failed); otherwise a process/parse
+// error is a failure, and a parsed result carries its is_error + usage.
+func agentDonePayload(taskID string, res agentResult, err error, canceled bool) guestwire.AgentDonePayload {
+	switch {
+	case canceled:
+		return guestwire.AgentDonePayload{TaskID: taskID, OK: false, Canceled: true, Error: "canceled"}
+	case err != nil:
+		return guestwire.AgentDonePayload{TaskID: taskID, OK: false, Error: sanitizeAgentErr(err.Error())}
 	}
 	done := guestwire.AgentDonePayload{
-		TaskID:     p.TaskID,
+		TaskID:     taskID,
 		OK:         !res.IsError,
 		SessionID:  res.SessionID,
 		Summary:    res.Summary,
@@ -108,7 +130,45 @@ func (m *Manager) runAgentTask(p guestwire.AgentRunPayload) {
 			done.Error = "agent reported an error"
 		}
 	}
-	m.reportAgentDone(done)
+	return done
+}
+
+// registerRun records an in-flight run before its goroutine starts.
+func (m *Manager) registerRun(taskID string, run *agentRun) {
+	m.runMu.Lock()
+	m.runs[taskID] = run
+	m.runMu.Unlock()
+}
+
+// unregisterRun drops a finished run from the registry.
+func (m *Manager) unregisterRun(taskID string) {
+	m.runMu.Lock()
+	delete(m.runs, taskID)
+	m.runMu.Unlock()
+}
+
+// cancelRun marks a running task canceled and signals its context (which kills
+// the agent's process group). It is idempotent and a no-op if the task is not
+// running on this guest. Returns whether a live run was found.
+func (m *Manager) cancelRun(taskID string) bool {
+	m.runMu.Lock()
+	run, ok := m.runs[taskID]
+	if ok {
+		run.canceled = true
+	}
+	m.runMu.Unlock()
+	if ok {
+		run.cancel()
+	}
+	return ok
+}
+
+// runWasCanceled reports whether the named run was asked to cancel.
+func (m *Manager) runWasCanceled(taskID string) bool {
+	m.runMu.Lock()
+	defer m.runMu.Unlock()
+	run, ok := m.runs[taskID]
+	return ok && run.canceled
 }
 
 // runHeadless resolves the provider's injected command + env, spawns the agent
@@ -134,9 +194,23 @@ func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string,
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), "HOME="+m.homeDir, "GIT_TERMINAL_PROMPT=0"), env...)
+	// Run the agent in its own process group so a cancel (AT3) or timeout kills the
+	// whole tree — claude spawns child processes (tool calls) that would otherwise
+	// be orphaned. Setpgid makes the child the group leader (pgid == pid).
+	sysProc := &syscall.SysProcAttr{Setpgid: true}
 	if cred := m.owner.Credential(); cred != nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+		sysProc.Credential = cred
 	}
+	cmd.SysProcAttr = sysProc
+	// On ctx cancel (cancel or timeout) signal the whole group, not just the
+	// leader; WaitDelay bounds how long Wait lingers for the group to die.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &cappedBuffer{max: maxAgentStderr}
 	cmd.Stderr = stderr

@@ -1618,8 +1618,7 @@ body {
 .tasks-done {
   color: #2e9e5b;
 }
-.tasks-failed,
-.tasks-canceled {
+.tasks-failed {
   color: var(--error);
 }
 .tasks-queued {
@@ -1647,6 +1646,21 @@ body {
 }
 .tasks-stream-empty {
   padding: 1rem;
+}
+.tasks-stream-bar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+.tasks-canceled {
+  color: var(--muted);
 }
 .tasks-events {
   display: flex;

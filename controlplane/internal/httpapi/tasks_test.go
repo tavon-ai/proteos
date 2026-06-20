@@ -72,7 +72,7 @@ func setupTasks(t *testing.T, machineState string, withKey bool) wtFixture {
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return wtFixture{url: ts.URL, token: token, mid: machine.UUIDString(mc.ID), ch: ch}
+	return wtFixture{url: ts.URL, token: token, mid: machine.UUIDString(mc.ID), ch: ch, q: q}
 }
 
 func TestCreateTask_202(t *testing.T) {
@@ -196,6 +196,80 @@ func TestListTasks(t *testing.T) {
 	_ = json.NewDecoder(list.Body).Decode(&body)
 	if len(body.Tasks) != 1 || body.Tasks[0].Project != "alpha" {
 		t.Fatalf("unexpected task list: %+v", body.Tasks)
+	}
+}
+
+// createTaskFor posts a task and returns its id (status running after dispatch).
+func createTaskFor(t *testing.T, fx wtFixture) string {
+	t.Helper()
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
+		`{"prompt":"do it","provider":"claude","project":"alpha"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create task status = %d, want 202", resp.StatusCode)
+	}
+	var body struct {
+		TaskID string `json:"task_id"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.TaskID == "" {
+		t.Fatal("missing task_id")
+	}
+	return body.TaskID
+}
+
+func TestCancelTask_202DispatchesCancel(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/cancel", "", true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("cancel status = %d, want 202", resp.StatusCode)
+	}
+	if fx.ch.lastCancelTask != taskID {
+		t.Fatalf("guest cancel dispatched for %q, want %q", fx.ch.lastCancelTask, taskID)
+	}
+}
+
+func TestCancelTask_200NoopWhenTerminal(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+
+	// Drive the task to a terminal state directly, then cancel.
+	tid, _ := machine.ParseUUID(taskID)
+	if err := fx.q.FinishAgentTask(context.Background(), store.FinishAgentTaskParams{
+		ID: tid, Status: "done", Usage: []byte("{}"),
+	}); err != nil {
+		t.Fatalf("finish task: %v", err)
+	}
+
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/cancel", "", true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("cancel-after-done status = %d, want 200 (no-op)", resp.StatusCode)
+	}
+	if fx.ch.lastCancelTask != "" {
+		t.Errorf("a terminal task must not dispatch a guest cancel (got %q)", fx.ch.lastCancelTask)
+	}
+}
+
+func TestCancelTask_RequiresCSRF(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/cancel", "", false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
+	}
+}
+
+func TestCancelTask_404Unknown(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/11111111-1111-1111-1111-111111111111/cancel", "", true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
 

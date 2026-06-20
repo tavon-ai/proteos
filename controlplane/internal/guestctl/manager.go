@@ -415,7 +415,10 @@ func (m *Manager) handleAgentDone(ctx context.Context, payload json.RawMessage) 
 		return
 	}
 	status := "done"
-	if !done.OK {
+	switch {
+	case done.Canceled:
+		status = "canceled"
+	case !done.OK:
 		status = "failed"
 	}
 
@@ -482,6 +485,21 @@ func (m *Manager) RunAgent(ctx context.Context, machineID, taskID, repoPath, pro
 	_, err := c.request(rctx, guestwire.OpAgentRun, guestwire.AgentRunPayload{
 		TaskID: taskID, Path: repoPath, Prompt: prompt, Provider: provider,
 	})
+	return err
+}
+
+// CancelAgent signals a running task to stop (AT3) and returns once the guest
+// acks. The cancel is idempotent on the guest; the terminated run reports
+// agent.done(Canceled) which flips the task to canceled. ErrNoChannel if the
+// machine has no live channel.
+func (m *Manager) CancelAgent(ctx context.Context, machineID, taskID string) error {
+	c := m.getConn(machineID)
+	if c == nil {
+		return ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	_, err := c.request(rctx, guestwire.OpAgentCancel, guestwire.AgentCancelPayload{TaskID: taskID})
 	return err
 }
 

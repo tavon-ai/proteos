@@ -36,6 +36,7 @@ type fakeGuest struct {
 	waiters    map[int64]chan guestwire.ControlFrame
 	configured chan guestwire.GitConfigurePayload
 	cloned     chan guestwire.GitClonePayload
+	canceled   chan guestwire.AgentCancelPayload
 }
 
 func newFakeGuest() *fakeGuest {
@@ -43,6 +44,7 @@ func newFakeGuest() *fakeGuest {
 		waiters:    map[int64]chan guestwire.ControlFrame{},
 		configured: make(chan guestwire.GitConfigurePayload, 4),
 		cloned:     make(chan guestwire.GitClonePayload, 4),
+		canceled:   make(chan guestwire.AgentCancelPayload, 4),
 	}
 }
 
@@ -95,6 +97,11 @@ func (g *fakeGuest) onReq(ctx context.Context, f guestwire.ControlFrame) {
 		// Report completion back to the CP (guest → CP notification).
 		go g.write(ctx, guestwire.ControlFrame{ID: 99999, Kind: guestwire.ControlReq, Op: guestwire.OpGitCloneDone,
 			Payload: mustMarshal(guestwire.GitCloneDonePayload{OpID: p.OpID, OK: true})})
+	case guestwire.OpAgentCancel:
+		var p guestwire.AgentCancelPayload
+		_ = json.Unmarshal(f.Payload, &p)
+		g.write(ctx, guestwire.ControlFrame{ID: f.ID, Kind: guestwire.ControlResp})
+		g.canceled <- p
 	}
 }
 
@@ -395,6 +402,97 @@ func TestControlChannel_AgentEventFanOut(t *testing.T) {
 	last := backlog[len(backlog)-1]
 	if !last.Terminal || !strings.Contains(string(last.Data), "\"kind\":\"result\"") {
 		t.Fatalf("final frame not a terminal result: %+v", last)
+	}
+}
+
+func TestControlChannel_CancelAgentDispatch(t *testing.T) {
+	mgr, broker, fg, mc, _, _ := setupManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	machineID := machine.UUIDString(mc.ID)
+	go func() {
+		for range 60 {
+			if mgr.HasChannel(machineID) {
+				return
+			}
+			broker.Publish(machine.Update{Machine: mc})
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	waitChannel(t, mgr, machineID)
+
+	if err := mgr.CancelAgent(ctx, machineID, "task-9"); err != nil {
+		t.Fatalf("CancelAgent: %v", err)
+	}
+	select {
+	case p := <-fg.canceled:
+		if p.TaskID != "task-9" {
+			t.Fatalf("guest got cancel for %q, want task-9", p.TaskID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("guest never received agent.cancel")
+	}
+
+	// No live channel ⇒ ErrNoChannel.
+	if err := mgr.CancelAgent(ctx, "00000000-0000-0000-0000-000000000000", "task-9"); err != guestctl.ErrNoChannel {
+		t.Fatalf("CancelAgent on unknown machine = %v, want ErrNoChannel", err)
+	}
+}
+
+func TestControlChannel_AgentDoneCanceled(t *testing.T) {
+	mgr, broker, fg, mc, q, hub := setupManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	machineID := machine.UUIDString(mc.ID)
+	go func() {
+		for range 60 {
+			if mgr.HasChannel(machineID) {
+				return
+			}
+			broker.Publish(machine.Update{Machine: mc})
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	waitChannel(t, mgr, machineID)
+
+	task, err := q.InsertAgentTask(ctx, store.InsertAgentTaskParams{
+		MachineID: mc.ID, UserID: mc.UserID, Provider: "claude", Project: "alpha", Prompt: "x",
+	})
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	taskID := machine.UUIDString(task.ID)
+
+	// The guest reports the run ended via cancellation.
+	fg.guestRequest(t, guestwire.OpAgentDone, guestwire.AgentDonePayload{
+		TaskID: taskID, OK: false, Canceled: true, Error: "canceled",
+	})
+
+	// The task row reaches the terminal `canceled` state (not failed).
+	for i := 0; i < 80; i++ {
+		got, err := q.GetAgentTask(ctx, task.ID)
+		if err == nil && got.Status == "canceled" {
+			break
+		}
+		if i == 79 {
+			t.Fatal("task never reached canceled")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The live stream gets a terminal result frame carrying status canceled.
+	backlog, _, cancelSub, terminal := hub.Subscribe(taskID, 0)
+	cancelSub()
+	if !terminal || len(backlog) == 0 {
+		t.Fatalf("expected terminal stream, got backlog=%d terminal=%v", len(backlog), terminal)
+	}
+	last := backlog[len(backlog)-1]
+	if !last.Terminal || !strings.Contains(string(last.Data), `"status":"canceled"`) {
+		t.Fatalf("final frame not a canceled result: %s", last.Data)
 	}
 }
 

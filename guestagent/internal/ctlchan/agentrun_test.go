@@ -3,10 +3,12 @@ package ctlchan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	guestwire "github.com/tavon/proteos/guestagent/api"
 	"github.com/tavon/proteos/guestagent/internal/runas"
@@ -182,6 +184,87 @@ func TestRunHeadless(t *testing.T) {
 	}
 	if res.CostUSD != 0.5 || res.NumTurns != 2 {
 		t.Fatalf("usage not captured: %+v", res)
+	}
+}
+
+func TestAgentDonePayload(t *testing.T) {
+	// Canceled outranks an error: the run is reported as canceled, not failed.
+	d := agentDonePayload("t1", agentResult{}, errors.New("boom"), true)
+	if d.OK || !d.Canceled || d.Error != "canceled" {
+		t.Fatalf("canceled mapping = %+v", d)
+	}
+	// A process/parse error with no cancel → failed (OK=false, Canceled=false).
+	d = agentDonePayload("t1", agentResult{}, errors.New("boom"), false)
+	if d.OK || d.Canceled || d.Error == "" {
+		t.Fatalf("error mapping = %+v", d)
+	}
+	// A clean result → OK with session id + usage.
+	d = agentDonePayload("t1", agentResult{SessionID: "s", Summary: "ok", CostUSD: 0.2}, nil, false)
+	if !d.OK || d.Canceled || d.SessionID != "s" || d.Summary != "ok" {
+		t.Fatalf("success mapping = %+v", d)
+	}
+	// An is_error result → not OK, error taken from the subtype.
+	d = agentDonePayload("t1", agentResult{IsError: true, Subtype: "error_max_turns"}, nil, false)
+	if d.OK || d.Error != "error_max_turns" {
+		t.Fatalf("is_error mapping = %+v", d)
+	}
+}
+
+func TestCancelRun_Registry(t *testing.T) {
+	m := New([]string{"PROTEOS_WORKSPACE=" + t.TempDir()}, runas.Root(), nil, nil)
+	// Canceling an unknown task is a no-op (idempotent).
+	if m.cancelRun("nope") {
+		t.Error("cancelRun on unknown task should be false")
+	}
+	called := false
+	m.registerRun("t1", &agentRun{cancel: func() { called = true }})
+	if !m.cancelRun("t1") {
+		t.Fatal("cancelRun should find the registered run")
+	}
+	if !called {
+		t.Error("cancelRun should invoke the run's cancel func")
+	}
+	if !m.runWasCanceled("t1") {
+		t.Error("runWasCanceled should reflect the cancel")
+	}
+	m.unregisterRun("t1")
+	if m.runWasCanceled("t1") {
+		t.Error("an unregistered run should not report canceled")
+	}
+}
+
+func TestRunHeadless_CanceledKillsProcessGroup(t *testing.T) {
+	// A fake `claude` that emits one event then sleeps far longer than the test —
+	// canceling the context must terminate it (and its group) promptly.
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		`printf '%s\n' '{"type":"system","session_id":"s1"}'` + "\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	work := t.TempDir()
+	m := New([]string{"PROTEOS_WORKSPACE=" + work, "HOME=" + t.TempDir()}, runas.Root(), nil, fakeSecrets{cmd: "claude"})
+	repo := filepath.Join(work, "alpha")
+	gitInit(t, repo, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = m.runHeadless(ctx, "claude", "x", repo, nil)
+		close(done)
+	}()
+	// Let it spawn + emit, then cancel.
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// returned promptly — the kill worked
+	case <-time.After(10 * time.Second):
+		t.Fatal("runHeadless did not return promptly after cancel (process not killed)")
 	}
 }
 

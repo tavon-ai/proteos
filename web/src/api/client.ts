@@ -537,6 +537,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     }),
+  // Cancel a running task (AT3). 202 dispatches the cancel; the terminal
+  // `canceled` status arrives over the task SSE. 200 is an idempotent no-op when
+  // the task already finished; 409 machine_not_running — all ApiError otherwise.
+  cancelTask: (machineID: string, taskID: string) =>
+    request<TaskCreated | AgentTask>(
+      `/api/machines/${encodeURIComponent(machineID)}/tasks/${encodeURIComponent(taskID)}/cancel`,
+      { method: 'POST' },
+    ),
 };
 
 // taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),

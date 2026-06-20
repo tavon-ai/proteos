@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ApiError, type AgentTask, type MachineState, type TaskEvent } from '../api/client';
-import { useCreateTask, useProviders, useTaskEvents, useTasks } from '../api/hooks';
+import { useCancelTask, useCreateTask, useProviders, useTaskEvents, useTasks } from '../api/hooks';
 
 // TasksWindow is the headless task lane's live view (AT1/AT2): hand a project a
 // natural-language task, watch the coding agent work in real time as structured
@@ -23,6 +23,7 @@ export function TasksWindow({
 
   const tasks = useTasks(machineId, running);
   const createTask = useCreateTask(machineId);
+  const cancelTask = useCancelTask(machineId);
   const providers = useProviders();
   const [selected, setSelected] = useState<string | null>(null);
   const events = useTaskEvents(machineId, selected);
@@ -86,7 +87,12 @@ export function TasksWindow({
       </div>
       <div className="tasks-stream">
         {selected ? (
-          <TaskStream events={events} task={rows.find((t) => t.id === selected)} />
+          <TaskStream
+            events={events}
+            task={rows.find((t) => t.id === selected)}
+            onCancel={() => selected && cancelTask.mutate(selected)}
+            canceling={cancelTask.isPending}
+          />
         ) : (
           <p className="muted tasks-stream-empty">Select a task to watch its live stream.</p>
         )}
@@ -160,12 +166,31 @@ function TaskForm({
 }
 
 // TaskStream renders the normalized agent events as they arrive.
-function TaskStream({ events, task }: { events: TaskEvent[]; task?: AgentTask }) {
+function TaskStream({
+  events,
+  task,
+  onCancel,
+  canceling,
+}: {
+  events: TaskEvent[];
+  task?: AgentTask;
+  onCancel: () => void;
+  canceling: boolean;
+}) {
   // Until the live stream produces a terminal frame, a finished task (selected
   // after the fact) still shows its stored summary via the task row.
   const terminal = events.find((e) => e.kind === 'result');
+  const active = task && (task.status === 'running' || task.status === 'queued') && !terminal;
   return (
     <div className="tasks-events">
+      {active && (
+        <div className="tasks-stream-bar">
+          <span className="muted">Agent is working…</span>
+          <button className="btn-ghost" onClick={onCancel} disabled={canceling}>
+            {canceling ? 'Canceling…' : 'Cancel'}
+          </button>
+        </div>
+      )}
       {events.length === 0 && (
         <p className="muted tasks-stream-empty">
           {task && (task.status === 'done' || task.status === 'failed')
@@ -177,9 +202,11 @@ function TaskStream({ events, task }: { events: TaskEvent[]; task?: AgentTask })
         <EventRow key={i} ev={ev} />
       ))}
       {terminal && (
-        <div className={`tasks-result${terminal.is_error ? ' is-error' : ''}`} role="status">
-          {terminal.is_error ? '✗ ' : '✓ '}
-          {terminal.text || (terminal.is_error ? terminal.error || 'failed' : 'done')}
+        <div
+          className={`tasks-result${terminal.is_error && terminal.status !== 'canceled' ? ' is-error' : ''}`}
+          role="status"
+        >
+          {resultGlyph(terminal)} {resultText(terminal)}
           {typeof terminal.cost_usd === 'number' && terminal.cost_usd > 0 && (
             <span className="tasks-result-meta">
               {' '}
@@ -214,6 +241,17 @@ function EventRow({ ev }: { ev: TaskEvent }) {
     default:
       return null; // the terminal `result` is rendered by TaskStream
   }
+}
+
+function resultGlyph(ev: TaskEvent): string {
+  if (ev.status === 'canceled') return '⊘';
+  return ev.is_error ? '✗' : '✓';
+}
+
+function resultText(ev: TaskEvent): string {
+  if (ev.status === 'canceled') return 'Canceled';
+  if (ev.text) return ev.text;
+  return ev.is_error ? ev.error || 'failed' : 'done';
 }
 
 function summarizeInput(input: unknown): string {

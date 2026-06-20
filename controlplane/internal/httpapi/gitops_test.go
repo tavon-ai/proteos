@@ -57,6 +57,8 @@ type fakeWorktree struct {
 	lastRunPath     string
 	lastRunPrompt   string
 	lastRunProvider string
+	lastCancelTask  string
+	cancelErr       error
 }
 
 func (f *fakeWorktree) HasChannel(string) bool { return !f.noChan }
@@ -112,11 +114,18 @@ func (f *fakeWorktree) RunAgent(_ context.Context, _, taskID, repoPath, prompt, 
 	return f.runErr
 }
 
+// CancelAgent records a cancel dispatch (AT3).
+func (f *fakeWorktree) CancelAgent(_ context.Context, _, taskID string) error {
+	f.lastCancelTask = taskID
+	return f.cancelErr
+}
+
 type wtFixture struct {
 	url   string
 	token string
 	mid   string
 	ch    *fakeWorktree
+	q     *store.Queries // set by setupTasks (AT1/AT3 task tests); nil elsewhere
 }
 
 func setupWorktree(t *testing.T, machineState string, ch *fakeWorktree) wtFixture {

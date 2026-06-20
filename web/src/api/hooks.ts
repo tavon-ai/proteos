@@ -339,6 +339,17 @@ export function useCreateTask(machineId: string | null) {
   });
 }
 
+// useCancelTask requests cancellation of a running task (AT3); on success it
+// invalidates the list so the row reflects the pending stop (the terminal
+// `canceled` status then arrives over the task SSE).
+export function useCancelTask(machineId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => api.cancelTask(machineId as string, taskId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: tasksKey(machineId) }),
+  });
+}
+
 // useTaskEvents subscribes to one task's live agent-event SSE stream (AT2),
 // accumulating normalized events for display. The browser EventSource replays
 // Last-Event-ID on its own reconnect; we close it on the terminal `result` frame

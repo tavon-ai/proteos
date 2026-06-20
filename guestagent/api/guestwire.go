@@ -168,6 +168,11 @@ const (
 	OpAgentRun  = "agent.run"  // CP → guest (acked; completion via OpAgentDone)
 	OpAgentDone = "agent.done" // guest → CP (completion notification)
 
+	// AT3 cancel. agent.cancel signals a running task's process group to stop; the
+	// guest acks immediately (idempotent — a no-op if the task is not running on
+	// this guest) and the terminated run reports agent.done with Canceled set.
+	OpAgentCancel = "agent.cancel" // CP → guest (acked; outcome via OpAgentDone)
+
 	// AT2 live event stream. As a headless run produces stream-json, the guest
 	// normalizes each event and relays it as a one-way agent.event notification
 	// (guest → CP), which the CP fans out to the task SSE stream. The terminal
@@ -311,15 +316,24 @@ type AgentRunPayload struct {
 // earlier agent.run, correlated by TaskID. SessionID is the coding agent's own
 // session id (for resume). OK is false when the agent reported an error result
 // or the process failed; Error is then a sanitized detail (never a token).
+// Canceled marks a run the CP asked to stop via agent.cancel (AT3) — the CP maps
+// it to the terminal `canceled` status rather than `failed`.
 type AgentDonePayload struct {
 	TaskID     string  `json:"task_id"`
 	OK         bool    `json:"ok"`
+	Canceled   bool    `json:"canceled,omitempty"`
 	SessionID  string  `json:"session_id,omitempty"`
 	Summary    string  `json:"summary,omitempty"`
 	CostUSD    float64 `json:"cost_usd,omitempty"`
 	NumTurns   int     `json:"num_turns,omitempty"`
 	DurationMS int     `json:"duration_ms,omitempty"`
 	Error      string  `json:"error,omitempty"`
+}
+
+// AgentCancelPayload is the req payload of agent.cancel (AT3): the task whose
+// running agent process group the guest should terminate.
+type AgentCancelPayload struct {
+	TaskID string `json:"task_id"`
 }
 
 // AgentEvent kinds (the Kind field of an AgentEventPayload). These are the
