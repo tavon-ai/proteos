@@ -277,6 +277,8 @@ func run(migrate, migrateOnly bool) error {
 		srv.GitHubAppSlug = cfg.GitHubAppSlug
 		// Phase 9: the same control-channel manager backs projects.list + kv.*.
 		srv.Projects = guestCtl
+		// GR1: and the worktree-review git status/diff surface.
+		srv.GitWorktree = guestCtl
 	}
 
 	httpServer := &http.Server{

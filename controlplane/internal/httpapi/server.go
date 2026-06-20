@@ -67,6 +67,11 @@ type Server struct {
 	// /api/machine/desktop and makes session cwd validation reject any non-empty
 	// cwd (no listable set to check against).
 	Projects ProjectChannel
+
+	// GR1: the worktree-review control-channel surface (git status/diff over a
+	// listable project). *guestctl.Manager satisfies it. Nil disables the
+	// /api/machines/{id}/git/* routes.
+	GitWorktree GitWorktree
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
@@ -135,6 +140,14 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/projects", s.requireAuth(http.HandlerFunc(s.handleProjects)))
 		mux.Handle("GET /api/machine/desktop", s.requireAuth(http.HandlerFunc(s.handleGetDesktop)))
 		mux.Handle("PUT /api/machine/desktop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handlePutDesktop))))
+	}
+
+	// Worktree review (GR1): read a project's git status/diff over the control
+	// channel. Both are reads (auth only, no CSRF). Enabled only when the
+	// worktree surface is wired.
+	if s.GitWorktree != nil {
+		mux.Handle("GET /api/machines/{id}/git/status", s.requireAuth(http.HandlerFunc(s.handleGitStatus)))
+		mux.Handle("GET /api/machines/{id}/git/diff", s.requireAuth(http.HandlerFunc(s.handleGitDiff)))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check

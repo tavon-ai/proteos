@@ -14,6 +14,7 @@ type WindowKind =
   | 'agent'
   | 'editor'
   | 'preview'
+  | 'changes'
   | 'logs'
   | 'settings'
   | 'projects'
@@ -73,6 +74,7 @@ const DEFAULT_SIZE: Record<WindowKind, { width: number; height: number }> = {
   agent: { width: 760, height: 520 },
   editor: { width: 1000, height: 680 },
   preview: { width: 900, height: 640 },
+  changes: { width: 760, height: 560 },
   logs: { width: 560, height: 420 },
   settings: { width: 640, height: 540 },
   projects: { width: 600, height: 480 },
@@ -145,6 +147,8 @@ function dedupeKeyOf(w: WindowState): string | undefined {
       return `${w.machineId ?? ''}|${w.folder ?? w.projectId ?? ''}`;
     case 'preview':
       return `${w.machineId ?? ''}|${w.port ?? ''}`;
+    case 'changes':
+      return `${w.machineId ?? ''}|${w.projectId ?? ''}`;
     case 'projects':
       return `projects|${w.machineId ?? ''}`;
     case 'settings':
@@ -324,7 +328,7 @@ export interface PersistedLayout {
 // desktop saves one machine's subset at a time.
 export function serializeLayout(state: DesktopState, machineId?: string): PersistedLayout {
   const windows = state.windows
-    .filter((w) => w.kind !== 'placeholder' && w.kind !== 'projects')
+    .filter((w) => w.kind !== 'placeholder' && w.kind !== 'projects' && w.kind !== 'changes')
     .filter((w) => machineId === undefined || w.machineId === machineId)
     .map<PersistedWindow>((w) => ({
       id: w.id,

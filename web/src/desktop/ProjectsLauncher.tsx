@@ -9,7 +9,7 @@ import {
 } from '../api/hooks';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { useWindowManager } from './windowManagerContext';
-import { openAgent, openEditor, openSettings, openTerminal } from './openers';
+import { openAgent, openChanges, openEditor, openSettings, openTerminal } from './openers';
 import { parseRepoRef } from './repoRef';
 import { looksLikeGrantFailure } from './cloneFailure';
 
@@ -118,6 +118,12 @@ function ProjectTile({
           onClick={() => machineId && openTerminal(wm, machineId, project)}
         >
           Terminal
+        </button>
+        <button
+          className="btn-secondary"
+          onClick={() => machineId && openChanges(wm, machineId, project)}
+        >
+          Changes
         </button>
         <div className="agent-menu-wrap">
           <button className="btn-primary" onClick={() => setAgentMenu((s) => !s)}>

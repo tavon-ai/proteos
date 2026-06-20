@@ -362,6 +362,48 @@ func (m *Manager) ListProjects(ctx context.Context, machineID string) ([]guestwi
 	return resp.Projects, nil
 }
 
+// GitStatus reads a project's working-tree change set over the channel (GR1).
+// repoPath is the absolute repo path the CP resolved from a listable project.
+// ErrNoChannel if the machine has no live channel.
+func (m *Manager) GitStatus(ctx context.Context, machineID, repoPath string) (guestwire.GitStatusResponse, error) {
+	c := m.getConn(machineID)
+	if c == nil {
+		return guestwire.GitStatusResponse{}, ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	raw, err := c.request(rctx, guestwire.OpGitStatus, guestwire.GitStatusPayload{Path: repoPath})
+	if err != nil {
+		return guestwire.GitStatusResponse{}, err
+	}
+	var resp guestwire.GitStatusResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return guestwire.GitStatusResponse{}, err
+	}
+	return resp, nil
+}
+
+// GitDiff reads a project's unified diff over the channel (GR1). staged selects
+// the index diff over the worktree diff. ErrNoChannel if the machine has no live
+// channel.
+func (m *Manager) GitDiff(ctx context.Context, machineID, repoPath string, staged bool) (guestwire.GitDiffResponse, error) {
+	c := m.getConn(machineID)
+	if c == nil {
+		return guestwire.GitDiffResponse{}, ErrNoChannel
+	}
+	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	raw, err := c.request(rctx, guestwire.OpGitDiff, guestwire.GitDiffPayload{Path: repoPath, Staged: staged})
+	if err != nil {
+		return guestwire.GitDiffResponse{}, err
+	}
+	var resp guestwire.GitDiffResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return guestwire.GitDiffResponse{}, err
+	}
+	return resp, nil
+}
+
 // KVGet reads a value from the machine's SQLite kv table over the channel
 // (Phase 9 decision #6). A nil return with nil error means the key is unset.
 // ErrNoChannel if the machine has no live channel.

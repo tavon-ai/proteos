@@ -161,7 +161,57 @@ const (
 	OpProjectsList = "projects.list" // CP → guest (resp: ProjectsListResponse)
 	OpKVGet        = "kv.get"        // CP → guest (resp: KVGetResponse)
 	OpKVSet        = "kv.set"        // CP → guest (resp: KVSetResponse)
+
+	// GR1 (CP → guest). git.status reads a repo's working-tree change set;
+	// git.diff reads its unified diff (worktree or staged). Both are read-only,
+	// run as the unprivileged owner against an absolute path under WorkspaceRoot
+	// that the CP has already matched to a listable project (decision: the guest
+	// re-checks containment + that it is a git repo — defence in depth).
+	OpGitStatus = "git.status" // CP → guest (resp: GitStatusResponse)
+	OpGitDiff   = "git.diff"   // CP → guest (resp: GitDiffResponse)
 )
+
+// GitFileStatus is one changed path in a git.status response. Index and Worktree
+// are the two porcelain-v1 status codes for that path: Index is the staged
+// (index-vs-HEAD) state, Worktree is the unstaged (worktree-vs-index) state. Each
+// is a single character — e.g. "M" modified, "A" added, "D" deleted, "R" renamed,
+// "?" untracked (both fields "?"), " " unchanged in that area. Orig is set only
+// for renames/copies and holds the path the change came from.
+type GitFileStatus struct {
+	Path     string `json:"path"`
+	Orig     string `json:"orig,omitempty"`
+	Index    string `json:"index"`
+	Worktree string `json:"worktree"`
+}
+
+// GitStatusPayload is the req payload of git.status. Path is the absolute repo
+// path under WorkspaceRoot (the CP resolves the caller's project name to it).
+type GitStatusPayload struct {
+	Path string `json:"path"`
+}
+
+// GitStatusResponse is the resp payload of git.status. Branch is the current
+// branch (or short HEAD sha when detached); Files is empty on a clean tree.
+type GitStatusResponse struct {
+	Branch string          `json:"branch,omitempty"`
+	Files  []GitFileStatus `json:"files"`
+}
+
+// GitDiffPayload is the req payload of git.diff. Staged selects the index diff
+// (git diff --cached) rather than the worktree diff. Diffs cover tracked changes
+// only; untracked files appear in git.status (Index/Worktree "?") instead.
+type GitDiffPayload struct {
+	Path   string `json:"path"`
+	Staged bool   `json:"staged"`
+}
+
+// GitDiffResponse is the resp payload of git.diff. Diff is a unified diff,
+// capped at a fixed byte budget; Truncated reports whether the cap was hit (the
+// review UI then tells the user the diff is too large to show in full).
+type GitDiffResponse struct {
+	Diff      string `json:"diff"`
+	Truncated bool   `json:"truncated"`
+}
 
 // Project is one cloned repository under WorkspaceRoot, as returned by
 // projects.list. Times are RFC3339 (empty when unknown, e.g. an empty repo).

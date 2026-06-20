@@ -216,6 +216,33 @@ export interface ProjectsResponse {
   projects: Project[];
 }
 
+// GitFileStatus is one changed path in GET /api/machines/{id}/git/status (GR1).
+// index/worktree are single-character porcelain codes: the staged (index-vs-HEAD)
+// and unstaged (worktree-vs-index) states — e.g. "M" modified, "A" added, "D"
+// deleted, "R" renamed, "?" untracked (both fields), " " unchanged in that area.
+// orig is set only for renames/copies (the path the change came from).
+export interface GitFileStatus {
+  path: string;
+  orig?: string;
+  index: string;
+  worktree: string;
+}
+
+// GitStatusResponse is GET /api/machines/{id}/git/status: the current branch and
+// the working-tree change set (empty files ⇒ a clean tree).
+export interface GitStatusResponse {
+  branch?: string;
+  files: GitFileStatus[];
+}
+
+// GitDiffResponse is GET /api/machines/{id}/git/diff: a unified diff, capped on
+// the guest. truncated ⇒ the diff exceeded the cap and was cut (inspect the rest
+// in the terminal/editor). Tracked changes only — untracked files show in status.
+export interface GitDiffResponse {
+  diff: string;
+  truncated: boolean;
+}
+
 // DesktopLayout is the opaque serialized window layout stored in machine SQLite
 // (Phase 9 decision #6). The control plane relays it verbatim; only the desktop
 // understands its shape. null ⇒ no layout saved yet.
@@ -358,6 +385,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name: fullName }),
     }),
+
+  // Worktree review (GR1): read a project's git status / unified diff. project is
+  // the repo's /workspace directory name. 400 bad_project if it is not a listable
+  // project; 409 machine_not_running; 502 guest_unreachable (all ApiError).
+  gitStatus: (machineID: string, project: string) =>
+    request<GitStatusResponse>(
+      `/api/machines/${encodeURIComponent(machineID)}/git/status?project=${encodeURIComponent(project)}`,
+    ),
+  gitDiff: (machineID: string, project: string, staged: boolean) =>
+    request<GitDiffResponse>(
+      `/api/machines/${encodeURIComponent(machineID)}/git/diff?project=${encodeURIComponent(project)}&staged=${staged ? 'true' : 'false'}`,
+    ),
 };
 
 // SSE endpoint for live machine state; consumed by useMachineEvents via the

@@ -425,6 +425,110 @@ body {
   background: #fff;
 }
 
+/* --- GR1: worktree review (Changes window) -------------------------------- */
+
+.changes-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.changes-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.changes-branch {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.changes-toggle {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.changes-empty {
+  padding: 0.6rem;
+}
+
+.changes-files {
+  flex: 0 0 auto;
+  max-height: 38%;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.3rem 0;
+  list-style: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.changes-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.changes-code {
+  flex: 0 0 auto;
+  width: 1.4rem;
+  text-align: center;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 700;
+  border-radius: 3px;
+}
+
+.changes-code-added {
+  color: #1a7f37;
+}
+.changes-code-deleted {
+  color: #cf222e;
+}
+.changes-code-renamed {
+  color: #8250df;
+}
+.changes-code-untracked {
+  color: var(--muted);
+}
+.changes-code-modified {
+  color: #9a6700;
+}
+
+.changes-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.changes-truncated {
+  padding: 0.4rem 0.6rem 0;
+}
+
+.changes-diff-body {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
 /* --- Phase 5: providers panel + agent launch ------------------------------- */
 
 /* Primary action accent (Launch Claude Code) — distinguishes the agent launch

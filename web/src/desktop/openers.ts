@@ -67,6 +67,20 @@ export function openAgent(
   });
 }
 
+// openChanges opens the worktree-review window for a project (GR1): one window
+// per (machine, project), so reopening focuses the existing one. It is ephemeral
+// (not persisted in the saved layout) — the diff is fetched live on open.
+export function openChanges(wm: WindowManagerContext, machineId: string, project: Project): void {
+  wm.open({
+    id: `changes-${machineId}-${project.path}`,
+    kind: 'changes',
+    title: `Changes — ${projectLabel(project)}`,
+    machineId,
+    projectId: project.path,
+    dedupeKey: `${machineId}|${project.path}`,
+  });
+}
+
 export function openEditor(wm: WindowManagerContext, machineId: string, project: Project): void {
   wm.open({
     id: `editor-${machineId}-${project.path}`,

@@ -187,6 +187,30 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		}
 		return mustJSON(guestwire.KVSetResponse{OK: true}), nil
 
+	case guestwire.OpGitStatus:
+		var p guestwire.GitStatusPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Path == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "bad payload"}
+		}
+		resp, err := m.gitStatus(ctx, p.Path)
+		if err != nil {
+			slog.Error("control: git.status failed", "err", err)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "status failed"}
+		}
+		return mustJSON(resp), nil
+
+	case guestwire.OpGitDiff:
+		var p guestwire.GitDiffPayload
+		if err := json.Unmarshal(payload, &p); err != nil || p.Path == "" {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "bad payload"}
+		}
+		resp, err := m.gitDiff(ctx, p.Path, p.Staged)
+		if err != nil {
+			slog.Error("control: git.diff failed", "err", err)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "diff failed"}
+		}
+		return mustJSON(resp), nil
+
 	default:
 		slog.Warn("control: unknown op", "op", op)
 		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "unknown op: " + op}

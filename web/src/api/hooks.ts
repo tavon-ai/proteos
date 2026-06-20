@@ -210,6 +210,46 @@ export function useCloneRepo(machineId: string | null) {
   });
 }
 
+// Worktree review (GR1): a project's git status / unified diff, keyed by
+// (machine, project) so switching either refetches. Both 409 when the machine is
+// not running and 400 on a bad project — ApiError, not retried. The Changes
+// window refetches on demand (a Refresh button) and on the git.clone SSE event.
+const gitStatusKey = (machineId: string | null, project: string) =>
+  ['git-status', machineId, project] as const;
+const gitDiffKey = (machineId: string | null, project: string, staged: boolean) =>
+  ['git-diff', machineId, project, staged] as const;
+
+export function useGitStatus(machineId: string | null, project: string, enabled: boolean) {
+  return useQuery({
+    queryKey: gitStatusKey(machineId, project),
+    queryFn: () => api.gitStatus(machineId as string, project),
+    enabled: enabled && !!machineId && !!project,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+export function useGitDiff(
+  machineId: string | null,
+  project: string,
+  staged: boolean,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: gitDiffKey(machineId, project, staged),
+    queryFn: () => api.gitDiff(machineId as string, project, staged),
+    enabled: enabled && !!machineId && !!project,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
 export function reconnectRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';
