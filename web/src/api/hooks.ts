@@ -294,6 +294,15 @@ export function useGitPush(machineId: string | null, project: string) {
   });
 }
 
+// useGitPR opens a pull request for the project (GR5). It returns the PR URL +
+// number directly (a synchronous CP→GitHub call); the caller shows the link.
+export function useGitPR(machineId: string | null, project: string) {
+  return useMutation({
+    mutationFn: ({ title, body, head }: { title: string; body: string; head: string }) =>
+      api.gitPR(machineId as string, project, title, body, head),
+  });
+}
+
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
 export function reconnectRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';

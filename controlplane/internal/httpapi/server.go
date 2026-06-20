@@ -154,6 +154,11 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/machines/{id}/git/commit", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitCommit))))
 		// Push is async (GR4): 202 + op_id, completion over SSE. CSRF-guarded.
 		mux.Handle("POST /api/machines/{id}/git/push", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitPush))))
+		// Open PR (GR5) — a CP→GitHub call, so it also needs the GitHub client +
+		// token source. The final hop of the review→ship loop.
+		if s.GitHub != nil && s.Tokens != nil {
+			mux.Handle("POST /api/machines/{id}/git/pr", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitPR))))
+		}
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check

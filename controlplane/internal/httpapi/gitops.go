@@ -10,6 +10,7 @@ import (
 	guestwire "github.com/tavon/proteos/guestagent/api"
 
 	"github.com/tavon/proteos/controlplane/internal/audit"
+	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/guestctl"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -282,6 +283,186 @@ func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"op_id": opID, "branch": req.Branch},
 	})
 	writeJSON(w, http.StatusAccepted, pushResponse{OpID: opID})
+}
+
+// prRequest is the body of POST /api/machines/{id}/git/pr (GR5). Head is the
+// (already pushed) branch with the changes; Base defaults to the repo's default
+// branch when empty.
+type prRequest struct {
+	Project string `json:"project"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	Head    string `json:"head"`
+	Base    string `json:"base"`
+}
+
+// prResponse is the 200 body of POST .../git/pr: the opened PR's URL and number.
+type prResponse struct {
+	PRURL  string `json:"pr_url"`
+	Number int    `json:"number"`
+}
+
+// handleGitPR opens a pull request from Head into Base (GR5) — the only git hop
+// that is a CP→GitHub call, not a guest verb. owner/repo come from the project's
+// origin remote; Base defaults to the repo's default branch. The user's OAuth
+// token authorizes the call (same path as repo listing).
+func (s *Server) handleGitPR(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req prRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Project == "" || req.Title == "" || req.Head == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !guestwire.ValidBranchName(req.Head) || (req.Base != "" && !guestwire.ValidBranchName(req.Base)) {
+		writeError(w, http.StatusBadRequest, "invalid_branch_name")
+		return
+	}
+	machineID, ok := s.resolveWorktreeMachine(w, r, user)
+	if !ok {
+		return
+	}
+	remote, code := s.resolveProjectRemote(r.Context(), machineID, req.Project)
+	if code == "no_remote" {
+		writeError(w, http.StatusUnprocessableEntity, "no_remote")
+		return
+	}
+	if code != "" {
+		writeError(w, projectErrorStatus(code), code)
+		return
+	}
+	owner, repo, ok := parseOwnerRepo(remote)
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "bad_remote")
+		return
+	}
+
+	uid := uuidString(user.ID)
+	cred, err := s.Tokens.Token(r.Context(), uid)
+	if errors.Is(err, github.ErrReconnectGitHub) {
+		writeError(w, http.StatusConflict, "reconnect_github")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "github_unavailable")
+		return
+	}
+
+	base := req.Base
+	if base == "" {
+		rp, err := s.GitHub.GetRepo(r.Context(), cred.AccessToken, owner, repo)
+		if err != nil || rp.DefaultBranch == "" {
+			writeError(w, http.StatusBadGateway, "github_unavailable")
+			return
+		}
+		base = rp.DefaultBranch
+	}
+
+	pr, err := s.GitHub.CreatePR(r.Context(), cred.AccessToken, owner, repo, req.Head, base, req.Title, req.Body)
+	if err != nil {
+		switch {
+		case errors.Is(err, github.ErrNoPRCommits):
+			writeError(w, http.StatusUnprocessableEntity, "no_commits")
+		case errors.Is(err, github.ErrPRAlreadyExists):
+			writeError(w, http.StatusConflict, "pr_exists")
+		default:
+			writeError(w, http.StatusBadGateway, "github_unavailable")
+		}
+		return
+	}
+
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID:   uid,
+		Actor:    audit.UserActor(uid),
+		Action:   audit.ActionGitPRCreate,
+		Target:   req.Project,
+		Metadata: map[string]any{"number": pr.Number, "head": req.Head, "base": base},
+	})
+	// Surface the PR over SSE too, so the desktop activity log and any other
+	// session learn it landed (best-effort; the response is the primary carrier).
+	s.emitMachineEvent(r.Context(), machineID, audit.ActionGitPRCreate, map[string]any{
+		"number": pr.Number, "url": pr.HTMLURL, "project": req.Project,
+	})
+	writeJSON(w, http.StatusOK, prResponse{PRURL: pr.HTMLURL, Number: pr.Number})
+}
+
+// resolveProjectRemote returns the origin remote URL of a listable project, with
+// an error code the caller maps (bad_project, no_remote, machine_not_running,
+// guest_unreachable).
+func (s *Server) resolveProjectRemote(ctx context.Context, machineID, name string) (remote, errCode string) {
+	if name == "" {
+		return "", "bad_project"
+	}
+	projects, err := s.GitWorktree.ListProjects(ctx, machineID)
+	if errors.Is(err, guestctl.ErrNoChannel) {
+		return "", "machine_not_running"
+	}
+	if err != nil {
+		return "", "guest_unreachable"
+	}
+	for _, p := range projects {
+		if p.Name == name {
+			if p.Remote == "" {
+				return "", "no_remote"
+			}
+			return p.Remote, ""
+		}
+	}
+	return "", "bad_project"
+}
+
+// parseOwnerRepo extracts owner/repo from a git remote URL (https or scp-like),
+// validating the result against the same owner/repo shape clone enforces.
+func parseOwnerRepo(remote string) (owner, repo string, ok bool) {
+	s := strings.TrimSpace(remote)
+	s = strings.TrimSuffix(s, ".git")
+	if i := strings.Index(s, "://"); i >= 0 {
+		rest := s[i+3:] // host/owner/repo...
+		if k := strings.Index(rest, "/"); k >= 0 {
+			s = rest[k+1:]
+		}
+	} else if at := strings.Index(s, "@"); at >= 0 {
+		if colon := strings.Index(s, ":"); colon > at { // git@host:owner/repo
+			s = s[colon+1:]
+		}
+	}
+	parts := strings.Split(strings.Trim(s, "/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	owner, repo = parts[0], parts[1]
+	if !fullNameRe.MatchString(owner + "/" + repo) {
+		return "", "", false
+	}
+	return owner, repo, true
+}
+
+// emitMachineEvent records a CP-side machine event and publishes it to the SSE
+// stream. Best-effort: a nil broker/queries or any DB error is silently skipped
+// so it can never break the operation it annotates.
+func (s *Server) emitMachineEvent(ctx context.Context, machineID, typ string, payload map[string]any) {
+	if s.Broker == nil || s.Queries == nil {
+		return
+	}
+	mid, err := machine.ParseUUID(machineID)
+	if err != nil {
+		return
+	}
+	body, _ := json.Marshal(payload)
+	ev, err := s.Queries.InsertMachineEvent(ctx, store.InsertMachineEventParams{
+		MachineID: mid, Type: typ, Actor: "system:httpapi", Payload: body,
+	})
+	if err != nil {
+		return
+	}
+	mc, err := s.Queries.GetMachineByID(ctx, mid)
+	if err != nil {
+		return
+	}
+	s.Broker.Publish(machine.Update{Machine: mc, Event: ev})
 }
 
 // gitWorktreeContext resolves the common prelude for a worktree-review request:

@@ -5,6 +5,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -294,6 +295,86 @@ func (c *Client) GetUser(ctx context.Context, accessToken string) (*User, error)
 		return nil, fmt.Errorf("get user: missing id")
 	}
 	return &u, nil
+}
+
+// GetRepo fetches a single repository (used to resolve the default branch when a
+// PR base is not specified).
+func (c *Client) GetRepo(ctx context.Context, accessToken, owner, repo string) (*Repo, error) {
+	var r Repo
+	path := fmt.Sprintf("/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
+	if err := c.getJSON(ctx, accessToken, path, &r); err != nil {
+		return nil, fmt.Errorf("get repo: %w", err)
+	}
+	return &r, nil
+}
+
+// PullRequest is the subset of a created pull request the caller needs.
+type PullRequest struct {
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+}
+
+// PR-creation outcomes the HTTP layer maps to distinct statuses.
+var (
+	// ErrNoPRCommits: head has no commits beyond base — nothing to open a PR for.
+	ErrNoPRCommits = errors.New("github: no commits between base and head")
+	// ErrPRAlreadyExists: a PR for this head→base already exists.
+	ErrPRAlreadyExists = errors.New("github: pull request already exists")
+)
+
+// CreatePR opens a pull request from head into base in owner/repo. GitHub
+// rejects an empty diff (ErrNoPRCommits) or a duplicate (ErrPRAlreadyExists) with
+// 422; both are surfaced as typed errors.
+func (c *Client) CreatePR(ctx context.Context, accessToken, owner, repo, head, base, title, body string) (*PullRequest, error) {
+	payload, _ := json.Marshal(map[string]string{"title": title, "head": head, "base": base, "body": body})
+	path := fmt.Sprintf("/repos/%s/%s/pulls", url.PathEscape(owner), url.PathEscape(repo))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBaseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("create pr: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	if resp.StatusCode == http.StatusCreated {
+		var pr PullRequest
+		if err := json.Unmarshal(respBody, &pr); err != nil {
+			return nil, fmt.Errorf("decode pr: %w", err)
+		}
+		if pr.HTMLURL == "" {
+			return nil, fmt.Errorf("create pr: empty url")
+		}
+		return &pr, nil
+	}
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		var e struct {
+			Message string `json:"message"`
+			Errors  []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		_ = json.Unmarshal(respBody, &e)
+		joined := strings.ToLower(e.Message)
+		for _, er := range e.Errors {
+			joined += " " + strings.ToLower(er.Message)
+		}
+		switch {
+		case strings.Contains(joined, "no commits between"):
+			return nil, ErrNoPRCommits
+		case strings.Contains(joined, "already exist"):
+			return nil, ErrPRAlreadyExists
+		default:
+			return nil, fmt.Errorf("create pr: %s", e.Message)
+		}
+	}
+	return nil, fmt.Errorf("create pr: status %d", resp.StatusCode)
 }
 
 func orDefault(v, def string) string {

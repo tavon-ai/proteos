@@ -124,9 +124,10 @@ export interface CreateMachineInput {
 
 export interface MachineEvent {
   id: number;
-  // "git.clone"/"git.push" are info-style events carrying an async git op
-  // completion (payload: { op_id, ok, detail }).
-  type: 'transition' | 'error' | 'info' | 'git.clone' | 'git.push';
+  // "git.clone"/"git.push" carry an async git op completion (payload:
+  // { op_id, ok, detail }); "git.pr" carries an opened PR (payload:
+  // { number, url, project }).
+  type: 'transition' | 'error' | 'info' | 'git.clone' | 'git.push' | 'git.pr';
   from_state: string | null;
   to_state: string | null;
   actor: string;
@@ -260,6 +261,13 @@ export interface GitCommitResponse {
 // id to correlate with the later git.push machine event over SSE.
 export interface PushStarted {
   op_id: string;
+}
+
+// PRCreated is the 200 body of POST /api/machines/{id}/git/pr (GR5): the opened
+// pull request's URL and number.
+export interface PRCreated {
+  pr_url: string;
+  number: number;
 }
 
 // DesktopLayout is the opaque serialized window layout stored in machine SQLite
@@ -445,6 +453,17 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project, branch, set_upstream: setUpstream }),
+    }),
+
+  // Open a pull request from head into the repo's default branch (GR5). 400
+  // bad_request / invalid_branch_name; 409 pr_exists / reconnect_github /
+  // machine_not_running; 422 no_commits / no_remote / bad_remote; 502
+  // github_unavailable — all ApiError.
+  gitPR: (machineID: string, project: string, title: string, body: string, head: string) =>
+    request<PRCreated>(`/api/machines/${encodeURIComponent(machineID)}/git/pr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, title, body, head }),
     }),
 };
 

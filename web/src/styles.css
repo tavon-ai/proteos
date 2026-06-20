@@ -509,6 +509,43 @@ body {
   color: #cf222e;
 }
 
+.pr-form {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-head {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.pr-title-input,
+.pr-body-input {
+  width: 100%;
+  font-size: 0.85rem;
+  box-sizing: border-box;
+}
+
+.pr-body-input {
+  font-family: inherit;
+  resize: vertical;
+}
+
+.pr-success {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #1a7f37;
+}
+
+.pr-error {
+  margin: 0;
+  color: #cf222e;
+}
+
 .changes-files {
   flex: 0 0 auto;
   max-height: 38%;

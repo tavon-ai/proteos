@@ -27,10 +27,11 @@ const (
 	ActionGitClone      = "git.clone"      // a user cloned a repo into a machine
 	ActionGitCredential = "git.credential" // the credential handler minted a git token
 
-	// GR2/GR3/GR4 git mutations. Target is the project name — never a token.
-	ActionGitBranch = "git.branch" // a user created/checked out a branch in a project
-	ActionGitCommit = "git.commit" // a user committed changes in a project
-	ActionGitPush   = "git.push"   // a user pushed a branch to origin (also the SSE event type)
+	// GR2–GR5 git mutations. Target is the project name — never a token.
+	ActionGitBranch   = "git.branch" // a user created/checked out a branch in a project
+	ActionGitCommit   = "git.commit" // a user committed changes in a project
+	ActionGitPush     = "git.push"   // a user pushed a branch to origin (also the SSE event type)
+	ActionGitPRCreate = "git.pr"     // a user opened a pull request (also the SSE event type)
 )
 
 // Actor prefixes identify who performed the action.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/auth"
+	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/guestctl"
 	"github.com/tavon/proteos/controlplane/internal/httpapi"
 	"github.com/tavon/proteos/controlplane/internal/machine"
@@ -560,4 +561,183 @@ func TestGitPush_409NotRunning(t *testing.T) {
 
 type pushBody struct {
 	OpID string `json:"op_id"`
+}
+
+// --- GR5: open PR -----------------------------------------------------------
+
+// fakePRServer serves the two GitHub endpoints handleGitPR touches: the repo
+// lookup (default branch) and the PR creation (with a caller-controlled outcome).
+func fakePRServer(t *testing.T, pullStatus int, pullBody string) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/octocat/hello", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"full_name":"octocat/hello","default_branch":"main"}`))
+	})
+	mux.HandleFunc("POST /repos/octocat/hello/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(pullStatus)
+		_, _ = w.Write([]byte(pullBody))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts.URL
+}
+
+// setupPR wires a full server for the PR endpoint: a worktree fake with a remote,
+// a real GitHub client pointed at ghURL, and a seeded (optionally revoked) token.
+func setupPR(t *testing.T, machineState string, revoked bool, ghURL string) wtFixture {
+	t.Helper()
+	ctx := context.Background()
+	pool, q := testutil.Postgres(t)
+
+	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://127.0.0.1:9090"})
+	if err != nil {
+		t.Fatalf("host: %v", err)
+	}
+	user, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 9, Login: "octocat", Email: "o@example.com"})
+	if err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	if err := sec.Put(secrets.UserGitHubPath(uid), map[string]string{
+		"access_token":            "gho_valid",
+		"refresh_token":           "ghr_valid",
+		"access_token_expires_at": time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+	meta, _ := json.Marshal(map[string]any{"revoked": revoked})
+	if _, err := q.UpsertGitHubLink(ctx, store.UpsertGitHubLinkParams{UserID: user.ID, Metadata: meta, SecretRef: secrets.UserGitHubPath(uid)}); err != nil {
+		t.Fatalf("seed link: %v", err)
+	}
+
+	mc, err := q.CreateMachine(ctx, store.CreateMachineParams{UserID: user.ID, HostID: host.ID, KernelRef: "k", RootfsRef: "r", ResourceSpec: []byte(`{}`)})
+	if err != nil {
+		t.Fatalf("machine: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE machines SET state=$1 WHERE id=$2", machineState, mc.ID); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	sessions := session.NewManager(q, time.Hour)
+	token, err := sessions.Create(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
+	gh := github.NewClient(github.Config{ClientID: "id", ClientSecret: "s", APIBaseURL: ghURL})
+	ch := &fakeWorktree{projects: []guestwire.Project{
+		{Name: "alpha", Path: "/workspace/alpha", Remote: "https://github.com/octocat/hello.git"},
+	}}
+
+	srv := &httpapi.Server{
+		Sessions:    sessions,
+		Queries:     q,
+		Broker:      machine.NewBroker(),
+		Audit:       audit.NewRecorder(q),
+		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, host.ID, machine.Spec{}),
+		GitWorktree: ch,
+		GitHub:      gh,
+		Tokens:      github.NewTokenSource(gh, q, sec),
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return wtFixture{url: ts.URL, token: token, mid: machine.UUIDString(mc.ID), ch: ch}
+}
+
+func TestGitPR_200(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{"number":7,"html_url":"https://github.com/octocat/hello/pull/7"}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"My change","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		PRURL  string `json:"pr_url"`
+		Number int    `json:"number"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.PRURL != "https://github.com/octocat/hello/pull/7" || body.Number != 7 {
+		t.Fatalf("unexpected pr body: %+v", body)
+	}
+}
+
+func TestGitPR_422NoCommits(t *testing.T) {
+	gh := fakePRServer(t, http.StatusUnprocessableEntity,
+		`{"message":"Validation Failed","errors":[{"message":"No commits between main and feature/x"}]}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "no_commits" {
+		t.Fatalf("error = %q, want no_commits", code)
+	}
+}
+
+func TestGitPR_409Exists(t *testing.T) {
+	gh := fakePRServer(t, http.StatusUnprocessableEntity,
+		`{"message":"Validation Failed","errors":[{"message":"A pull request already exists for octocat:feature/x."}]}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "pr_exists" {
+		t.Fatalf("error = %q, want pr_exists", code)
+	}
+}
+
+func TestGitPR_409Reconnect(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{"number":1,"html_url":"x"}`)
+	fx := setupPR(t, string(machine.StateRunning), true, gh) // revoked grant
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "reconnect_github" {
+		t.Fatalf("error = %q, want reconnect_github", code)
+	}
+}
+
+func TestGitPR_400MissingTitle(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestGitPR_RequiresCSRF(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{"number":1,"html_url":"x"}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
+	}
+}
+
+func TestGitPR_409NotRunning(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{"number":1,"html_url":"x"}`)
+	fx := setupPR(t, string(machine.StateStopped), false, gh)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
 }

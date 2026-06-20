@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { ApiError, type GitFileStatus, type MachineEvent, type MachineState } from '../api/client';
-import { useGitBranch, useGitCommit, useGitDiff, useGitPush, useGitStatus } from '../api/hooks';
+import {
+  useGitBranch,
+  useGitCommit,
+  useGitDiff,
+  useGitPR,
+  useGitPush,
+  useGitStatus,
+} from '../api/hooks';
 
 interface PushState {
   opId: string;
@@ -30,6 +37,7 @@ export function ChangesWindow({
   const project = basename(projectPath);
   const [staged, setStaged] = useState(false);
   const [showBranch, setShowBranch] = useState(false);
+  const [showPR, setShowPR] = useState(false);
   // Files the user has unchecked for the next commit (default: all selected).
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
   // The in-flight/last push, tracked by op_id against the git.push SSE event.
@@ -135,6 +143,14 @@ export function ChangesWindow({
         </button>
         <button
           className="btn-ghost"
+          onClick={() => setShowPR((s) => !s)}
+          disabled={!branch}
+          title={branch ? `Open a PR from ${branch}` : 'No branch'}
+        >
+          {showPR ? 'Close' : 'Open PR'}
+        </button>
+        <button
+          className="btn-ghost"
           onClick={refresh}
           disabled={status.isFetching || diff.isFetching}
         >
@@ -160,6 +176,8 @@ export function ChangesWindow({
           onCreated={() => setShowBranch(false)}
         />
       )}
+
+      {showPR && branch && <OpenPRForm machineId={machineId} project={project} head={branch} />}
 
       {status.isError && <p className="muted changes-empty">Could not load status.</p>}
       {!status.isError && files.length === 0 && (
@@ -361,6 +379,90 @@ function branchErrorMessage(error: unknown): string {
     }
   }
   return 'Could not create the branch.';
+}
+
+// OpenPRForm opens a pull request from the current branch into the repo's
+// default branch (GR5) — the final hop of the review→ship loop. On success it
+// shows the PR link; the same {pr_url} is what a mobile agent gets from the REST
+// response.
+function OpenPRForm({
+  machineId,
+  project,
+  head,
+}: {
+  machineId: string | null;
+  project: string;
+  head: string;
+}) {
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const pr = useGitPR(machineId, project);
+
+  const submit = () => {
+    const t = title.trim();
+    if (!t) return;
+    pr.mutate({ title: t, body, head });
+  };
+
+  if (pr.data) {
+    return (
+      <div className="pr-form">
+        <p className="pr-success">
+          Opened PR #{pr.data.number} —{' '}
+          <a href={pr.data.pr_url} target="_blank" rel="noreferrer">
+            view on GitHub ↗
+          </a>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pr-form">
+      <p className="pr-head muted">
+        PR from <strong>{head}</strong> → default branch
+      </p>
+      <input
+        type="text"
+        className="pr-title-input"
+        placeholder="Pull request title"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit();
+        }}
+      />
+      <textarea
+        className="pr-body-input"
+        placeholder="Description (optional)"
+        value={body}
+        rows={3}
+        onChange={(e) => setBody(e.target.value)}
+      />
+      <button className="btn-primary" disabled={!title.trim() || pr.isPending} onClick={submit}>
+        {pr.isPending ? 'Opening…' : 'Open pull request'}
+      </button>
+      {pr.error && <p className="muted pr-error">{prErrorMessage(pr.error)}</p>}
+    </div>
+  );
+}
+
+// prErrorMessage turns a PR-create failure into a short message.
+function prErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'no_commits':
+        return 'No commits between this branch and the default branch — push commits first.';
+      case 'pr_exists':
+        return 'A pull request for this branch already exists.';
+      case 'reconnect_github':
+        return 'GitHub access expired — reconnect in Settings.';
+      case 'no_remote':
+      case 'bad_remote':
+        return 'This project has no GitHub remote.';
+    }
+  }
+  return 'Could not open the pull request.';
 }
 
 // basename returns the last path segment of an absolute /workspace path.
