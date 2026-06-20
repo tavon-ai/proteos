@@ -9,7 +9,14 @@ import {
 } from '../api/hooks';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { useWindowManager } from './windowManagerContext';
-import { openAgent, openChanges, openEditor, openSettings, openTasks, openTerminal } from './openers';
+import {
+  openAgent,
+  openChanges,
+  openEditor,
+  openSettings,
+  openTasks,
+  openTerminal,
+} from './openers';
 import { parseRepoRef } from './repoRef';
 import { looksLikeGrantFailure } from './cloneFailure';
 

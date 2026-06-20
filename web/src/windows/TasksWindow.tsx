@@ -136,7 +136,9 @@ function TaskForm({
 }) {
   const [prompt, setPrompt] = useState('');
   // Default to claude (the only headless provider) when present.
-  const [provider, setProvider] = useState(() => providers.find((p) => p.key === 'claude')?.key ?? providers[0]?.key ?? '');
+  const [provider, setProvider] = useState(
+    () => providers.find((p) => p.key === 'claude')?.key ?? providers[0]?.key ?? '',
+  );
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,7 +170,11 @@ function TaskForm({
             ))}
           </select>
         )}
-        <button type="submit" className="btn-secondary" disabled={pending || !prompt.trim() || !provider}>
+        <button
+          type="submit"
+          className="btn-secondary"
+          disabled={pending || !prompt.trim() || !provider}
+        >
           {pending ? 'Starting…' : 'Run task'}
         </button>
       </div>
@@ -247,9 +253,7 @@ function TaskStream({
           )}
         </div>
       )}
-      {canFollowUp && (
-        <FollowUpForm onSubmit={onFollowUp} sending={sending} error={sendError} />
-      )}
+      {canFollowUp && <FollowUpForm onSubmit={onFollowUp} sending={sending} error={sendError} />}
     </div>
   );
 }
