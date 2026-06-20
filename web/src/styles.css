@@ -1719,3 +1719,11 @@ body {
   font-weight: 400;
   color: var(--muted);
 }
+.tasks-followup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}

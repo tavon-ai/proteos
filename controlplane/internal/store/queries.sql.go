@@ -150,33 +150,35 @@ func (q *Queries) DeleteSnapshot(ctx context.Context, machineID pgtype.UUID) err
 
 const finishAgentTask = `-- name: FinishAgentTask :exec
 UPDATE agent_tasks
-SET status = $2,
-    agent_session_id = $3,
-    usage = $4,
-    result_summary = $5,
-    error = $6,
+SET status = $1,
+    agent_session_id = COALESCE(NULLIF($2::text, ''), agent_session_id),
+    usage = $3,
+    result_summary = $4,
+    error = $5,
     ended_at = now()
-WHERE id = $1
+WHERE id = $6
 `
 
 type FinishAgentTaskParams struct {
-	ID             pgtype.UUID `json:"id"`
 	Status         string      `json:"status"`
 	AgentSessionID string      `json:"agent_session_id"`
 	Usage          []byte      `json:"usage"`
 	ResultSummary  string      `json:"result_summary"`
 	Error          string      `json:"error"`
+	ID             pgtype.UUID `json:"id"`
 }
 
-// Record a terminal outcome (done|failed|canceled) with its result fields.
+// Record a terminal outcome (done|failed|canceled) with its result fields. An
+// empty incoming session id preserves the one already captured, so a cancel or a
+// mid-run failure never wipes a session a prior turn established (AT4 resume).
 func (q *Queries) FinishAgentTask(ctx context.Context, arg FinishAgentTaskParams) error {
 	_, err := q.db.Exec(ctx, finishAgentTask,
-		arg.ID,
 		arg.Status,
 		arg.AgentSessionID,
 		arg.Usage,
 		arg.ResultSummary,
 		arg.Error,
+		arg.ID,
 	)
 	return err
 }
@@ -939,6 +941,28 @@ func (q *Queries) RenameMachine(ctx context.Context, arg RenameMachineParams) (M
 		&i.TemplateID,
 	)
 	return i, err
+}
+
+const restartAgentTask = `-- name: RestartAgentTask :exec
+UPDATE agent_tasks
+SET status = 'running',
+    prompt = $2,
+    error = '',
+    ended_at = NULL
+WHERE id = $1
+`
+
+type RestartAgentTaskParams struct {
+	ID     pgtype.UUID `json:"id"`
+	Prompt string      `json:"prompt"`
+}
+
+// Begin a follow-up turn on a finished task (AT4): back to running, store the new
+// turn's prompt, and clear the prior turn's error/end marker. The captured
+// agent_session_id (the resume key) is left intact.
+func (q *Queries) RestartAgentTask(ctx context.Context, arg RestartAgentTaskParams) error {
+	_, err := q.db.Exec(ctx, restartAgentTask, arg.ID, arg.Prompt)
+	return err
 }
 
 const revokeSession = `-- name: RevokeSession :one

@@ -180,6 +180,9 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/machines/{id}/tasks/{tid}", s.requireAuth(http.HandlerFunc(s.handleGetTask)))
 		// Cancel a running task (AT3): a mutation, so CSRF-guarded.
 		mux.Handle("POST /api/machines/{id}/tasks/{tid}/cancel", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCancelTask))))
+		// Follow-up turn on a finished task (AT4: resume the agent session). A
+		// dispatch mutation, so CSRF-guarded.
+		mux.Handle("POST /api/machines/{id}/tasks/{tid}/messages", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSendMessage))))
 	}
 
 	// AT2: live agent-event SSE for one task. A GET stream (no CSRF — like the

@@ -304,12 +304,15 @@ type GitPushDonePayload struct {
 // AgentRunPayload is the req payload of agent.run (AT1). Path is the absolute
 // project path (CP-resolved) the agent runs in; Provider is the (headless-
 // capable) provider key whose injected launch command + env the guest resolves;
-// TaskID correlates the later agent.done.
+// TaskID correlates the later agent.done. SessionID, when set, resumes a prior
+// agent session for a multi-turn follow-up (AT4: claude --resume <id>); empty
+// starts a fresh session.
 type AgentRunPayload struct {
-	TaskID   string `json:"task_id"`
-	Path     string `json:"path"`
-	Prompt   string `json:"prompt"`
-	Provider string `json:"provider"`
+	TaskID    string `json:"task_id"`
+	Path      string `json:"path"`
+	Prompt    string `json:"prompt"`
+	Provider  string `json:"provider"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // AgentDonePayload is the body of a guest → CP agent.done req: the outcome of an

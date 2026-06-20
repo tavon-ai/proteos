@@ -199,6 +199,36 @@ func TestTaskEvents_DBSynthFallbackWhenStreamGone(t *testing.T) {
 	}
 }
 
+func TestTaskEvents_ResumeStreamsOnlyNewTurn(t *testing.T) {
+	fx := setupTaskStream(t, "running")
+	// Turn 1 runs and finishes.
+	fx.hub.Publish(fx.taskID, []byte(`{"kind":"assistant_text","text":"turn one"}`), false)
+	fx.hub.Publish(fx.taskID, []byte(`{"kind":"result","status":"done"}`), true)
+
+	// A follow-up turn (AT4): reactivate, then stream the new turn.
+	fx.hub.Reopen(fx.taskID)
+	fx.hub.Publish(fx.taskID, []byte(`{"kind":"assistant_text","text":"turn two"}`), false)
+	fx.hub.Publish(fx.taskID, []byte(`{"kind":"result","status":"done"}`), true)
+
+	// A fresh connect replays only the new turn — turn one's result is not replayed
+	// (which would otherwise close the client before it sees turn two).
+	frames := readSSE(t, fx, "")
+	if len(frames) != 2 {
+		t.Fatalf("want 2 frames (new turn), got %d: %+v", len(frames), frames)
+	}
+	if !strings.Contains(frames[0].data, "turn two") {
+		t.Errorf("first frame should be the new turn, got %+v", frames[0])
+	}
+	for _, f := range frames {
+		if strings.Contains(f.data, "turn one") {
+			t.Errorf("prior turn must not be replayed: %+v", f)
+		}
+	}
+	if !strings.Contains(frames[1].data, `"kind":"result"`) {
+		t.Errorf("expected the new turn's terminal result, got %+v", frames[1])
+	}
+}
+
 func TestTaskEvents_404UnknownTask(t *testing.T) {
 	fx := setupTaskStream(t, "running")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -22,9 +22,10 @@ const (
 	ActionSecretRead   = "secret.read"   // the injector read a secret for injection
 	ActionAgentLaunch  = "agent.launch"  // a user launched an agent session
 
-	// AT1/AT3 headless task lane. Target is the project name (run) or task id (cancel).
-	ActionAgentTaskRun    = "agent.task.run"    // a user dispatched a headless agent task
-	ActionAgentTaskCancel = "agent.task.cancel" // a user canceled a running task
+	// AT1/AT3/AT4 headless task lane. Target is the project name (run/message) or task id (cancel).
+	ActionAgentTaskRun     = "agent.task.run"     // a user dispatched a headless agent task
+	ActionAgentTaskCancel  = "agent.task.cancel"  // a user canceled a running task
+	ActionAgentTaskMessage = "agent.task.message" // a user sent a follow-up turn (resume)
 
 	// Phase 7 git actions. Targets are repo full-names / hosts — never tokens.
 	ActionGitRepos      = "git.repos"      // a user listed their accessible repos

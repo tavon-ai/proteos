@@ -545,6 +545,20 @@ export const api = {
       `/api/machines/${encodeURIComponent(machineID)}/tasks/${encodeURIComponent(taskID)}/cancel`,
       { method: 'POST' },
     ),
+  // Send a follow-up turn on a finished task (AT4): resumes the agent session
+  // with a new prompt; the new turn streams over the same task SSE. 409
+  // no_session (never captured) / task_running (a turn is in flight); 400
+  // provider_not_headless; 409 no_provider_key / machine_not_running — all
+  // ApiError otherwise.
+  sendMessage: (machineID: string, taskID: string, prompt: string) =>
+    request<TaskCreated>(
+      `/api/machines/${encodeURIComponent(machineID)}/tasks/${encodeURIComponent(taskID)}/messages`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      },
+    ),
 };
 
 // taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),

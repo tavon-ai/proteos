@@ -475,7 +475,7 @@ func (m *Manager) publishTaskResult(done guestwire.AgentDonePayload, status stri
 // RunAgent dispatches a headless agent run (AT1) and returns once the guest acks
 // (the run is asynchronous; completion arrives as agent.done → agent_tasks
 // update). ErrNoChannel if the machine has no live channel.
-func (m *Manager) RunAgent(ctx context.Context, machineID, taskID, repoPath, prompt, provider string) error {
+func (m *Manager) RunAgent(ctx context.Context, machineID, taskID, repoPath, prompt, provider, sessionID string) error {
 	c := m.getConn(machineID)
 	if c == nil {
 		return ErrNoChannel
@@ -483,7 +483,7 @@ func (m *Manager) RunAgent(ctx context.Context, machineID, taskID, repoPath, pro
 	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	_, err := c.request(rctx, guestwire.OpAgentRun, guestwire.AgentRunPayload{
-		TaskID: taskID, Path: repoPath, Prompt: prompt, Provider: provider,
+		TaskID: taskID, Path: repoPath, Prompt: prompt, Provider: provider, SessionID: sessionID,
 	})
 	return err
 }

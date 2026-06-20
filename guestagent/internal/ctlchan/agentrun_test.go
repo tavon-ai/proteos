@@ -128,7 +128,7 @@ func TestBoundedJSON_Truncates(t *testing.T) {
 }
 
 func TestHeadlessArgv(t *testing.T) {
-	argv, err := headlessArgv(guestwire.ProviderDef{Command: "claude"})
+	argv, err := headlessArgv(guestwire.ProviderDef{Command: "claude"}, "")
 	if err != nil {
 		t.Fatalf("headlessArgv: %v", err)
 	}
@@ -138,12 +138,27 @@ func TestHeadlessArgv(t *testing.T) {
 			t.Errorf("argv %q missing %q", joined, want)
 		}
 	}
+	// A fresh run carries no --resume.
+	if strings.Contains(joined, "--resume") {
+		t.Errorf("fresh argv should not resume: %q", joined)
+	}
 	// A non-claude provider is rejected on the headless lane.
-	if _, err := headlessArgv(guestwire.ProviderDef{Command: "gemini"}); err == nil {
+	if _, err := headlessArgv(guestwire.ProviderDef{Command: "gemini"}, ""); err == nil {
 		t.Error("expected non-claude provider to be rejected")
 	}
-	if _, err := headlessArgv(guestwire.ProviderDef{Command: ""}); err == nil {
+	if _, err := headlessArgv(guestwire.ProviderDef{Command: ""}, ""); err == nil {
 		t.Error("expected empty command to be rejected")
+	}
+}
+
+func TestHeadlessArgv_Resume(t *testing.T) {
+	argv, err := headlessArgv(guestwire.ProviderDef{Command: "claude"}, "sess-abc")
+	if err != nil {
+		t.Fatalf("headlessArgv: %v", err)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--resume sess-abc") {
+		t.Errorf("resume argv missing --resume: %q", joined)
 	}
 }
 
@@ -175,7 +190,7 @@ func TestRunHeadless(t *testing.T) {
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
 
-	res, err := m.runHeadless(context.Background(), "claude", "make it responsive", repo, nil)
+	res, err := m.runHeadless(context.Background(), "claude", "make it responsive", repo, "", nil)
 	if err != nil {
 		t.Fatalf("runHeadless: %v", err)
 	}
@@ -253,7 +268,7 @@ func TestRunHeadless_CanceledKillsProcessGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		_, _ = m.runHeadless(ctx, "claude", "x", repo, nil)
+		_, _ = m.runHeadless(ctx, "claude", "x", repo, "", nil)
 		close(done)
 	}()
 	// Let it spawn + emit, then cancel.
@@ -273,7 +288,7 @@ func TestRunHeadless_NoSecrets(t *testing.T) {
 	m := New([]string{"PROTEOS_WORKSPACE=" + work}, runas.Root(), nil, nil)
 	repo := filepath.Join(work, "alpha")
 	gitInit(t, repo, "")
-	if _, err := m.runHeadless(context.Background(), "claude", "x", repo, nil); err == nil {
+	if _, err := m.runHeadless(context.Background(), "claude", "x", repo, "", nil); err == nil {
 		t.Error("expected error when no secrets store is wired")
 	}
 }

@@ -263,12 +263,25 @@ SET status = 'running', started_at = now()
 WHERE id = $1 AND status = 'queued';
 
 -- name: FinishAgentTask :exec
--- Record a terminal outcome (done|failed|canceled) with its result fields.
+-- Record a terminal outcome (done|failed|canceled) with its result fields. An
+-- empty incoming session id preserves the one already captured, so a cancel or a
+-- mid-run failure never wipes a session a prior turn established (AT4 resume).
 UPDATE agent_tasks
-SET status = $2,
-    agent_session_id = $3,
-    usage = $4,
-    result_summary = $5,
-    error = $6,
+SET status = sqlc.arg(status),
+    agent_session_id = COALESCE(NULLIF(sqlc.arg(agent_session_id)::text, ''), agent_session_id),
+    usage = sqlc.arg(usage),
+    result_summary = sqlc.arg(result_summary),
+    error = sqlc.arg(error),
     ended_at = now()
+WHERE id = sqlc.arg(id);
+
+-- name: RestartAgentTask :exec
+-- Begin a follow-up turn on a finished task (AT4): back to running, store the new
+-- turn's prompt, and clear the prior turn's error/end marker. The captured
+-- agent_session_id (the resume key) is left intact.
+UPDATE agent_tasks
+SET status = 'running',
+    prompt = $2,
+    error = '',
+    ended_at = NULL
 WHERE id = $1;

@@ -45,6 +45,7 @@ type Hub struct {
 // stream is one task's ring buffer plus its live subscribers.
 type stream struct {
 	seq       int64
+	turnStart int64   // seq boundary of the current turn; a fresh subscribe replays only Seq > turnStart (AT4)
 	buf       []Frame // ring of the most recent bufSize frames (ascending Seq)
 	truncated bool    // a frame has been dropped from the front (logged once)
 	terminal  bool
@@ -125,8 +126,12 @@ func (h *Hub) Subscribe(taskID string, afterSeq int64) (backlog []Frame, ch <-ch
 		st.reaper = nil
 	}
 
+	// Replay frames after the client's last-seen seq, but never before the current
+	// turn's boundary — a follow-up turn (AT4) must not replay the prior turn's
+	// terminal result, which would close the client prematurely.
+	floor := max(afterSeq, st.turnStart)
 	for _, f := range st.buf {
-		if f.Seq > afterSeq {
+		if f.Seq > floor {
 			backlog = append(backlog, f)
 		}
 	}
@@ -148,6 +153,26 @@ func (h *Hub) Subscribe(taskID string, afterSeq int64) (backlog []Frame, ch <-ch
 		}
 	}
 	return backlog, live, cancel, st.terminal
+}
+
+// Reopen reactivates a finished task's stream for a follow-up turn (AT4 resume):
+// it clears the terminal flag, stops any pending reap, and marks the current seq
+// as the new turn's boundary so a fresh subscriber replays only the new turn (not
+// the prior turn's terminal result). Idempotent; creates the stream if absent.
+func (h *Hub) Reopen(taskID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.tasks[taskID]
+	if st == nil {
+		st = &stream{subs: map[int]chan Frame{}}
+		h.tasks[taskID] = st
+	}
+	st.terminal = false
+	st.turnStart = st.seq
+	if st.reaper != nil {
+		st.reaper.Stop()
+		st.reaper = nil
+	}
 }
 
 // scheduleReap deletes a terminal stream after the retention window unless a new

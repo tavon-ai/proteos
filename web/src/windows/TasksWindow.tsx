@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { ApiError, type AgentTask, type MachineState, type TaskEvent } from '../api/client';
-import { useCancelTask, useCreateTask, useProviders, useTaskEvents, useTasks } from '../api/hooks';
+import {
+  useCancelTask,
+  useCreateTask,
+  useProviders,
+  useSendMessage,
+  useTaskEvents,
+  useTasks,
+} from '../api/hooks';
 
 // TasksWindow is the headless task lane's live view (AT1/AT2): hand a project a
 // natural-language task, watch the coding agent work in real time as structured
@@ -24,9 +31,12 @@ export function TasksWindow({
   const tasks = useTasks(machineId, running);
   const createTask = useCreateTask(machineId);
   const cancelTask = useCancelTask(machineId);
+  const sendMessage = useSendMessage(machineId);
   const providers = useProviders();
   const [selected, setSelected] = useState<string | null>(null);
-  const events = useTaskEvents(machineId, selected);
+  // Bumped on a follow-up turn so the event stream reconnects to the new turn.
+  const [streamEpoch, setStreamEpoch] = useState(0);
+  const events = useTaskEvents(machineId, selected, streamEpoch);
 
   // Providers usable on the headless lane from the browser's view: enabled with a
   // stored key. The server is the source of truth (it rejects a non-headless
@@ -92,6 +102,15 @@ export function TasksWindow({
             task={rows.find((t) => t.id === selected)}
             onCancel={() => selected && cancelTask.mutate(selected)}
             canceling={cancelTask.isPending}
+            onFollowUp={(prompt) =>
+              selected &&
+              sendMessage.mutate(
+                { taskId: selected, prompt },
+                { onSuccess: () => setStreamEpoch((e) => e + 1) },
+              )
+            }
+            sending={sendMessage.isPending}
+            sendError={sendMessage.error}
           />
         ) : (
           <p className="muted tasks-stream-empty">Select a task to watch its live stream.</p>
@@ -171,16 +190,28 @@ function TaskStream({
   task,
   onCancel,
   canceling,
+  onFollowUp,
+  sending,
+  sendError,
 }: {
   events: TaskEvent[];
   task?: AgentTask;
   onCancel: () => void;
   canceling: boolean;
+  onFollowUp: (prompt: string) => void;
+  sending: boolean;
+  sendError: unknown;
 }) {
   // Until the live stream produces a terminal frame, a finished task (selected
   // after the fact) still shows its stored summary via the task row.
   const terminal = events.find((e) => e.kind === 'result');
   const active = task && (task.status === 'running' || task.status === 'queued') && !terminal;
+  // A finished task that captured a session can take a follow-up turn (AT4).
+  const canFollowUp =
+    !active &&
+    !!task &&
+    !!task.agent_session_id &&
+    (task.status === 'done' || task.status === 'failed' || task.status === 'canceled');
   return (
     <div className="tasks-events">
       {active && (
@@ -216,7 +247,51 @@ function TaskStream({
           )}
         </div>
       )}
+      {canFollowUp && (
+        <FollowUpForm onSubmit={onFollowUp} sending={sending} error={sendError} />
+      )}
     </div>
+  );
+}
+
+// FollowUpForm sends a follow-up turn that resumes the agent session (AT4).
+function FollowUpForm({
+  onSubmit,
+  sending,
+  error,
+}: {
+  onSubmit: (prompt: string) => void;
+  sending: boolean;
+  error: unknown;
+}) {
+  const [prompt, setPrompt] = useState('');
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const p = prompt.trim();
+    if (!p) return;
+    onSubmit(p);
+    setPrompt('');
+  };
+  return (
+    <form className="tasks-followup" onSubmit={submit}>
+      <textarea
+        className="tasks-prompt"
+        placeholder="Follow up — e.g. “now also update the tests”…"
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={2}
+      />
+      <div className="tasks-form-row">
+        <button type="submit" className="btn-secondary" disabled={sending || !prompt.trim()}>
+          {sending ? 'Sending…' : 'Send follow-up'}
+        </button>
+      </div>
+      {error instanceof ApiError && (
+        <p className="tasks-form-err" role="alert">
+          {taskErrorMessage(error)}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -289,6 +364,10 @@ function taskErrorMessage(err: ApiError): string {
       return 'That project is not available on this machine.';
     case 'machine_not_running':
       return 'The machine is not running.';
+    case 'no_session':
+      return 'This task has no resumable session to continue.';
+    case 'task_running':
+      return 'A turn is already in progress — wait for it to finish.';
     default:
       return err.detail || 'Could not start the task.';
   }

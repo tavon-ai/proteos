@@ -273,6 +273,130 @@ func TestCancelTask_404Unknown(t *testing.T) {
 	}
 }
 
+// finishTask drives a task to a terminal state (optionally capturing a session).
+func finishTask(t *testing.T, fx wtFixture, taskID, status, sessionID string) {
+	t.Helper()
+	tid, _ := machine.ParseUUID(taskID)
+	if err := fx.q.FinishAgentTask(context.Background(), store.FinishAgentTaskParams{
+		ID: tid, Status: status, AgentSessionID: sessionID, Usage: []byte("{}"),
+	}); err != nil {
+		t.Fatalf("finish task: %v", err)
+	}
+}
+
+func TestSendMessage_202Resumes(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+	finishTask(t, fx, taskID, "done", "sess-keep")
+
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/messages",
+		`{"prompt":"now also fix the tests"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	// The resume dispatch carries the stored session id + the follow-up prompt.
+	if fx.ch.lastRunSession != "sess-keep" {
+		t.Fatalf("resume session = %q, want sess-keep", fx.ch.lastRunSession)
+	}
+	if fx.ch.lastRunPrompt != "now also fix the tests" || fx.ch.lastRunTaskID != taskID {
+		t.Fatalf("resume dispatch = prompt %q task %q", fx.ch.lastRunPrompt, fx.ch.lastRunTaskID)
+	}
+	// The task cycled back to running with the new turn's prompt stored.
+	get := fx.get(t, "/api/machines/"+fx.mid+"/tasks/"+taskID)
+	defer get.Body.Close()
+	var tv struct {
+		Status    string `json:"status"`
+		SessionID string `json:"agent_session_id"`
+	}
+	_ = json.NewDecoder(get.Body).Decode(&tv)
+	if tv.Status != "running" || tv.SessionID != "sess-keep" {
+		t.Fatalf("after resume: status=%q session=%q", tv.Status, tv.SessionID)
+	}
+}
+
+func TestSendMessage_409NoSession(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+	finishTask(t, fx, taskID, "done", "") // finished, but no session captured
+
+	// Clear what the create dispatch recorded so we can prove the message did NOT dispatch.
+	fx.ch.lastRunSession, fx.ch.lastRunTaskID = "", ""
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/messages",
+		`{"prompt":"continue"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "no_session" {
+		t.Fatalf("error = %q, want no_session", code)
+	}
+	if fx.ch.lastRunSession != "" || fx.ch.lastRunTaskID != "" {
+		t.Error("no resume should be dispatched without a session")
+	}
+}
+
+func TestSendMessage_409TaskRunning(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx) // still running (no finish)
+
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/messages",
+		`{"prompt":"continue"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "task_running" {
+		t.Fatalf("error = %q, want task_running", code)
+	}
+}
+
+func TestSendMessage_RequiresCSRF(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+	finishTask(t, fx, taskID, "done", "sess-1")
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/messages",
+		`{"prompt":"x"}`, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestSendMessage_400EmptyPrompt(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+	finishTask(t, fx, taskID, "done", "sess-1")
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/messages", `{"prompt":""}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestFinishAgentTask_PreservesSessionOnEmpty(t *testing.T) {
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+	tid, _ := machine.ParseUUID(taskID)
+
+	// A first terminal write captures the agent session id.
+	finishTask(t, fx, taskID, "done", "sess-1")
+	// A later write with an empty session (e.g. a cancel) must NOT wipe it, so a
+	// follow-up turn can still resume.
+	finishTask(t, fx, taskID, "canceled", "")
+
+	got, err := fx.q.GetAgentTask(context.Background(), tid)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if got.AgentSessionID != "sess-1" {
+		t.Fatalf("session id = %q, want preserved sess-1", got.AgentSessionID)
+	}
+	if got.Status != "canceled" {
+		t.Fatalf("status = %q, want canceled", got.Status)
+	}
+}
+
 func TestGetTask_404Unknown(t *testing.T) {
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.get(t, "/api/machines/"+fx.mid+"/tasks/11111111-1111-1111-1111-111111111111")

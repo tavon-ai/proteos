@@ -98,7 +98,7 @@ func (m *Manager) runAgentTask(ctx context.Context, run *agentRun, p guestwire.A
 		ev.TaskID = p.TaskID
 		m.emitAgentEvent(ev)
 	}
-	res, err := m.runHeadless(ctx, p.Provider, p.Prompt, p.Path, emit)
+	res, err := m.runHeadless(ctx, p.Provider, p.Prompt, p.Path, p.SessionID, emit)
 	if err != nil && !m.runWasCanceled(p.TaskID) {
 		slog.Warn("control: agent.run failed", "task", p.TaskID, "err", err)
 	}
@@ -173,8 +173,9 @@ func (m *Manager) runWasCanceled(taskID string) bool {
 
 // runHeadless resolves the provider's injected command + env, spawns the agent
 // in print mode in dir with the prompt on stdin, and parses its stream-json,
-// relaying each normalized step to emit as it arrives (AT2).
-func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string, emit func(guestwire.AgentEventPayload)) (agentResult, error) {
+// relaying each normalized step to emit as it arrives (AT2). A non-empty
+// resumeID continues a prior agent session (AT4: claude --resume <id>).
+func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir, resumeID string, emit func(guestwire.AgentEventPayload)) (agentResult, error) {
 	if m.sec == nil {
 		return agentResult{}, fmt.Errorf("no provider secrets injected")
 	}
@@ -182,7 +183,7 @@ func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string,
 	if !ok {
 		return agentResult{}, fmt.Errorf("provider %q not injected", provider)
 	}
-	argv, err := headlessArgv(def)
+	argv, err := headlessArgv(def, resumeID)
 	if err != nil {
 		return agentResult{}, err
 	}
@@ -247,8 +248,9 @@ func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir string,
 // supported on the headless lane (AT1); the flags are claude-specific. The prompt
 // is delivered on stdin (not an argument) to avoid quoting issues. Permissions
 // are bypassed because the microVM is itself the sandbox the permission system
-// would otherwise stand in for.
-func headlessArgv(def guestwire.ProviderDef) ([]string, error) {
+// would otherwise stand in for. A non-empty resumeID adds --resume <id> to
+// continue a prior session (AT4).
+func headlessArgv(def guestwire.ProviderDef, resumeID string) ([]string, error) {
 	fields := strings.Fields(def.Command)
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("provider has no launch command")
@@ -258,6 +260,9 @@ func headlessArgv(def guestwire.ProviderDef) ([]string, error) {
 	}
 	argv := append([]string{}, fields...)
 	argv = append(argv, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions")
+	if resumeID != "" {
+		argv = append(argv, "--resume", resumeID)
+	}
 	return argv, nil
 }
 

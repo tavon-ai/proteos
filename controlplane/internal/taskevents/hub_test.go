@@ -117,6 +117,33 @@ func TestHub_ReapAfterRetention(t *testing.T) {
 	}
 }
 
+func TestHub_ReopenFloorsToCurrentTurn(t *testing.T) {
+	h := New(100, time.Minute)
+	h.Publish("t", data("a"), false)    // seq 1 (turn 1)
+	h.Publish("t", data("done1"), true) // seq 2 (turn 1 terminal)
+
+	h.Reopen("t")                    // follow-up turn (AT4)
+	h.Publish("t", data("b"), false) // seq 3 (turn 2)
+
+	// A fresh subscribe replays only the new turn — not turn 1's terminal result.
+	backlog, _, cancel, terminal := h.Subscribe("t", 0)
+	defer cancel()
+	if terminal {
+		t.Fatal("reopened stream must not report terminal")
+	}
+	if len(backlog) != 1 || backlog[0].Seq != 3 {
+		t.Fatalf("expected only the new turn (seq 3), got %+v", backlog)
+	}
+
+	// The new turn then ends and re-closes the stream.
+	h.Publish("t", data("done2"), true) // seq 4
+	_, _, cancel2, terminal2 := h.Subscribe("t", 0)
+	defer cancel2()
+	if !terminal2 {
+		t.Fatal("stream should be terminal again after the new turn's result")
+	}
+}
+
 func TestHub_SubscribeDuringRetentionKeepsStream(t *testing.T) {
 	h := New(100, 30*time.Millisecond)
 	h.Publish("t", data("a"), false)

@@ -353,8 +353,14 @@ export function useCancelTask(machineId: string | null) {
 // useTaskEvents subscribes to one task's live agent-event SSE stream (AT2),
 // accumulating normalized events for display. The browser EventSource replays
 // Last-Event-ID on its own reconnect; we close it on the terminal `result` frame
-// so it does not loop. Switching the selected task resets the buffer.
-export function useTaskEvents(machineId: string | null, taskId: string | null): TaskEvent[] {
+// so it does not loop. Switching the selected task resets the buffer. Bumping
+// `epoch` forces a fresh reconnect — used to pick up a follow-up turn (AT4),
+// whose server-side stream replays only the new turn.
+export function useTaskEvents(
+  machineId: string | null,
+  taskId: string | null,
+  epoch = 0,
+): TaskEvent[] {
   const qc = useQueryClient();
   const [events, setEvents] = useState<TaskEvent[]>([]);
 
@@ -377,9 +383,20 @@ export function useTaskEvents(machineId: string | null, taskId: string | null): 
     });
 
     return () => es.close();
-  }, [machineId, taskId, qc]);
+  }, [machineId, taskId, epoch, qc]);
 
   return events;
+}
+
+// useSendMessage runs a follow-up turn on a finished task (AT4: resume). On
+// success it invalidates the list so the row cycles back to running.
+export function useSendMessage(machineId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, prompt }: { taskId: string; prompt: string }) =>
+      api.sendMessage(machineId as string, taskId, prompt),
+    onSuccess: () => qc.invalidateQueries({ queryKey: tasksKey(machineId) }),
+  });
 }
 
 // reconnectRequired reports whether an error is the GitHub "reconnect" signal.
