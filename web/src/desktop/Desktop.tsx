@@ -37,13 +37,7 @@ export function Desktop({ me }: { me: Me }) {
 // DesktopScoped binds the window manager + layout persistence to the active
 // machine. The WindowManagerProvider's onChange debounce-saves that machine's
 // layout to its SQLite (decision #6).
-function DesktopScoped({
-  me,
-  events,
-}: {
-  me: Me;
-  events: MachineEvent[];
-}) {
+function DesktopScoped({ me, events }: { me: Me; events: MachineEvent[] }) {
   const { machines, selected, selectedId } = useSelectedMachine();
   const running = selected?.state === 'running';
   const saveLayout = useLayoutSaver(selectedId, running);
@@ -55,12 +49,7 @@ function DesktopScoped({
     // scrollback across machine switches — switching is a show/hide, never a
     // remount.
     <WindowManagerProvider onChange={saveLayout}>
-      <DesktopShell
-        me={me}
-        machines={machines ?? []}
-        selectedId={selectedId}
-        events={events}
-      />
+      <DesktopShell me={me} machines={machines ?? []} selectedId={selectedId} events={events} />
     </WindowManagerProvider>
   );
 }
@@ -121,11 +110,7 @@ function DesktopShell({
             : selected;
           return (
             <Window key={win.id} win={win} viewport={viewport} hidden={!visible}>
-              <WindowBody
-                win={win}
-                machineState={winMachine?.state ?? 'stopped'}
-                events={events}
-              />
+              <WindowBody win={win} machineState={winMachine?.state ?? 'stopped'} events={events} />
             </Window>
           );
         })}

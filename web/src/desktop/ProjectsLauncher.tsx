@@ -72,13 +72,7 @@ export function ProjectsLauncher({
   );
 }
 
-function ProjectTile({
-  machineId,
-  project,
-}: {
-  machineId: string | null;
-  project: Project;
-}) {
+function ProjectTile({ machineId, project }: { machineId: string | null; project: Project }) {
   const wm = useWindowManager();
 
   return (
