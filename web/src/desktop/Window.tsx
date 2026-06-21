@@ -59,7 +59,15 @@ function WindowImpl({ win, children, viewport, hidden }: WindowProps) {
       }
     >
       <div className="window-frame" data-kind={win.kind}>
-        <div className="window-header">
+        <div
+          className="window-header"
+          onDoubleClick={(e) => {
+            // Ignore double-clicks on the control buttons (minimize/maximize/close);
+            // only the title-bar surface itself toggles maximize, like other OSes.
+            if ((e.target as HTMLElement).closest('.window-controls')) return;
+            wm.toggleMaximize(win.id, viewport);
+          }}
+        >
           <span className="window-title" title={win.title}>
             {win.title}
           </span>

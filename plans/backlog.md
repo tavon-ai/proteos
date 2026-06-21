@@ -2,7 +2,7 @@
 [x] machine templates: go development, node dev, python, Go + Python + Node + build essentials... etc.
 [x] machine details
 [x] bug: bottom bar shows 3 terminals. We have 1 terminal in each machine, 3 machine running. It would be good to have them there, but when you click on the terminal in machine 2, go to machine 2.
-[ ] update README.md
+[x] update README.md
 [x] The bottom of terminal window cuts a bit on the terminal text. We should have a little bit more of room.
 [x] When a terminal is maximized, there's no way to un-maximize it.
 [x] Errors in claude when running in terminbal:
@@ -12,8 +12,7 @@
             repair
 [ ] The GitHub App only allows repos from my main account. All the repos from the other Orgs I belong, are not there. What do I have to change to be able to work on all those repos?
   https://github.com/apps/tavon-proteos
-[ ] Code Server says that there's no git environment. If yo
-[ ] Is there a way to override the "Do you trust the authors of the files in this folder?" modal? and close the "Chat"? and start in dark mode?
-[ ] maximise window when double click on the top windo bar, like in other OS.
+[ ] Code Server pre-defined settings: it says that there's no git environment, we need to set git.path in settings. Disable chat pane? start in dark mode? Is there a way to override the "Do you trust the authors of the files in this folder?" modal? and close the "Chat"? 
+[ ] Maximise window when double click on the top window bar, like in other OS.
 [ ] Right now, we can only use Claude Code using the cli (or via remote agent). Add pi.dev as a new remote provider.
 [ ] Add Icons
