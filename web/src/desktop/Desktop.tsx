@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { MachineEvent, MachineState, MachineSummary, Me, Provider } from '../api/client';
-import { useLogout, useMachineEvents, useMachines, useProviders } from '../api/hooks';
+import type { MachineEvent, MachineState, MachineSummary, Me } from '../api/client';
+import { useLogout, useMachineEvents, useMachines } from '../api/hooks';
 import { Terminal } from '../components/Terminal';
 import { EditorWindow } from '../windows/EditorWindow';
 import { PreviewWindow } from '../windows/PreviewWindow';
@@ -26,11 +26,10 @@ import type { WindowState } from './windowState';
 export function Desktop({ me }: { me: Me }) {
   const { data: machines } = useMachines(me.machines);
   const events = useMachineEvents();
-  const { data: providers } = useProviders();
 
   return (
     <SelectedMachineProvider machines={machines ?? []}>
-      <DesktopScoped me={me} events={events} providers={providers ?? []} />
+      <DesktopScoped me={me} events={events} />
     </SelectedMachineProvider>
   );
 }
@@ -41,11 +40,9 @@ export function Desktop({ me }: { me: Me }) {
 function DesktopScoped({
   me,
   events,
-  providers,
 }: {
   me: Me;
   events: MachineEvent[];
-  providers: Provider[];
 }) {
   const { machines, selected, selectedId } = useSelectedMachine();
   const running = selected?.state === 'running';
@@ -63,7 +60,6 @@ function DesktopScoped({
         machines={machines ?? []}
         selectedId={selectedId}
         events={events}
-        providers={providers}
       />
     </WindowManagerProvider>
   );
@@ -74,13 +70,11 @@ function DesktopShell({
   machines,
   selectedId,
   events,
-  providers,
 }: {
   me: Me;
   machines: MachineSummary[];
   selectedId: string | null;
   events: MachineEvent[];
-  providers: Provider[];
 }) {
   const wm = useWindowManager();
   const navigate = useNavigate();
@@ -131,7 +125,6 @@ function DesktopShell({
                 win={win}
                 machineState={winMachine?.state ?? 'stopped'}
                 events={events}
-                providers={providers}
               />
             </Window>
           );
@@ -150,12 +143,10 @@ function WindowBody({
   win,
   machineState,
   events,
-  providers,
 }: {
   win: WindowState;
   machineState: MachineState;
   events: MachineEvent[];
-  providers: Provider[];
 }) {
   switch (win.kind) {
     case 'projects':
@@ -163,7 +154,6 @@ function WindowBody({
         <ProjectsLauncher
           machineId={win.machineId ?? null}
           machineState={machineState}
-          providers={providers}
           events={events}
         />
       );

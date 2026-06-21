@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { MachineEvent, MachineState, Project, Provider, Repo } from '../api/client';
+import type { MachineEvent, MachineState, Project, Repo } from '../api/client';
 import {
   reconnectRequired,
   useCloneRepo,
@@ -9,14 +9,7 @@ import {
 } from '../api/hooks';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { useWindowManager } from './windowManagerContext';
-import {
-  openAgent,
-  openChanges,
-  openEditor,
-  openSettings,
-  openTasks,
-  openTerminal,
-} from './openers';
+import { openChanges, openEditor, openTasks, openTerminal } from './openers';
 import { parseRepoRef } from './repoRef';
 import { looksLikeGrantFailure } from './cloneFailure';
 
@@ -28,12 +21,10 @@ import { looksLikeGrantFailure } from './cloneFailure';
 export function ProjectsLauncher({
   machineId,
   machineState,
-  providers,
   events,
 }: {
   machineId: string | null;
   machineState: MachineState;
-  providers: Provider[];
   events: MachineEvent[];
 }) {
   const running = machineState === 'running';
@@ -74,7 +65,7 @@ export function ProjectsLauncher({
 
       <ul className="project-grid">
         {projects.map((p) => (
-          <ProjectTile key={p.path} machineId={machineId} project={p} providers={providers} />
+          <ProjectTile key={p.path} machineId={machineId} project={p} />
         ))}
       </ul>
     </div>
@@ -84,16 +75,11 @@ export function ProjectsLauncher({
 function ProjectTile({
   machineId,
   project,
-  providers,
 }: {
   machineId: string | null;
   project: Project;
-  providers: Provider[];
 }) {
   const wm = useWindowManager();
-  const [agentMenu, setAgentMenu] = useState(false);
-  const launchable = providers.filter((p) => p.enabled && p.key_set);
-  const enabled = providers.filter((p) => p.enabled);
 
   return (
     <li className="project-tile">
@@ -138,40 +124,6 @@ function ProjectTile({
         >
           Tasks
         </button>
-        <div className="agent-menu-wrap">
-          <button className="btn-primary" onClick={() => setAgentMenu((s) => !s)}>
-            Agent ▾
-          </button>
-          {agentMenu && (
-            <div className="agent-menu" role="menu">
-              {launchable.length === 0 && (
-                <button
-                  className="agent-menu-item"
-                  onClick={() => {
-                    setAgentMenu(false);
-                    openSettings(wm);
-                  }}
-                >
-                  {enabled.length === 0
-                    ? 'No providers configured — open Settings'
-                    : 'Set an API key in Settings…'}
-                </button>
-              )}
-              {launchable.map((p) => (
-                <button
-                  key={p.key}
-                  className="agent-menu-item"
-                  onClick={() => {
-                    setAgentMenu(false);
-                    if (machineId) openAgent(wm, machineId, project, p.key, p.display_name);
-                  }}
-                >
-                  {p.display_name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
     </li>
   );
