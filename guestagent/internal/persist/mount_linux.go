@@ -65,6 +65,13 @@ func setupDiskBinds(mount, homeTarget string, uid, gid int) error {
 			slog.Warn("persist: chown workspace failed", "err", err)
 		}
 	}
+	// Claude Code's startup health check nags `claude install to repair` unless a
+	// launcher exists at ~/.local/bin/claude. ProteOS bakes the binary to
+	// /usr/local/bin/claude with no per-$HOME install (build-rootfs.sh), and the
+	// persistent home is bind-mounted over the rootfs home, so the launcher must be
+	// ensured here on the live disk source — every boot, so it self-heals homes
+	// that predate this fix. No-op when Claude was not baked into the image.
+	ensureClaudeLauncher(homeSrc, uid, gid)
 	if err := bindMount(homeSrc, homeTarget); err != nil {
 		return fmt.Errorf("bind home: %w", err)
 	}
@@ -72,6 +79,59 @@ func setupDiskBinds(mount, homeTarget string, uid, gid int) error {
 		return fmt.Errorf("bind workspace: %w", err)
 	}
 	return nil
+}
+
+// claudeBinaryPath is where build-rootfs.sh bakes the Claude Code CLI. A var (not
+// a const) so tests can point it at a fixture. The native binary's startup check
+// looks for a launcher at ~/.local/bin/claude regardless of what is on PATH.
+var claudeBinaryPath = "/usr/local/bin/claude"
+
+// ensureClaudeLauncher makes ~/.local/bin/claude in the persisted home a symlink to
+// the baked binary so Claude Code's installation health check passes without a
+// per-$HOME `claude install`. Idempotent and best-effort: if Claude was not baked
+// into this image (binary absent) or any fs step fails it logs and returns, never
+// blocking the boot. When uid != 0 the created path components are lchown'd to the
+// session user so it owns its own launcher.
+func ensureClaudeLauncher(home string, uid, gid int) {
+	if _, err := os.Stat(claudeBinaryPath); err != nil {
+		return // Claude not baked into this image — nothing to link.
+	}
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		slog.Warn("persist: mkdir ~/.local/bin failed; claude launcher not ensured", "err", err)
+		return
+	}
+	link := filepath.Join(binDir, "claude")
+	if claudeLinkNeedsRepair(link) {
+		_ = os.Remove(link) // drop a stale link/file; ENOENT (absent) is fine
+		if err := os.Symlink(claudeBinaryPath, link); err != nil {
+			slog.Warn("persist: symlink claude launcher failed", "err", err)
+			return
+		}
+	}
+	if uid != 0 {
+		// Just the three new components, not a recursive walk: ~/.local may already
+		// hold an arbitrarily large tree the user owns.
+		for _, p := range []string{filepath.Join(home, ".local"), binDir, link} {
+			if err := os.Lchown(p, uid, gid); err != nil {
+				slog.Warn("persist: chown claude launcher path failed", "path", p, "err", err)
+			}
+		}
+	}
+}
+
+// claudeLinkNeedsRepair reports whether link is absent, not a symlink, or points
+// somewhere other than the baked binary — i.e. whether it must be (re)created.
+func claudeLinkNeedsRepair(link string) bool {
+	fi, err := os.Lstat(link)
+	if err != nil {
+		return true // absent or unreadable — (re)create
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return true // a regular file/dir squatting the path — replace it
+	}
+	target, err := os.Readlink(link)
+	return err != nil || target != claudeBinaryPath
 }
 
 // chownTreeIfNeeded recursively chowns root to uid:gid, but returns early when
