@@ -216,7 +216,11 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 	}
 }
 
-func TestInjectorPushesEmptyWhenNoKeys(t *testing.T) {
+// TestInjectorPushesSubscriptionProviderWhenNoKeys proves that a user with no
+// stored keys still gets the subscription-capable provider (Claude Code) pushed
+// with an empty env — so the guest can launch claude on the image's own login —
+// while every key-requiring provider (gemini/openai/pi) is omitted.
+func TestInjectorPushesSubscriptionProviderWhenNoKeys(t *testing.T) {
 	ctx := context.Background()
 	_, q := testutil.Postgres(t)
 	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 100, Login: "empty"})
@@ -230,7 +234,20 @@ func TestInjectorPushesEmptyWhenNoKeys(t *testing.T) {
 	}
 	guest.mu.Lock()
 	defer guest.mu.Unlock()
-	if !guest.got || len(guest.last.Providers) != 0 {
-		t.Fatalf("expected empty replace-all push, got %v", guest.last.Providers)
+	if !guest.got {
+		t.Fatal("guest never received PUT /secrets")
+	}
+	def, ok := guest.last.Providers["claude"]
+	if !ok {
+		t.Fatalf("claude not pushed for keyless user: %v", guest.last.Providers)
+	}
+	if def.Command != "claude" || len(def.Env) != 0 {
+		t.Fatalf("expected keyless claude def, got command=%q env=%v", def.Command, def.Env)
+	}
+	// Providers that require a key must not appear when the user has none.
+	for _, k := range []string{"gemini", "openai", "pi"} {
+		if _, present := guest.last.Providers[k]; present {
+			t.Fatalf("key-requiring provider %q pushed without a key", k)
+		}
 	}
 }

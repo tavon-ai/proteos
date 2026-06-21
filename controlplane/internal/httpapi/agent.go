@@ -48,9 +48,10 @@ func (s *Server) handleGatewayAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The user must have a stored key for this provider (pre-upgrade 409).
+	// The user must have a stored key for this provider (pre-upgrade 409), unless
+	// the provider can run on subscription creds in the image (Claude Code).
 	uid := uuidString(user.ID)
-	if !s.providerKeySet(uid, providerKey) {
+	if !prov.AllowsSubscriptionAuth() && !s.providerKeySet(uid, providerKey) {
 		writeError(w, http.StatusConflict, "no_provider_key")
 		return
 	}

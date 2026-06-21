@@ -11,11 +11,12 @@ type User struct {
 
 // Machine is a subset of the control-plane MachineSummary the CLI renders.
 type Machine struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	State     string  `json:"state"`
-	GuestIP   *string `json:"guest_ip"`
-	CreatedAt string  `json:"created_at"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	State      string  `json:"state"`
+	GuestIP    *string `json:"guest_ip"`
+	TemplateID *string `json:"template_id"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 // Me is the GET /api/me response.

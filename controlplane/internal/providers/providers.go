@@ -58,6 +58,17 @@ type Provider struct {
 	Enabled      bool
 }
 
+// AllowsSubscriptionAuth reports whether the provider can run without a stored
+// API key, falling back to subscription credentials baked into the machine image
+// (e.g. Claude Code logged in via a Claude subscription in the guest's HOME).
+// Only Claude Code supports this today; every other provider needs an env key.
+// When true, the task/agent surfaces skip the no_provider_key gate and the
+// injector still pushes the provider's launch command with an empty env so the
+// guest can spawn it and let the CLI use its own stored login.
+func (p Provider) AllowsSubscriptionAuth() bool {
+	return p.LaunchCommand == "claude"
+}
+
 // Validate checks a fields map (field name → value) against the provider's
 // declared fields: every supplied field must be declared, every declared field
 // must be present and non-empty, and no value may exceed MaxFieldValueLen.

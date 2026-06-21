@@ -130,16 +130,19 @@ func TestCreateTask_400ProviderNotHeadless(t *testing.T) {
 	}
 }
 
-func TestCreateTask_409NoProviderKey(t *testing.T) {
+// TestCreateTask_202ClaudeNoKeySubscription proves the headless lane no longer
+// requires a stored Anthropic key for Claude: with no key the run still
+// dispatches (the machine image's Claude subscription authenticates it).
+func TestCreateTask_202ClaudeNoKeySubscription(t *testing.T) {
 	fx := setupTasks(t, string(machine.StateRunning), false) // no key
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"x","provider":"claude","project":"alpha"}`, true)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
 	}
-	if code := errorCode(t, resp); code != "no_provider_key" {
-		t.Fatalf("error = %q, want no_provider_key", code)
+	if fx.ch.lastRunProvider != "claude" {
+		t.Fatalf("expected claude dispatch, got provider %q", fx.ch.lastRunProvider)
 	}
 }
 

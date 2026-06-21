@@ -5,3 +5,8 @@
 [ ] update README.md
 [x] The bottom of terminal window cuts a bit on the terminal text. We should have a little bit more of room.
 [x] When a terminal is maximized, there's no way to un-maximize it.
+[ ] Errors in claude when running in terminbal:
+          ⚠ claude command at /home/dev/.local/bin/claude missing or broken (/home/dev/.local/bin 
+            does not exist) · run claude install to repair
+          ⚠claude command at /home/dev/.local/bin/claude missing or broken · run claude install to
+            repair

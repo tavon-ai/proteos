@@ -20,12 +20,15 @@ COPY go.work go.work.sum ./
 COPY controlplane/go.mod controlplane/go.sum ./controlplane/
 COPY nodeagent/go.mod ./nodeagent/
 COPY guestagent/go.mod guestagent/go.sum ./guestagent/
+# cli has no external dependencies, so it has no go.sum (same as nodeagent).
+COPY cli/go.mod ./cli/
 RUN go mod download
 
 # Sources.
 COPY controlplane/ ./controlplane/
 COPY nodeagent/ ./nodeagent/
 COPY guestagent/ ./guestagent/
+COPY cli/ ./cli/
 RUN go build -ldflags="-s -w" -o /out/controlplane ./controlplane/cmd/controlplane
 
 # Root (not :nonroot): the Phase-1 file-backed secrets store writes to

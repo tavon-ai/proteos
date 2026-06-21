@@ -140,9 +140,21 @@ func TestAgentUnknownProvider404(t *testing.T) {
 
 func TestAgentNoProviderKey409(t *testing.T) {
 	fx := setupAgent(t)
-	// claude is registered+enabled and the machine is running, but no key is set.
-	if code := getAgent(t, fx, "claude", true, testWSOrigin); code != http.StatusConflict {
+	// gemini is registered+enabled and the machine is running, but no key is set —
+	// and gemini needs a key (unlike Claude, it cannot run on a subscription).
+	if code := getAgent(t, fx, "gemini", true, testWSOrigin); code != http.StatusConflict {
 		t.Fatalf("want 409 no_provider_key, got %d", code)
+	}
+}
+
+// TestAgentClaudeNoKeyReachesInjection proves Claude is exempt from the stored-key
+// requirement (subscription auth): with no key the handler proceeds past the 409
+// to the secret push, which fails on failDialer — surfacing as 502, the same
+// outcome as the key-set case and proof the key gate was skipped.
+func TestAgentClaudeNoKeyReachesInjection(t *testing.T) {
+	fx := setupAgent(t)
+	if code := getAgent(t, fx, "claude", true, testWSOrigin); code != http.StatusBadGateway {
+		t.Fatalf("want 502 injection_failed (key gate skipped), got %d", code)
 	}
 }
 

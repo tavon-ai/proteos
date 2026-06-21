@@ -92,7 +92,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid := uuidString(user.ID)
-	if !s.providerKeySet(uid, req.Provider) {
+	// Claude can run on subscription creds baked into the image, so it is exempt
+	// from the stored-key requirement; every other provider still needs a key.
+	if !prov.AllowsSubscriptionAuth() && !s.providerKeySet(uid, req.Provider) {
 		writeError(w, http.StatusConflict, "no_provider_key")
 		return
 	}
@@ -312,7 +314,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid := uuidString(user.ID)
-	if !s.providerKeySet(uid, task.Provider) {
+	if !prov.AllowsSubscriptionAuth() && !s.providerKeySet(uid, task.Provider) {
 		writeError(w, http.StatusConflict, "no_provider_key")
 		return
 	}

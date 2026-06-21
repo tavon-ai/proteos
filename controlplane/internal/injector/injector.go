@@ -106,6 +106,17 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 		path := secrets.UserProviderPath(userID, p.Key)
 		data, err := i.secrets.Get(path)
 		if errors.Is(err, secrets.ErrNotFound) {
+			// No stored key. A subscription-capable provider (Claude Code) still
+			// gets its launch command pushed with an empty env, so the guest can
+			// spawn it and let the in-image login authenticate; any other provider
+			// is simply skipped (it cannot run without its key).
+			if p.AllowsSubscriptionAuth() {
+				out.Providers[p.Key] = guestwire.ProviderDef{
+					Command:      p.LaunchCommand,
+					Env:          map[string]string{},
+					SetupCommand: p.SetupCommand,
+				}
+			}
 			continue
 		}
 		if err != nil {

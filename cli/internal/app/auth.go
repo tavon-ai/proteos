@@ -12,9 +12,9 @@ import (
 )
 
 func runAuth(env Env, args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(env.Stderr, "usage: proteos auth <login|status|logout>")
-		return client.ExitUsage
+	if groupHelp(args) {
+		authGroupUsage(env.Stdout)
+		return client.ExitOK
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -25,16 +25,45 @@ func runAuth(env Env, args []string) int {
 	case "logout":
 		return authLogout(env)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown auth subcommand %q\n", sub)
+		fmt.Fprintf(env.Stderr, "proteos: unknown auth subcommand %q\n\n", sub)
+		authGroupUsage(env.Stderr)
 		return client.ExitUsage
 	}
+}
+
+// authGroupUsage explains how authentication works.
+func authGroupUsage(w io.Writer) {
+	fmt.Fprint(w, `proteos auth — authenticate the CLI
+
+Mint a personal access token in the browser under Settings → CLI tokens, then
+either run 'proteos auth login' to store it, or set PROTEOS_TOKEN (and PROTEOS_URL)
+for a headless/agent run. The token is sent as a bearer credential and never
+logged; stored credentials live in ~/.config/proteos/credentials.json (0600).
+
+Commands:
+  login    Verify a token against the endpoint and store it
+  status   Show the resolved endpoint and login (never the token)
+  logout   Remove the stored credentials
+
+Run 'proteos auth <command> -h' for flags.
+`)
 }
 
 // authLogin verifies a token against the endpoint and stores it. The token comes
 // from --token, else PROTEOS_TOKEN, else stdin (so it stays out of shell history
 // and argv). The endpoint comes from --url or PROTEOS_URL.
 func authLogin(env Env, args []string) int {
-	fs := flagSet(env, "auth login")
+	fs := cmdFlags(env, "auth login", cmdHelp{
+		summary: "Verify a personal access token against the endpoint and store it.",
+		long: "The token is read from --token, else PROTEOS_TOKEN, else an interactive\n" +
+			"prompt (kept out of your shell history and argv). On success the endpoint,\n" +
+			"token, and login are saved to ~/.config/proteos/credentials.json (0600).",
+		usage: "proteos auth login --url <url> [--token <token>]",
+		examples: []string{
+			"proteos auth login --url https://proteos.example.com",
+			"proteos auth login --url https://proteos.example.com --token proteos_pat_xxxx",
+		},
+	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	tok := fs.String("token", "", "personal access token (or PROTEOS_TOKEN, or stdin)")
 	if ok, code := parse(fs, args); !ok {
@@ -47,6 +76,8 @@ func authLogin(env Env, args []string) int {
 	}
 	if baseURL == "" {
 		fmt.Fprintln(env.Stderr, "proteos: --url (or PROTEOS_URL) is required")
+		fmt.Fprintln(env.Stderr)
+		fs.Usage()
 		return client.ExitUsage
 	}
 
@@ -83,7 +114,11 @@ func authLogin(env Env, args []string) int {
 // authStatus reports the resolved endpoint, login, and where each value came
 // from — without printing the token.
 func authStatus(env Env, args []string) int {
-	fs := flagSet(env, "auth status")
+	fs := cmdFlags(env, "auth status", cmdHelp{
+		summary: "Show the resolved endpoint and login, and where each value came from.",
+		long:    "Never prints the token itself — only whether one is set.",
+		usage:   "proteos auth status",
+	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	if ok, code := parse(fs, args); !ok {
 		return code

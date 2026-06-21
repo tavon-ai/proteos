@@ -35,6 +35,14 @@ func Run(env Env, args []string) int {
 		return runAuth(env, rest)
 	case "machines", "machine":
 		return runMachines(env, rest)
+	case "templates", "template":
+		return runTemplates(env, rest)
+	case "repo", "repos":
+		return runRepos(env, rest)
+	case "project", "projects":
+		return runProjects(env, rest)
+	case "git":
+		return runGit(env, rest)
 	case "task", "tasks":
 		return runTask(env, rest)
 	case "version", "--version", "-v":
@@ -60,8 +68,19 @@ Commands:
   auth login           Store a personal access token for this CLI
   auth status          Show the current login / endpoint
   auth logout          Remove the stored credentials
-  machines ls          List your machines
+  machines ls          List your machines (with their template/type)
   machines get <id>    Show one machine
+  templates ls         List the machine templates (types) you can create
+  repo ls              List the GitHub repos you can clone
+  project ls           List the repos cloned in a machine's workspace
+  project clone <r>    Clone owner/repo into a machine
+  project ensure <r>   Clone owner/repo into a machine if not already present
+  git status           Show a project's working-tree changes
+  git diff             Show a project's diff
+  git branch <name>    Create/checkout a branch in a project
+  git commit -m <msg>  Commit a project's changes
+  git push             Push a project's branch to origin
+  git pr               Open a pull request for a project
   task run             Dispatch a headless agent task
   task ls              List a machine's tasks
   task get <tid>       Show one task
@@ -121,12 +140,64 @@ func printJSONLine(w io.Writer, v any) error {
 // ctx is the shared request context (placeholder for future cancellation wiring).
 func ctx() context.Context { return context.Background() }
 
+// cmdHelp describes a leaf command for its --help output.
+type cmdHelp struct {
+	summary  string   // one-line description
+	long     string   // optional paragraph(s) of detail
+	usage    string   // the invocation line
+	examples []string // example invocations
+}
+
 // flagSet builds a FlagSet that prints to env.Stderr and suppresses the default
 // "flag provided but not defined" double-printing.
 func flagSet(env Env, name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	return fs
+}
+
+// cmdFlags builds a FlagSet whose -h/--help (and usage errors) print a full
+// description, usage line, examples, and the flag list — not just flag defaults.
+func cmdFlags(env Env, name string, h cmdHelp) *flag.FlagSet {
+	fs := flagSet(env, name)
+	fs.Usage = func() {
+		out := fs.Output()
+		if h.summary != "" {
+			fmt.Fprintf(out, "%s\n", h.summary)
+		}
+		if h.long != "" {
+			fmt.Fprintf(out, "\n%s\n", h.long)
+		}
+		if h.usage != "" {
+			fmt.Fprintf(out, "\nUsage:\n  %s\n", h.usage)
+		}
+		if len(h.examples) > 0 {
+			fmt.Fprintf(out, "\nExamples:\n")
+			for _, e := range h.examples {
+				fmt.Fprintf(out, "  %s\n", e)
+			}
+		}
+		var hasFlags bool
+		fs.VisitAll(func(*flag.Flag) { hasFlags = true })
+		if hasFlags {
+			fmt.Fprintf(out, "\nFlags:\n")
+			fs.PrintDefaults()
+		}
+	}
+	return fs
+}
+
+// groupHelp reports whether args is a request for a command group's help (no
+// args, or help/-h/--help as the first token).
+func groupHelp(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		return true
+	}
+	return false
 }
 
 // parse runs fs.Parse and maps the outcome to (ok, exit code): success → (true,

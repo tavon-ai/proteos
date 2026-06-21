@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,11 @@ type fakeCP struct {
 	finalStatus string
 	canceled    bool
 	lastSend    string
+
+	projectsPresent bool   // GET /api/projects returns hello-world when true
+	cloned          bool   // set by POST /api/git/clone (then projects show up)
+	lastCloneName   string // full_name from the last clone request
+	lastCommitMsg   string // message from the last git commit request
 }
 
 func (f *fakeCP) handler() http.Handler {
@@ -48,7 +54,66 @@ func (f *fakeCP) handler() http.Handler {
 		if !auth(w, r) {
 			return
 		}
-		fmt.Fprint(w, `[{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","created_at":"2026-06-20T00:00:00Z"}]`)
+		fmt.Fprint(w, `[{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","template_id":"go","created_at":"2026-06-20T00:00:00Z"}]`)
+	})
+	mux.HandleFunc("GET /api/templates", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		fmt.Fprint(w, `[{"id":"go","label":"Go","description":"Go toolchain"},{"id":"full-stack","label":"Full Stack","description":"Node + Postgres"}]`)
+	})
+	mux.HandleFunc("GET /api/git/repos", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		fmt.Fprint(w, `{"repos":[{"full_name":"octocat/hello-world","private":false,"default_branch":"main","pushed_at":"2026-06-20T00:00:00Z"}],"grants_url":"https://github.com/apps/x/installations/new"}`)
+	})
+	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		f.mu.Lock()
+		present := f.projectsPresent || f.cloned
+		f.mu.Unlock()
+		if !present {
+			fmt.Fprint(w, `{"projects":[]}`)
+			return
+		}
+		fmt.Fprint(w, `{"projects":[{"name":"hello-world","path":"/workspace/hello-world","remote":"https://github.com/octocat/hello-world.git","branch":"main","dirty":false}]}`)
+	})
+	mux.HandleFunc("POST /api/git/clone", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		var body struct {
+			FullName string `json:"full_name"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.cloned = true
+		f.lastCloneName = body.FullName
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprint(w, `{"op_id":"op1"}`)
+	})
+	mux.HandleFunc("GET /api/machines/{id}/git/status", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		fmt.Fprint(w, `{"branch":"main","files":[{"path":"main.go","index":" ","worktree":"M"}]}`)
+	})
+	mux.HandleFunc("POST /api/machines/{id}/git/commit", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		var body struct {
+			Message string `json:"message"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.lastCommitMsg = body.Message
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"sha":"abc1234","subject":"`+body.Message+`"}`)
 	})
 	mux.HandleFunc("GET /api/machines/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
@@ -58,7 +123,7 @@ func (f *fakeCP) handler() http.Handler {
 			writeErr(w, http.StatusNotFound, "no_machine")
 			return
 		}
-		fmt.Fprint(w, `{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","created_at":"2026-06-20T00:00:00Z"}`)
+		fmt.Fprint(w, `{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","template_id":"go","created_at":"2026-06-20T00:00:00Z"}`)
 	})
 	mux.HandleFunc("POST /api/machines/{id}/tasks", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
@@ -375,6 +440,191 @@ func TestUsageExit2(t *testing.T) {
 	_, url := newCP(t)
 	// Missing --machine.
 	code, _, _ := runCLI(t, url, "tok", "task", "ls")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+}
+
+// runArgs executes the CLI with no auth env (for help-only paths).
+func runArgs(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out, errb bytes.Buffer
+	code := app.Run(app.Env{Stdout: &out, Stderr: &errb, Version: "test"}, args)
+	return code, out.String(), errb.String()
+}
+
+func TestGroupHelpExit0(t *testing.T) {
+	for _, group := range []string{"task", "auth", "machines", "templates", "repo", "project", "git"} {
+		for _, form := range [][]string{{group}, {group, "-h"}, {group, "help"}} {
+			code, out, _ := runArgs(t, form...)
+			if code != client.ExitOK {
+				t.Fatalf("%v exit = %d, want 0", form, code)
+			}
+			if !strings.Contains(out, "proteos "+group) {
+				t.Fatalf("%v help missing header:\n%s", form, out)
+			}
+		}
+	}
+}
+
+func TestCommandHelpDescribesAndExits0(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string // a phrase the description must contain
+	}{
+		{[]string{"task", "run", "-h"}, "never commits"},
+		{[]string{"task", "watch", "-h"}, "reconnecting automatically"},
+		{[]string{"task", "send", "-h"}, "resumes a finished task"},
+		{[]string{"task", "cancel", "-h"}, "idempotent"},
+		{[]string{"task", "get", "--help"}, "Result fields"},
+		{[]string{"task", "ls", "-h"}, "newest first"},
+		{[]string{"auth", "login", "-h"}, "credentials.json"},
+		{[]string{"machines", "get", "-h"}, "Show one machine"},
+	}
+	for _, c := range cases {
+		code, _, errs := runArgs(t, c.args...)
+		if code != client.ExitOK {
+			t.Fatalf("%v exit = %d, want 0", c.args, code)
+		}
+		// -h output goes to stderr (flag convention); content + Examples present.
+		if !strings.Contains(errs, c.want) {
+			t.Fatalf("%v help missing %q:\n%s", c.args, c.want, errs)
+		}
+		if !strings.Contains(errs, "Usage:") {
+			t.Fatalf("%v help missing Usage section:\n%s", c.args, errs)
+		}
+	}
+}
+
+func TestUnknownSubcommandShowsGroupHelpExit2(t *testing.T) {
+	code, _, errs := runArgs(t, "task", "frobnicate")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errs, "unknown task subcommand") || !strings.Contains(errs, "Commands:") {
+		t.Fatalf("expected error + group help on stderr:\n%s", errs)
+	}
+}
+
+func TestMachinesListShowsTemplate(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	// The template id "go" is resolved to its catalog label "Go".
+	if !strings.Contains(out, "TEMPLATE") || !strings.Contains(out, "Go") {
+		t.Fatalf("expected resolved template label:\n%s", out)
+	}
+}
+
+func TestTemplatesList(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "templates", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "Go") || !strings.Contains(out, "Full Stack") {
+		t.Fatalf("templates output:\n%s", out)
+	}
+}
+
+func TestRepoList(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "repo", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "octocat/hello-world") {
+		t.Fatalf("repo output:\n%s", out)
+	}
+}
+
+func TestProjectListEmpty(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "project", "ls", "--machine", "m1")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "No projects.") {
+		t.Fatalf("project output:\n%s", out)
+	}
+}
+
+func TestProjectCloneDispatch(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "project", "clone", "--machine", "m1", "octocat/hello-world")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastCloneName != "octocat/hello-world" {
+		t.Fatalf("server saw clone of %q", cp.lastCloneName)
+	}
+	if !strings.Contains(out, "dispatched") {
+		t.Fatalf("clone output:\n%s", out)
+	}
+}
+
+func TestProjectEnsureAlreadyPresent(t *testing.T) {
+	cp, url := newCP(t)
+	cp.projectsPresent = true
+	code, out, _ := runCLI(t, url, "tok", "project", "ensure", "--machine", "m1", "octocat/hello-world")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastCloneName != "" {
+		t.Fatalf("ensure cloned despite project present: %q", cp.lastCloneName)
+	}
+	if !strings.Contains(out, "already present") {
+		t.Fatalf("ensure output:\n%s", out)
+	}
+}
+
+func TestProjectEnsureClones(t *testing.T) {
+	cp, url := newCP(t)
+	// Not present initially; the clone flips the projects list to present, which
+	// the ensure poll then observes.
+	code, out, _ := runCLI(t, url, "tok", "project", "ensure", "--machine", "m1", "octocat/hello-world")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastCloneName != "octocat/hello-world" {
+		t.Fatalf("ensure did not clone: %q", cp.lastCloneName)
+	}
+	if !strings.Contains(out, "cloned octocat/hello-world into project hello-world") {
+		t.Fatalf("ensure output:\n%s", out)
+	}
+}
+
+func TestGitStatus(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "git", "status", "--machine", "m1", "--project", "hello-world")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "On branch main") || !strings.Contains(out, "main.go") {
+		t.Fatalf("status output:\n%s", out)
+	}
+}
+
+func TestGitCommit(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "git", "commit", "--machine", "m1", "--project", "hello-world", "-m", "add health check")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastCommitMsg != "add health check" {
+		t.Fatalf("server saw commit msg %q", cp.lastCommitMsg)
+	}
+	if !strings.Contains(out, "committed abc1234") {
+		t.Fatalf("commit output:\n%s", out)
+	}
+}
+
+func TestGitCommitMissingMessageExit2(t *testing.T) {
+	_, url := newCP(t)
+	code, _, _ := runCLI(t, url, "tok", "git", "commit", "--machine", "m1", "--project", "hello-world")
 	if code != client.ExitUsage {
 		t.Fatalf("exit = %d, want 2", code)
 	}
