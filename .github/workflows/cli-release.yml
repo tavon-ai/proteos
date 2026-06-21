@@ -1,0 +1,77 @@
+name: CLI Release
+
+# Manually cut a release of the proteos CLI: build the binary for every
+# supported platform, stamp the chosen version into it, and publish a GitHub
+# release with the binaries (plus checksums) attached.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v1.0.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build + publish CLI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          # The CLI module has no external deps (no go.sum); key the module
+          # cache off the workspace sum so setup-go doesn't error on a missing
+          # cli/go.sum.
+          cache-dependency-path: go.work.sum
+
+      - name: Validate version
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version '${{ inputs.version }}' must look like v1.2.3 (optionally with a -suffix)"
+            exit 1
+          fi
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS=${target%/*}
+            GOARCH=${target#*/}
+            out="dist/proteos-${GOOS}-${GOARCH}"
+            echo "building $out"
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "$out" ./cmd/proteos
+          done
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum proteos-* > checksums.txt
+          cat checksums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.version }}" \
+            --title "proteos CLI ${{ inputs.version }}" \
+            --generate-notes \
+            ${{ inputs.prerelease && '--prerelease' || '' }} \
+            dist/proteos-* dist/checksums.txt
