@@ -13,6 +13,6 @@
 [ ] The GitHub App only allows repos from my main account. All the repos from the other Orgs I belong, are not there. What do I have to change to be able to work on all those repos?
   https://github.com/apps/tavon-proteos
 [ ] Code Server pre-defined settings: it says that there's no git environment, we need to set git.path in settings. Disable chat pane? start in dark mode? Is there a way to override the "Do you trust the authors of the files in this folder?" modal? and close the "Chat"? 
-[ ] Maximise window when double click on the top window bar, like in other OS.
-[ ] Right now, we can only use Claude Code using the cli (or via remote agent). Add pi.dev as a new remote provider.
+[x] Maximise window when double click on the top window bar, like in other OS.
+[x] Right now, we can only use Claude Code using the cli (or via remote agent). Add pi.dev as a new remote provider.
 [ ] Add Icons

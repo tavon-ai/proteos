@@ -18,10 +18,13 @@ import (
 )
 
 // AT1 headless agent runner. agent.run dispatches a non-interactive coding-agent
-// run (Claude Code in print mode) in a project's working tree, parses its
-// structured stream-json output, and reports the outcome back as agent.done. The
-// run only ever produces a dirty working tree — it never commits; shipping is the
-// separate, explicit GR flow.
+// run (Claude Code in print mode, or pi.dev in --mode json) in a project's working
+// tree, parses its structured JSON event stream, and reports the outcome back as
+// agent.done. The run only ever produces a dirty working tree — it never commits;
+// shipping is the separate, explicit GR flow. Each headless-capable provider has
+// its own argv (headlessArgv) and stream parser (parseHeadlessStream); both emit
+// the same normalized AgentEventPayload steps and agentResult so the CP/UI never
+// see a provider-specific wire format.
 
 const (
 	// agentTaskTimeout bounds a single headless run. Coding tasks can be long, so
@@ -76,6 +79,48 @@ type rawBlock struct {
 	ToolUseID string          `json:"tool_use_id"` // tool_result back-reference
 	Content   json.RawMessage `json:"content"`     // tool_result output (string or block array)
 	IsError   bool            `json:"is_error"`    // tool_result error flag
+}
+
+// piEvent is the subset of a pi.dev `--mode json` line we read. pi emits one
+// JSON object per line: first a session header ({"type":"session","id":...}),
+// then a stream of AgentSessionEvents — message_start/end (whose content carries
+// text + toolCall blocks), tool_execution_start/end, turn_end, and a terminal
+// agent_end. There is no single Claude-style "result" event; agent_end is the
+// terminal marker and per-message usage carries cost.
+type piEvent struct {
+	Type       string          `json:"type"`
+	ID         string          `json:"id"`         // session header session id
+	Message    *piMessage      `json:"message"`    // message_start/end, turn_end
+	ToolCallID string          `json:"toolCallId"` // tool_execution_start/end
+	ToolName   string          `json:"toolName"`   // tool_execution_start/end
+	Args       json.RawMessage `json:"args"`       // tool_execution_start input
+	Result     json.RawMessage `json:"result"`     // tool_execution_end output
+	IsError    bool            `json:"isError"`    // tool_execution_end error flag
+}
+
+// piMessage is the assistant/user message envelope of a pi event; content is an
+// array of typed blocks and the assistant message carries usage + stopReason.
+type piMessage struct {
+	Role         string    `json:"role"`
+	Content      []piBlock `json:"content"`
+	Usage        *piUsage  `json:"usage"`
+	StopReason   string    `json:"stopReason"`   // stop | length | toolUse | error | aborted
+	ErrorMessage string    `json:"errorMessage"` // set when stopReason is error/aborted
+}
+
+// piBlock is one content block of a pi message. We only read text here; tool calls
+// are relayed from the dedicated tool_execution_* events (which also carry results).
+type piBlock struct {
+	Type string `json:"type"` // text | thinking | toolCall
+	Text string `json:"text"`
+}
+
+// piUsage is the per-message usage; cost.total is the message's dollar cost, which
+// we sum across the run.
+type piUsage struct {
+	Cost struct {
+		Total float64 `json:"total"`
+	} `json:"cost"`
 }
 
 // agentRun tracks one in-flight headless run so agent.cancel (AT3) can stop it.
@@ -223,7 +268,7 @@ func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir, resume
 	if err := cmd.Start(); err != nil {
 		return agentResult{}, err
 	}
-	res, sawResult, perr := parseStreamJSON(stdout, emit)
+	res, sawResult, perr := parseHeadlessStream(headlessBinary(def), stdout, emit)
 	waitErr := cmd.Wait()
 
 	// A parsed result event is authoritative (it carries is_error), even if the
@@ -244,26 +289,56 @@ func (m *Manager) runHeadless(ctx context.Context, provider, prompt, dir, resume
 	return res, nil
 }
 
-// headlessArgv builds the Claude Code print-mode command. Only Claude Code is
-// supported on the headless lane (AT1); the flags are claude-specific. The prompt
-// is delivered on stdin (not an argument) to avoid quoting issues. Permissions
-// are bypassed because the microVM is itself the sandbox the permission system
-// would otherwise stand in for. A non-empty resumeID adds --resume <id> to
-// continue a prior session (AT4).
+// headlessBinary returns the base name of a provider's launch command (e.g.
+// "claude", "pi"), which selects the argv flags and the stream parser. It is empty
+// when the provider has no command.
+func headlessBinary(def guestwire.ProviderDef) string {
+	fields := strings.Fields(def.Command)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
+}
+
+// headlessArgv builds a provider's non-interactive (print/JSON-stream) command.
+// Only the headless-capable providers are supported on this lane (AT1); the flags
+// are per-binary. The prompt is delivered on stdin (not an argument) to avoid
+// quoting issues. Tool permissions are not gated because the microVM is itself the
+// sandbox the permission system would otherwise stand in for. A non-empty resumeID
+// continues a prior session (AT4): claude via --resume, pi via --session.
 func headlessArgv(def guestwire.ProviderDef, resumeID string) ([]string, error) {
 	fields := strings.Fields(def.Command)
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("provider has no launch command")
 	}
-	if filepath.Base(fields[0]) != "claude" {
+	argv := append([]string{}, fields...)
+	switch headlessBinary(def) {
+	case "claude":
+		argv = append(argv, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions")
+		if resumeID != "" {
+			argv = append(argv, "--resume", resumeID)
+		}
+	case "pi":
+		// pi.dev emits a JSON event stream in --mode json. Resume targets a stored
+		// session by id via --session (not --resume, which is an interactive picker
+		// that would hang headless).
+		argv = append(argv, "--mode", "json")
+		if resumeID != "" {
+			argv = append(argv, "--session", resumeID)
+		}
+	default:
 		return nil, fmt.Errorf("provider command %q is not headless-capable", fields[0])
 	}
-	argv := append([]string{}, fields...)
-	argv = append(argv, "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions")
-	if resumeID != "" {
-		argv = append(argv, "--resume", resumeID)
-	}
 	return argv, nil
+}
+
+// parseHeadlessStream routes a headless run's stdout to the parser matching its
+// binary: pi.dev's AgentSessionEvent stream, or the default Claude Code stream-json.
+func parseHeadlessStream(bin string, r io.Reader, emit func(guestwire.AgentEventPayload)) (agentResult, bool, error) {
+	if bin == "pi" {
+		return parsePiStream(r, emit)
+	}
+	return parseStreamJSON(r, emit)
 }
 
 // parseStreamJSON reads a headless run's stream-json (one JSON object per line),
@@ -359,6 +434,105 @@ func toolResultText(raw json.RawMessage) string {
 		return b.String()
 	}
 	return string(raw) // last resort: the raw JSON, still bounded by the caller
+}
+
+// parsePiStream reads a pi.dev `--mode json` event stream (one JSON object per
+// line), tracking the session id from the header, relaying each normalized
+// assistant/tool step to emit (AT2), and treating agent_end as the terminal
+// marker. Cost is summed from per-message usage and the summary is the last
+// assistant message's text. It tolerates non-JSON noise lines; sawResult is false
+// when no agent_end appeared (the run failed without completing). emit may be nil.
+func parsePiStream(r io.Reader, emit func(guestwire.AgentEventPayload)) (res agentResult, sawResult bool, err error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // tool outputs can be large
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var ev piEvent
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "session":
+			if ev.ID != "" {
+				res.SessionID = ev.ID
+			}
+		case "tool_execution_start":
+			if emit != nil {
+				emit(guestwire.AgentEventPayload{
+					Kind:   guestwire.AgentEventToolUse,
+					Tool:   ev.ToolName,
+					ToolID: ev.ToolCallID,
+					Input:  boundedJSON(ev.Args, guestwire.AgentEventToolCap),
+				})
+			}
+		case "tool_execution_end":
+			if emit != nil {
+				emit(guestwire.AgentEventPayload{
+					Kind:    guestwire.AgentEventToolResult,
+					ToolID:  ev.ToolCallID,
+					Output:  truncate(piToolResultText(ev.Result), guestwire.AgentEventToolCap),
+					IsError: ev.IsError,
+				})
+			}
+		case "message_end":
+			if ev.Message == nil || ev.Message.Role != "assistant" {
+				continue
+			}
+			if ev.Message.Usage != nil {
+				res.CostUSD += ev.Message.Usage.Cost.Total
+			}
+			var summary strings.Builder
+			for _, b := range ev.Message.Content {
+				if b.Type != "text" {
+					continue
+				}
+				if strings.TrimSpace(b.Text) == "" {
+					continue
+				}
+				if emit != nil {
+					emit(guestwire.AgentEventPayload{
+						Kind: guestwire.AgentEventAssistantText,
+						Text: truncate(b.Text, guestwire.AgentEventTextCap),
+					})
+				}
+				if summary.Len() > 0 {
+					summary.WriteString("\n")
+				}
+				summary.WriteString(b.Text)
+			}
+			// The last assistant message's text is the run summary (its content
+			// overwrites earlier turns, mirroring claude's terminal result string).
+			if summary.Len() > 0 {
+				res.Summary = truncate(summary.String(), maxAgentSummary)
+			}
+			if ev.Message.StopReason == "error" || ev.Message.StopReason == "aborted" {
+				res.IsError = true
+				res.Subtype = ev.Message.ErrorMessage
+			}
+		case "turn_end":
+			res.NumTurns++
+		case "agent_end":
+			sawResult = true // pi's terminal marker; reported via agent.done
+		}
+	}
+	return res, sawResult, sc.Err()
+}
+
+// piToolResultText flattens a pi tool_execution_end result value (an arbitrary
+// JSON value) into text: a JSON string is unquoted, anything else is its raw JSON.
+// The caller bounds the length.
+func piToolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return string(raw)
 }
 
 // boundedJSON returns raw if it fits the cap, else a small JSON placeholder so a

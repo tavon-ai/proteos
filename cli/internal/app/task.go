@@ -83,7 +83,7 @@ func taskRun(env Env, args []string) int {
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
-	provider := fs.String("provider", "claude", "agent provider (headless lane: claude)")
+	provider := fs.String("provider", "claude", "agent provider (headless lane: claude, pi)")
 	project := fs.String("project", "", "project directory under /workspace (required)")
 	promptFile := fs.String("prompt-file", "", "read the prompt from a file ('-' for stdin)")
 	wait := fs.Bool("wait", false, "poll until the task reaches a terminal state, then print it")

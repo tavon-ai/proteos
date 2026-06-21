@@ -162,6 +162,131 @@ func TestHeadlessArgv_Resume(t *testing.T) {
 	}
 }
 
+func TestHeadlessArgv_Pi(t *testing.T) {
+	argv, err := headlessArgv(guestwire.ProviderDef{Command: "pi"}, "")
+	if err != nil {
+		t.Fatalf("headlessArgv: %v", err)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "pi --mode json") {
+		t.Errorf("pi argv missing --mode json: %q", joined)
+	}
+	// pi resumes by session id via --session, not --resume (an interactive picker).
+	argv, err = headlessArgv(guestwire.ProviderDef{Command: "pi"}, "pi-sess-1")
+	if err != nil {
+		t.Fatalf("headlessArgv resume: %v", err)
+	}
+	joined = strings.Join(argv, " ")
+	if !strings.Contains(joined, "--session pi-sess-1") {
+		t.Errorf("pi resume argv missing --session: %q", joined)
+	}
+	if strings.Contains(joined, "--resume") {
+		t.Errorf("pi must not use --resume: %q", joined)
+	}
+}
+
+func TestParsePiStream_Success(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"session","version":3,"id":"pi-sess-1","cwd":"/x"}`,
+		`{"type":"agent_start"}`,
+		`{"type":"turn_start"}`,
+		``, // tolerate a blank line
+		`not json — tolerate noise`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"all done"}],"usage":{"cost":{"total":0.0123}},"stopReason":"stop"}}`,
+		`{"type":"turn_end","message":{"role":"assistant","content":[]},"toolResults":[]}`,
+		`{"type":"agent_end","messages":[]}`,
+	}, "\n")
+
+	res, saw, err := parsePiStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !saw {
+		t.Fatal("expected an agent_end terminal event")
+	}
+	if res.IsError || res.SessionID != "pi-sess-1" || res.Summary != "all done" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if res.CostUSD != 0.0123 || res.NumTurns != 1 {
+		t.Fatalf("usage not parsed: %+v", res)
+	}
+}
+
+func TestParsePiStream_Error(t *testing.T) {
+	stream := `{"type":"session","id":"s1"}` + "\n" +
+		`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"model overloaded"}}` + "\n" +
+		`{"type":"agent_end","messages":[]}`
+	res, saw, err := parsePiStream(strings.NewReader(stream), nil)
+	if err != nil || !saw {
+		t.Fatalf("parse: saw=%v err=%v", saw, err)
+	}
+	if !res.IsError || res.Subtype != "model overloaded" {
+		t.Fatalf("expected error result, got %+v", res)
+	}
+}
+
+func TestParsePiStream_NoResult(t *testing.T) {
+	stream := `{"type":"session","id":"s1"}` + "\n" +
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`
+	_, saw, err := parsePiStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if saw {
+		t.Fatal("did not expect a terminal event without agent_end")
+	}
+}
+
+func TestParsePiStream_EmitsNormalizedEvents(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"session","id":"s1"}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Let me look."},{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"ls"}}],"usage":{"cost":{"total":0.001}}}}`,
+		`{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"ls"}}`,
+		`{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":"a.txt\nb.txt","isError":false}`,
+		`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"   "}]}}`, // blank text dropped
+		`{"type":"agent_end","messages":[]}`,
+	}, "\n")
+
+	var got []guestwire.AgentEventPayload
+	res, saw, err := parsePiStream(strings.NewReader(stream), func(ev guestwire.AgentEventPayload) {
+		got = append(got, ev)
+	})
+	if err != nil || !saw {
+		t.Fatalf("parse: saw=%v err=%v", saw, err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 normalized events, got %d: %+v", len(got), got)
+	}
+	if got[0].Kind != guestwire.AgentEventAssistantText || got[0].Text != "Let me look." {
+		t.Errorf("event 0 = %+v", got[0])
+	}
+	if got[1].Kind != guestwire.AgentEventToolUse || got[1].Tool != "bash" || got[1].ToolID != "c1" {
+		t.Errorf("event 1 = %+v", got[1])
+	}
+	if string(got[1].Input) != `{"command":"ls"}` {
+		t.Errorf("tool input not relayed: %s", got[1].Input)
+	}
+	if got[2].Kind != guestwire.AgentEventToolResult || got[2].ToolID != "c1" || got[2].Output != "a.txt\nb.txt" {
+		t.Errorf("event 2 = %+v", got[2])
+	}
+	// The last assistant text was blank, so the summary stays the prior turn's text.
+	if res.Summary != "Let me look." {
+		t.Errorf("result summary = %q", res.Summary)
+	}
+}
+
+func TestPiToolResultText(t *testing.T) {
+	if got := piToolResultText([]byte(`"plain string"`)); got != "plain string" {
+		t.Errorf("string form = %q", got)
+	}
+	if got := piToolResultText([]byte(`{"ok":true}`)); got != `{"ok":true}` {
+		t.Errorf("object form = %q", got)
+	}
+	if got := piToolResultText(nil); got != "" {
+		t.Errorf("empty = %q", got)
+	}
+}
+
 // fakeSecrets serves a single provider's command + env to the headless runner.
 type fakeSecrets struct {
 	cmd string

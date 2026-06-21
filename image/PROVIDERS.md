@@ -94,6 +94,7 @@ Each row records: how the CLI is installed into the rootfs, how it authenticates
 | setup_command | none |
 | first run | writes `~/.pi/` |
 | launch | `pi` |
+| headless | **yes** — runs on the AT1 task lane. The guest spawns `pi --mode json` (prompt on stdin) and parses its JSON event stream (session header → `message_*`/`tool_execution_*`/`turn_end` → terminal `agent_end`). Multi-turn resume targets a stored session by id via `--session <id>` (not `--resume`, an interactive picker). Claude is the other headless provider; gemini/codex are interactive-terminal only. |
 | secret_fields | `[{name: anthropic_api_key, label: "Anthropic API key (used by Pi)", env: ANTHROPIC_API_KEY}]` |
 
 ## Image size

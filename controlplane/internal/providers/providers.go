@@ -69,6 +69,16 @@ func (p Provider) AllowsSubscriptionAuth() bool {
 	return p.LaunchCommand == "claude"
 }
 
+// HeadlessCapable reports whether the provider can run on the non-interactive
+// (AT1) task lane — i.e. its CLI emits a structured JSON event stream the guest
+// can parse. Claude Code (stream-json) and pi.dev (--mode json) qualify today;
+// every other provider is interactive-terminal only. The guest enforces the same
+// set when building the run's argv (headlessArgv), so this gate and the runner
+// stay in lockstep.
+func (p Provider) HeadlessCapable() bool {
+	return p.LaunchCommand == "claude" || p.LaunchCommand == "pi"
+}
+
 // Validate checks a fields map (field name → value) against the provider's
 // declared fields: every supplied field must be declared, every declared field
 // must be present and non-empty, and no value may exceed MaxFieldValueLen.

@@ -80,14 +80,14 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider must be enabled, headless-capable (Claude Code only on this lane),
-	// and have a stored key.
+	// Provider must be enabled, headless-capable (Claude Code or pi.dev on this
+	// lane), and have a stored key.
 	prov, err := s.Providers.Get(r.Context(), req.Provider)
 	if err != nil || !prov.Enabled {
 		writeError(w, http.StatusNotFound, "unknown_provider")
 		return
 	}
-	if prov.LaunchCommand != "claude" {
+	if !prov.HeadlessCapable() {
 		writeError(w, http.StatusBadRequest, "provider_not_headless")
 		return
 	}
@@ -309,7 +309,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unknown_provider")
 		return
 	}
-	if prov.LaunchCommand != "claude" {
+	if !prov.HeadlessCapable() {
 		writeError(w, http.StatusBadRequest, "provider_not_headless")
 		return
 	}
