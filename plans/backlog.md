@@ -11,6 +11,9 @@
           ⚠claude command at /home/dev/.local/bin/claude missing or broken · run claude install to
             repair
 [ ] The GitHub App only allows repos from my main account. All the repos from the other Orgs I belong, are not there. What do I have to change to be able to work on all those repos?
+  https://github.com/apps/iproteos
 [ ] Code Server says that there's no git environment. If yo
 [ ] Is there a way to override the "Do you trust the authors of the files in this folder?" modal? and close the "Chat"? and start in dark mode?
 [ ] maximise window when double click on the top windo bar, like in other OS.
+[ ] Right now, we can only use Claude Code using the cli (or via remote agent). Add pi.dev as a new remote provider.
+[ ] Add Icons

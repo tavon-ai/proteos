@@ -1,42 +1,56 @@
 # 🌊 ProteOS (P/OS)
 
-> *"Shape-shifting intelligence from the depths of containerization"*
+> *"Shape-shifting intelligence from the depths of virtualization"*
 
-**ProteOS** — derived from **Proteus (Πρωτεύς)**, the Greek sea god of shape-shifting, wisdom, and prophecy. Just as Proteus could transform into any form, ProteOS adapts seamlessly between multiple AI providers, embodying flexibility and intelligence while maintaining Docker's oceanic heritage.
+**ProteOS** is a self-hostable platform for running AI coding agents in strongly
+isolated, per-user Firecracker microVMs. Spin up a machine, clone a repo, and let
+Claude Code, pi.dev, Gemini, or Codex work in it — review the results through an in-browser
+VS Code editor and terminals, or drive the whole loop headlessly from the `proteos`
+CLI and CI.
 
-![ProteOS](https://img.shields.io/badge/status-production-green) ![Docker](https://img.shields.io/badge/docker-required-blue) ![Node](https://img.shields.io/badge/node-20+-green) ![AI](https://img.shields.io/badge/AI-3%20providers-purple)
+Autonomous coding agents are powerful but risky to run loose on your laptop. **ProteOS** gives each agent a disposable, hardware-isolated microVM with its own kernel, workspace, and exposed ports — so you can run agents in parallel, safely, and either watch them in an ocean-themed browser desktop or script them through a CLI.
+
+The name is derived from **Proteus (Πρωτεύς)**, the Greek sea god of shape-shifting,
+wisdom, and prophecy. Just as Proteus could transform into any form, ProteOS adapts
+seamlessly between multiple AI providers, embodying flexibility and intelligence
+while keeping each one isolated in its own Firecracker microVM.
+
+![ProteOS](https://img.shields.io/badge/status-production-green) ![Go](https://img.shields.io/badge/go-control--plane-blue) ![Firecracker](https://img.shields.io/badge/firecracker-microVMs-orange) ![React](https://img.shields.io/badge/react-SPA-61dafb) ![AI](https://img.shields.io/badge/AI-3%20providers-purple)
 
 ![Desktop Overview](images/desktop-overview.png)
-*ProteOS ocean-themed desktop with multiple AI providers*
+*ProteOS ocean-themed desktop, one window per machine and provider*
 
 ![Gemini Terminal](images/gemini-terminal.png)
-*Gemini CLI running in a dedicated terminal window*
+*A coding agent running in a dedicated terminal window on a machine*
 
 ## ✨ Features
 
 ### 🎭 Multi-AI Provider Support
-- **🐋 Claude Code** (Anthropic Claude 3.5 Sonnet)
-- **🔷 Gemini CLI** (Google Gemini 2.5 Pro)
-- **⚡ OpenAI Codex** (OpenAI GPT-4/Codex)
+- **🐋 Claude Code** (Anthropic Claude)
+- **🔷 Gemini CLI** (Google Gemini)
+- **⚡ OpenAI Codex** (OpenAI)
 
-### 🐳 Docker-Powered
-- **Isolated Containers**: Each AI runs in its own environment
-- **Resource Efficient**: Only active containers consume resources
-- **Easy Scaling**: Spawn unlimited AI instances
+### 🔥 Firecracker microVMs
+- **Isolated Machines**: each user owns one or more machines, every machine a
+  full Firecracker microVM with its own kernel and rootfs
+- **Strong Isolation**: hardware-level VM boundaries, not shared-kernel containers
+- **On Demand**: machines are provisioned by the Go control plane and node-agent,
+  and resources are only consumed while a machine is running
 
 ### 📁 File System
-- **Persistent Storage**: Each container gets its own workspace
+- **Persistent Storage**: each machine keeps its own workspace across restarts
 - **File editing**: handled by **code-server** (a full VS Code in the browser),
   reached through the authenticated gateway at the per-machine editor subdomain.
   The old unauthenticated PoC file-browser/viewer was removed in Phase 8
   (decision #7) — see `plans/phase-8-implementation.md`.
-- **Easy Access**: Files stored locally in `workspace/containers/`
+- **Port preview**: forward and open a machine's listening ports through the
+  gateway at a per-machine, per-port subdomain.
 
 ### 📊 System Monitoring
 - **Live System Logs**: Dedicated window showing real-time operations and events
 - **Log Filtering**: Filter logs by level (Info, Success, Warning, Error)
 - **Auto-Scroll**: Optional automatic scrolling to latest log entries
-- **Debug Visibility**: Track container creation, connections, and failures instantly
+- **Debug Visibility**: Track machine provisioning, connections, and failures instantly
 
 ### 🌐 Web-Based
 - **No Installation**: Access from any browser
@@ -68,6 +82,23 @@ Run `task --list` for every target (build, test, vet, fmt).
 
 See **DEPLOYMENT.md** for the production (Proxmox / app-stack) deployment and
 **RUNBOOK.md** for operations.
+
+## ⌨️ Command-line interface
+
+`proteos` drives ProteOS from the terminal — list machines, clone repositories,
+run headless coding-agent tasks, and review/commit/push the results. It is built
+to be driven by a coding agent as much as by a human: every read command supports
+`--json` and exit codes are stable.
+
+```sh
+proteos machines ls
+proteos project ensure --machine m-123 octocat/hello-world
+proteos task run --machine m-123 --project hello-world --watch "add a /health endpoint"
+proteos git commit --machine m-123 --project hello-world -m "add /health endpoint"
+```
+
+See **[cli/README.md](cli/README.md)** for install, authentication, the full
+command reference, and exit codes.
 
 ## 🔑 API keys
 
