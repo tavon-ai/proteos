@@ -127,6 +127,17 @@ const RouteControl = "GET /control"
 // plane to build the WebSocket URL over the guest tunnel.
 const RouteControlPath = "/control"
 
+// Project download. GET /download streams a zip archive of one project
+// directory under WorkspaceRoot back over the guest tunnel. The CP resolves the
+// caller's project to its absolute path and forwards it as QueryParamCwd; the
+// guest re-validates containment + existence (the same defence-in-depth as a
+// session cwd) before walking the tree. The archive is built and streamed on
+// the fly, so a large tree never lands on disk or fully in memory. Read-only.
+const (
+	RouteDownload     = "GET /download"
+	RouteDownloadPath = "/download"
+)
+
 // AgentSockPath is the in-VM unix socket (on tmpfs) the credential helper
 // subprocess talks to. The guest agent serves it and relays git.credential
 // requests over the control channel (Phase 7 decision #5). Never written to by

@@ -457,6 +457,13 @@ export const api = {
   // is a 204 (a no-op on a diskless stack).
   listProjects: (machineID: string) =>
     request<ProjectsResponse>(`/api/projects?machine=${encodeURIComponent(machineID)}`),
+  // projectDownloadUrl is the GET URL that streams a project's current contents
+  // as a zip. The response is Content-Disposition: attachment, so navigating to
+  // it (an <a download> click) downloads without leaving the desktop; cookie
+  // auth on the same origin authorizes it. Not a request() call — the body is a
+  // binary stream, not JSON.
+  projectDownloadUrl: (machineID: string, projectPath: string) =>
+    `/api/projects/download?machine=${encodeURIComponent(machineID)}&path=${encodeURIComponent(projectPath)}`,
   getDesktop: (machineID: string) =>
     request<DesktopResponse>(`/api/machine/desktop?machine=${encodeURIComponent(machineID)}`),
   putDesktop: (machineID: string, layout: unknown) =>

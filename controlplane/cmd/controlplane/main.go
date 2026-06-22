@@ -274,6 +274,7 @@ func run(migrate, migrateOnly bool) error {
 		Broker:     broker,
 		Queries:    q,
 		Gateway:    gw,
+		Guests:     nodes,
 		MachineWeb: machineWeb,
 		Providers:  providerRegistry,
 		Secrets:    sec,

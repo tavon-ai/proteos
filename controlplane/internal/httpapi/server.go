@@ -42,6 +42,12 @@ type Server struct {
 	// agent (Phase 3). Nil disables the /gw/terminal route.
 	Gateway *gateway.Proxy
 
+	// Guests dials the opaque byte tunnel to a machine's guest agent. It backs
+	// the project-download proxy (GET /api/projects/download), which streams a
+	// zip of a project straight from the guest. *nodeclient.Client satisfies it.
+	// Nil disables the download route.
+	Guests gateway.GuestDialer
+
 	// MachineWeb serves the per-machine code-server editor origin
 	// (m-<uuid>.<domain>) and mints its web-session tokens (Phase 8). Nil
 	// (PROTEOS_MACHINE_DOMAIN unset) disables host-first routing and the
@@ -166,6 +172,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/projects", s.requireAuth(http.HandlerFunc(s.handleProjects)))
 		mux.Handle("GET /api/machine/desktop", s.requireAuth(http.HandlerFunc(s.handleGetDesktop)))
 		mux.Handle("PUT /api/machine/desktop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handlePutDesktop))))
+		// Download a project as a zip: authorize the project against the listable
+		// set (the resolveSessionCwd gate), then proxy the guest's zip stream. A
+		// read-only GET — the response is Content-Disposition: attachment, so a
+		// same-origin navigation downloads without a CSRF header (EventSource-style).
+		if s.Guests != nil {
+			mux.Handle("GET /api/projects/download", s.requireAuth(http.HandlerFunc(s.handleProjectDownload)))
+		}
 	}
 
 	// Worktree review (GR1): read a project's git status/diff over the control

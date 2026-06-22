@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { api } from '../api/client';
 import type { MachineEvent, MachineState, Project, Repo } from '../api/client';
 import {
   reconnectRequired,
@@ -75,6 +76,19 @@ export function ProjectsLauncher({
 function ProjectTile({ machineId, project }: { machineId: string | null; project: Project }) {
   const wm = useWindowManager();
 
+  // Download the project as a zip of its current contents. A programmatic
+  // <a download> click keeps styling identical to the other action buttons and
+  // lets the browser stream the attachment to disk without navigating away.
+  const onDownload = () => {
+    if (!machineId) return;
+    const a = document.createElement('a');
+    a.href = api.projectDownloadUrl(machineId, project.path);
+    a.download = `${project.name}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
   return (
     <li className="project-tile">
       <div className="project-tile-head">
@@ -117,6 +131,9 @@ function ProjectTile({ machineId, project }: { machineId: string | null; project
           onClick={() => machineId && openTasks(wm, machineId, project)}
         >
           Tasks
+        </button>
+        <button className="btn-secondary" onClick={onDownload}>
+          Download
         </button>
       </div>
     </li>

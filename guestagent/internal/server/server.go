@@ -16,13 +16,18 @@
 package server
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -110,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(guestwire.RouteResume, s.handleResume)
 	mux.HandleFunc(guestwire.RouteInfo, s.handleInfo)
 	mux.HandleFunc(guestwire.RouteSecrets, s.handleSecrets)
+	mux.HandleFunc(guestwire.RouteDownload, s.handleDownload)
 	if s.control != nil {
 		mux.HandleFunc(guestwire.RouteControl, s.control.HandleControl)
 	}
@@ -138,6 +144,68 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDownload streams a zip archive of one project directory under the
+// workspace. The path arrives as QueryParamCwd (the CP has already matched it to
+// a listable project); resolveCwd re-validates it cleans to a path under
+// WorkspaceRoot and names an existing directory. The archive is written straight
+// to the response so a large tree is never buffered. Entries that cannot be read
+// (or are not regular files) are skipped rather than failing the whole download.
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	dir, err := s.resolveCwd(r.URL.Query().Get(guestwire.QueryParamCwd))
+	if err != nil || dir == "" {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	base := filepath.Base(dir)
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+base+".zip\"")
+	// Flush headers now so the control plane's client.Do returns and starts
+	// streaming the body, rather than blocking until the first file is zipped.
+	w.WriteHeader(http.StatusOK)
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	root := filepath.Clean(dir)
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || p == root {
+			return nil // skip unreadable entries / the root itself, keep going
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return nil
+		}
+		name := path.Join(base, filepath.ToSlash(rel))
+		if d.IsDir() {
+			// A trailing-slash entry preserves empty directories in the archive.
+			_, _ = zw.Create(name + "/")
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil // skip symlinks, sockets, devices — only regular files
+		}
+		hdr, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return nil
+		}
+		hdr.Name = name
+		hdr.Method = zip.Deflate
+		zwf, err := zw.CreateHeader(hdr)
+		if err != nil {
+			return nil
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		_, _ = io.Copy(zwf, f)
+		return nil
+	})
 }
 
 // handleResume applies the host-provided clock + entropy after a snapshot
