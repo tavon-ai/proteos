@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -175,5 +176,50 @@ func TestForwarderRoundTrip(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Fatalf("echo mismatch: got %q want %q", got, want)
+	}
+}
+
+func TestDefaultCodeServerArgsDisablesTrustAndWelcome(t *testing.T) {
+	args := DefaultCodeServerArgs("127.0.0.1:13337", "/home/dev", "/workspace")
+	for _, want := range []string{"--disable-workspace-trust", "--disable-getting-started-override"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("args missing %s: %v", want, args)
+		}
+	}
+}
+
+func TestSeedUserSettings(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "webfwd-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+
+	settings := filepath.Join(home, ".local", "share", "code-server", "User", "settings.json")
+
+	// First seed: creates the file with the defaults. uid/gid -1 ⇒ no-op chown,
+	// so the test needn't run as root.
+	if err := SeedUserSettings(home, -1, -1); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if string(got) != userSettingsJSON {
+		t.Fatalf("settings mismatch:\n got %q\nwant %q", got, userSettingsJSON)
+	}
+
+	// Second seed must not clobber a user edit.
+	const edited = "{ \"workbench.colorTheme\": \"Light+\" }\n"
+	if err := os.WriteFile(settings, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedUserSettings(home, -1, -1); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	got, _ = os.ReadFile(settings)
+	if string(got) != edited {
+		t.Fatalf("reseed clobbered user edit: got %q", got)
 	}
 }

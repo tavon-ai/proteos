@@ -137,6 +137,13 @@ func run() error {
 		if cfg.CodeServerArgs != "" {
 			args = strings.Fields(cfg.CodeServerArgs)
 		}
+		// Seed default User/settings.json on the persist disk before the first
+		// lazy start. Non-fatal: a missing settings file only costs the defaults.
+		if cfg.CodeServerBin != "" {
+			if err := webfwd.SeedUserSettings(id.Home, id.UID, id.GID); err != nil {
+				slog.Warn("webfwd: seed code-server settings", "err", err)
+			}
+		}
 		sup := webfwd.NewSupervisor(webfwd.SupervisorConfig{
 			Bin:  cfg.CodeServerBin,
 			Args: args,

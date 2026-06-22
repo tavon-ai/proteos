@@ -12,10 +12,7 @@
             repair
 [ ] The GitHub App only allows repos from my main account. All the repos from the other Orgs I belong, are not there. What do I have to change to be able to work on all those repos?
   https://github.com/apps/tavon-proteos
-[ ] Code Server pre-defined settings: 
-      - --disable-workspace-trust
-      - --disable-getting-started-override
-      - ~/.local/share/code-server/User/settings.json
+[ ] Let's improve the code server initial configuration. Let's run it with the following flags --disable-workspace-trust --disable-getting-started-override and let's add this file ~/.local/share/code-server/User/settings.json with the following content:
         {
           "git.path": "/usr/bin/git",
           "workbench.colorTheme": "Dark+", 
@@ -23,12 +20,7 @@
 [x] Maximise window when double click on the top window bar, like in other OS.
 [x] Right now, we can only use Claude Code using the cli (or via remote agent). Add pi.dev as a new remote provider.
 [ ] Take screenshots and use Claude Design to improve UI
-[ ] proteos git push:
-        proteos git push --machine 24313df7-c248-44a9-a9b4-7eae4a44c668 --project freeth --branch main --set-upstream
-            push of main dispatched (op e58ba32e447e1eee)
-    Doesn't do it, no way of knowing it has failed.
 [ ] Improve ansible playbook, spit out/copy:
       - cat /etc/proteos/node-agent.env | grep "PROTEOS_ROOTFS_REF="
       - /var/lib/proteos/images/proteos-templates.json
 [x] Add "Download" button to project: we zip and download the project as it is.
-[ ] Generate SSH key-pairs
