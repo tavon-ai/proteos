@@ -343,7 +343,7 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 const getPATByTokenHash = `-- name: GetPATByTokenHash :one
 SELECT
     personal_access_tokens.id, personal_access_tokens.user_id, personal_access_tokens.name, personal_access_tokens.token_hash, personal_access_tokens.prefix, personal_access_tokens.created_at, personal_access_tokens.expires_at, personal_access_tokens.last_used_at, personal_access_tokens.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is
 FROM personal_access_tokens
 JOIN users ON users.id = personal_access_tokens.user_id
 WHERE personal_access_tokens.token_hash = $1
@@ -377,6 +377,7 @@ func (q *Queries) GetPATByTokenHash(ctx context.Context, tokenHash []byte) (GetP
 		&i.User.AvatarUrl,
 		&i.User.Status,
 		&i.User.CreatedAt,
+		&i.User.DownloadAsIs,
 	)
 	return i, err
 }
@@ -403,7 +404,7 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 const getSessionByID = `-- name: GetSessionByID :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.id = $1
@@ -437,6 +438,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 		&i.User.AvatarUrl,
 		&i.User.Status,
 		&i.User.CreatedAt,
+		&i.User.DownloadAsIs,
 	)
 	return i, err
 }
@@ -444,7 +446,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -476,6 +478,7 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.AvatarUrl,
 		&i.User.Status,
 		&i.User.CreatedAt,
+		&i.User.DownloadAsIs,
 	)
 	return i, err
 }
@@ -499,7 +502,7 @@ func (q *Queries) GetSnapshot(ctx context.Context, machineID pgtype.UUID) (Snaps
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at FROM users WHERE id = $1
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -513,6 +516,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.AvatarUrl,
 		&i.Status,
 		&i.CreatedAt,
+		&i.DownloadAsIs,
 	)
 	return i, err
 }
@@ -1247,6 +1251,34 @@ func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error 
 	return err
 }
 
+const setUserDownloadAsIs = `-- name: SetUserDownloadAsIs :one
+UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is
+`
+
+type SetUserDownloadAsIsParams struct {
+	ID           pgtype.UUID `json:"id"`
+	DownloadAsIs bool        `json:"download_as_is"`
+}
+
+// Update the user's project-download preference (true ⇒ download the full tree
+// as-is including .git and ignored files; false ⇒ the clean export). Returns the
+// updated row.
+func (q *Queries) SetUserDownloadAsIs(ctx context.Context, arg SetUserDownloadAsIsParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserDownloadAsIs, arg.ID, arg.DownloadAsIs)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+	)
+	return i, err
+}
+
 const touchPATLastUsed = `-- name: TouchPATLastUsed :exec
 UPDATE personal_access_tokens SET last_used_at = now() WHERE id = $1
 `
@@ -1427,7 +1459,7 @@ ON CONFLICT (github_user_id) DO UPDATE
     SET login = EXCLUDED.login,
         email = EXCLUDED.email,
         avatar_url = EXCLUDED.avatar_url
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is
 `
 
 type UpsertUserParams struct {
@@ -1455,6 +1487,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.AvatarUrl,
 		&i.Status,
 		&i.CreatedAt,
+		&i.DownloadAsIs,
 	)
 	return i, err
 }

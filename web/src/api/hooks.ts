@@ -17,6 +17,7 @@ import {
   type SnapshotData,
   type TaskEvent,
   type TasksResponse,
+  type UserPrefs,
 } from './client';
 import { logger } from '../lib/logger';
 
@@ -32,6 +33,16 @@ export function useMe() {
       if (error instanceof SessionExpiredError) return false;
       return failureCount < 2;
     },
+  });
+}
+
+// useUpdateUserPrefs patches the user's account preferences and refreshes the
+// cached /api/me so the Settings UI reflects the saved value.
+export function useUpdateUserPrefs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prefs: Partial<UserPrefs>) => api.updateUserPrefs(prefs),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
   });
 }
 

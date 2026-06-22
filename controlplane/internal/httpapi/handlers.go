@@ -9,6 +9,7 @@ import (
 // round-trip; the SSE stream then keeps the list live.
 type meResponse struct {
 	User     meUser           `json:"user"`
+	Prefs    userPrefs        `json:"prefs"`
 	Machines []MachineSummary `json:"machines"`
 }
 
@@ -32,6 +33,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			Email:     user.Email,
 			AvatarURL: user.AvatarUrl,
 		},
+		Prefs:    userPrefs{DownloadAsIs: user.DownloadAsIs},
 		Machines: []MachineSummary{},
 	}
 	ms, err := s.Machines.List(r.Context(), user.ID)

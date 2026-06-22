@@ -30,4 +30,5 @@
 [ ] Improve ansible playbook, spit out/copy:
       - cat /etc/proteos/node-agent.env | grep "PROTEOS_ROOTFS_REF="
       - /var/lib/proteos/images/proteos-templates.json
-[ ] Add "Download" button to project: we zip and download the project as it is.
+[x] Add "Download" button to project: we zip and download the project as it is.
+[ ] Generate SSH key-pairs

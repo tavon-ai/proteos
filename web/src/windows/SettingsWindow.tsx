@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { ProvidersPanel } from '../components/ProvidersPanel';
 import { TokensPanel } from '../components/TokensPanel';
+import { DownloadsPanel } from '../components/DownloadsPanel';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { reconnectRequired, useRepos } from '../api/hooks';
 
-type Tab = 'providers' | 'github' | 'tokens';
+type Tab = 'providers' | 'github' | 'tokens' | 'downloads';
 
 // SettingsWindow folds the Phase 5–7 panels into one window with tabs
 // (decision #7): the Providers tab manages each provider's write-only API key
@@ -40,11 +41,20 @@ export function SettingsWindow() {
         >
           CLI tokens
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'downloads'}
+          className={tab === 'downloads' ? 'settings-tab active' : 'settings-tab'}
+          onClick={() => setTab('downloads')}
+        >
+          Downloads
+        </button>
       </div>
       <div className="settings-body">
         {tab === 'providers' && <ProvidersPanel />}
         {tab === 'github' && <GitHubTab />}
         {tab === 'tokens' && <TokensPanel />}
+        {tab === 'downloads' && <DownloadsPanel />}
       </div>
     </div>
   );

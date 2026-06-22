@@ -138,6 +138,22 @@ const (
 	RouteDownloadPath = "/download"
 )
 
+// QueryParamDownloadMode selects what a /download archive contains. Absent or
+// unrecognized ⇒ DownloadModeClean (the safe default). The control plane sets it
+// from the caller's stored account preference.
+const QueryParamDownloadMode = "mode"
+
+const (
+	// DownloadModeClean excludes .git and .gitignore'd files, archiving the
+	// working tree git tracks plus untracked-but-not-ignored files (so the
+	// agent's uncommitted changes are kept while node_modules/build output are
+	// dropped). The default.
+	DownloadModeClean = "clean"
+	// DownloadModeAll archives the project directory exactly as it is on disk,
+	// including .git history and ignored files.
+	DownloadModeAll = "all"
+)
+
 // AgentSockPath is the in-VM unix socket (on tmpfs) the credential helper
 // subprocess talks to. The guest agent serves it and relays git.credential
 // requests over the control channel (Phase 7 decision #5). Never written to by

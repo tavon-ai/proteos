@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -150,8 +151,14 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 // workspace. The path arrives as QueryParamCwd (the CP has already matched it to
 // a listable project); resolveCwd re-validates it cleans to a path under
 // WorkspaceRoot and names an existing directory. The archive is written straight
-// to the response so a large tree is never buffered. Entries that cannot be read
-// (or are not regular files) are skipped rather than failing the whole download.
+// to the response so a large tree is never buffered.
+//
+// QueryParamDownloadMode selects the contents. DownloadModeAll archives the tree
+// exactly as it is on disk; the default (DownloadModeClean) archives the set git
+// reports for the working tree — tracked plus untracked-but-not-ignored files —
+// which keeps uncommitted agent work while dropping .git and .gitignore'd files.
+// If the project is not a git repo (or git is unavailable), clean mode falls back
+// to a plain walk that prunes only .git, so the download is never an empty zip.
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	dir, err := s.resolveCwd(r.URL.Query().Get(guestwire.QueryParamCwd))
 	if err != nil || dir == "" {
@@ -159,6 +166,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := filepath.Base(dir)
+	root := filepath.Clean(dir)
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+base+".zip\"")
@@ -169,43 +177,108 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	root := filepath.Clean(dir)
+	if r.URL.Query().Get(guestwire.QueryParamDownloadMode) == guestwire.DownloadModeAll {
+		zipTree(zw, root, base, false) // everything, as-is
+		return
+	}
+	// Clean (default): prefer git's view of the working tree.
+	if rels, ok := gitListFiles(r.Context(), root); ok {
+		for _, rel := range rels {
+			addFile(zw, root, base, rel)
+		}
+		return
+	}
+	zipTree(zw, root, base, true) // not a git repo: best-effort clean, prune .git
+}
+
+// zipTree walks the directory tree under root and adds every regular file (plus
+// each directory, so empty directories survive) to zw under the base prefix.
+// When skipGit is set the .git directory is pruned. Entries that cannot be read
+// (or are not regular files) are skipped rather than failing the whole archive.
+func zipTree(zw *zip.Writer, root, base string, skipGit bool) {
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || p == root {
-			return nil // skip unreadable entries / the root itself, keep going
+			return nil
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return nil
 		}
+		if skipGit && (rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator))) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		name := path.Join(base, filepath.ToSlash(rel))
 		if d.IsDir() {
-			// A trailing-slash entry preserves empty directories in the archive.
-			_, _ = zw.Create(name + "/")
+			_, _ = zw.Create(name + "/") // trailing slash ⇒ directory entry
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil || !info.Mode().IsRegular() {
-			return nil // skip symlinks, sockets, devices — only regular files
+			return nil // skip symlinks, sockets, devices
 		}
-		hdr, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return nil
-		}
-		hdr.Name = name
-		hdr.Method = zip.Deflate
-		zwf, err := zw.CreateHeader(hdr)
-		if err != nil {
-			return nil
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		_, _ = io.Copy(zwf, f)
+		writeZipEntry(zw, name, info, p)
 		return nil
 	})
+}
+
+// addFile adds one repo-relative file (a path from gitListFiles) to the archive
+// under the base prefix. Non-regular entries (a submodule gitlink, a symlink) and
+// files that have since vanished are skipped.
+func addFile(zw *zip.Writer, root, base, rel string) {
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(p)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	writeZipEntry(zw, path.Join(base, rel), info, p)
+}
+
+// writeZipEntry compresses the file at srcPath into zw under name. Any error is
+// swallowed (the entry is skipped) so one unreadable file cannot abort the
+// stream that is already being written to the client.
+func writeZipEntry(zw *zip.Writer, name string, info fs.FileInfo, srcPath string) {
+	hdr, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return
+	}
+	hdr.Name = name
+	hdr.Method = zip.Deflate
+	zwf, err := zw.CreateHeader(hdr)
+	if err != nil {
+		return
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = io.Copy(zwf, f)
+}
+
+// gitListFiles returns the repo-relative paths git considers part of the working
+// tree excluding ignored files: tracked (--cached) plus untracked-but-not-ignored
+// (--others --exclude-standard). ok is false when dir is not a git repo or git is
+// unavailable, so the caller can fall back to a plain walk. -z yields raw,
+// NUL-separated, unquoted paths. safe.directory=* disables git's dubious-ownership
+// guard: the agent runs as root but does not own the checked-out tree.
+func gitListFiles(ctx context.Context, dir string) (rels []string, ok bool) {
+	cmd := exec.CommandContext(ctx, "git",
+		"-c", "safe.directory=*", "-C", dir,
+		"ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			rels = append(rels, p)
+		}
+	}
+	return rels, true
 }
 
 // handleResume applies the host-provided clock + entropy after a snapshot

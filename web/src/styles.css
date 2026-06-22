@@ -761,6 +761,52 @@ body {
   font-size: 1.1rem;
 }
 
+/* Downloads preference panel: same card as the tokens panel, with a vertical
+   list of radio options. */
+.downloads-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: min(560px, 100%);
+  text-align: left;
+  margin-top: 1.5rem;
+}
+
+.downloads-panel h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+}
+
+.download-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.download-option {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.8rem 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.download-option input {
+  margin-top: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.download-option-text {
+  display: block;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .token-create-form {
   display: flex;
   gap: 0.5rem;

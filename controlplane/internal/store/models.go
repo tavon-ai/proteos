@@ -139,4 +139,5 @@ type User struct {
 	AvatarUrl    string             `json:"avatar_url"`
 	Status       string             `json:"status"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	DownloadAsIs bool               `json:"download_as_is"`
 }

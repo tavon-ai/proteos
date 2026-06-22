@@ -30,12 +30,20 @@ export class ApiError extends Error {
   }
 }
 
+// UserPrefs are the user's account-level preferences. download_as_is selects
+// what the project Download button includes: true ⇒ the full folder as-is
+// (.git + ignored files); false (default) ⇒ a clean export.
+export interface UserPrefs {
+  download_as_is: boolean;
+}
+
 export interface Me {
   user: {
     login: string;
     email: string;
     avatar_url: string;
   };
+  prefs: UserPrefs;
   // All of the user's machines (possibly empty), seeding the SPA's first paint.
   machines: MachineSummary[];
 }
@@ -397,6 +405,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   me: () => request<Me>('/api/me'),
+  // PATCH /api/user/preferences applies a partial update to the user's account
+  // preferences and returns the full updated set. request() adds the CSRF header.
+  updateUserPrefs: (prefs: Partial<UserPrefs>) =>
+    request<UserPrefs>('/api/user/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prefs),
+    }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
   // GET /api/templates returns the machine-template catalog for the create

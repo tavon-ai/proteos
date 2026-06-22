@@ -116,6 +116,10 @@ func (s *Server) Handler() http.Handler {
 	// Current user (authenticated).
 	mux.Handle("GET /api/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
 
+	// Account preferences (e.g. the project-download mode). A cookie-authed
+	// mutation, so it also requires the CSRF header. Reads ride GET /api/me.
+	mux.Handle("PATCH /api/user/preferences", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleUpdateUserPrefs))))
+
 	// Personal access tokens (AC1): the user manages their own CLI credentials.
 	// Reads are auth-only; create/revoke mutate so they also require the CSRF
 	// header (cookie-authed browser settings page) — bearer-authed callers are

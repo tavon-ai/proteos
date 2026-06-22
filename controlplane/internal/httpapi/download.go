@@ -87,8 +87,16 @@ func (s *Server) handleProjectDownload(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	// The archive contents follow the user's stored account preference: the full
+	// tree as-is, or (default) a clean export excluding .git and ignored files.
+	mode := guestwire.DownloadModeClean
+	if user.DownloadAsIs {
+		mode = guestwire.DownloadModeAll
+	}
+
 	q := url.Values{}
 	q.Set(guestwire.QueryParamCwd, projectPath)
+	q.Set(guestwire.QueryParamDownloadMode, mode)
 	guestURL := "http://guest" + guestwire.RouteDownloadPath + "?" + q.Encode()
 	// The request body copy uses the browser's request context, so a client
 	// disconnect tears the guest stream down with it.

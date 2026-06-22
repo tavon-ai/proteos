@@ -12,6 +12,12 @@ RETURNING *;
 -- name: GetUserByID :one
 SELECT * FROM users WHERE id = $1;
 
+-- name: SetUserDownloadAsIs :one
+-- Update the user's project-download preference (true ⇒ download the full tree
+-- as-is including .git and ignored files; false ⇒ the clean export). Returns the
+-- updated row.
+UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING *;
+
 -- name: CreateSession :one
 INSERT INTO sessions (user_id, token_hash, expires_at)
 VALUES ($1, $2, $3)
