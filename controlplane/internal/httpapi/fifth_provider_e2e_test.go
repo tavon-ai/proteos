@@ -204,7 +204,7 @@ func setupFifthCP(t *testing.T, nodes *nodeclient.Client) fifthFixture {
 		Providers: reg,
 		Secrets:   sec,
 		Audit:     rec,
-		Injector:  injector.New(nodes, reg, sec, rec),
+		Injector:  injector.New(nodes, reg, sec, rec, nil),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

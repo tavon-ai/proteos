@@ -11,6 +11,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/gateway"
 	"github.com/tavon/proteos/controlplane/internal/github"
 	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon/proteos/controlplane/internal/profile"
 	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
@@ -59,6 +60,11 @@ type Server struct {
 	Providers *providers.Registry
 	Secrets   secrets.Store
 	Audit     *audit.Recorder
+
+	// Profile backs the portable user-profile API (/api/profile/items): user-scoped
+	// credentials/dotfiles that the injector materializes into the user's machines.
+	// Nil disables those routes.
+	Profile *profile.Store
 
 	// Injector pushes provider secrets into a running guest before an agent
 	// launch (Phase 5). Nil ⇒ the push step is skipped (the poller's start-time
@@ -159,6 +165,15 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/providers", s.requireAuth(http.HandlerFunc(s.handleListProviders)))
 		mux.Handle("PUT /api/secrets/providers/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetProviderKey))))
 		mux.Handle("DELETE /api/secrets/providers/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteProviderKey))))
+	}
+
+	// Portable user profile (Phase 1). The list is a metadata-only read (auth);
+	// set/delete mutate so they also require the CSRF header. As with the secrets
+	// API, no read route for the stored value exists. Enabled only when wired.
+	if s.Profile != nil {
+		mux.Handle("GET /api/profile/items", s.requireAuth(http.HandlerFunc(s.handleListProfileItems)))
+		mux.Handle("PUT /api/profile/items/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetProfileItem))))
+		mux.Handle("DELETE /api/profile/items/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteProfileItem))))
 	}
 
 	// Git operations (Phase 7). Reads are auth-only; clone mutates state so it

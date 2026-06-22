@@ -21,6 +21,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/injector"
 	"github.com/tavon/proteos/controlplane/internal/machine"
 	"github.com/tavon/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon/proteos/controlplane/internal/profile"
 	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/session"
@@ -187,7 +188,10 @@ func run(migrate, migrateOnly bool) error {
 	// agent gateway route fires it again, idempotently, before a launch.
 	providerRegistry := providers.NewRegistry(q)
 	auditRec := audit.NewRecorder(q)
-	inject := injector.New(nodes, providerRegistry, sec, auditRec)
+	// Portable user profile (Phase 1): user-scoped items the injector merges into
+	// the guest alongside provider secrets (e.g. the Claude subscription token).
+	profileStore := profile.NewStore(q, sec, auditRec)
+	inject := injector.New(nodes, providerRegistry, sec, auditRec, profileStore)
 	poller.SetOnRunning(inject.InjectAsync)
 
 	// Phase 6: align the registry's enabled flags with the providers actually
@@ -279,6 +283,7 @@ func run(migrate, migrateOnly bool) error {
 		Providers:  providerRegistry,
 		Secrets:    sec,
 		Audit:      auditRec,
+		Profile:    profileStore,
 		Injector:   inject,
 	}
 	if guestCtl != nil {

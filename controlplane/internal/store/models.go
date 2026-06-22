@@ -103,6 +103,16 @@ type PersonalAccessToken struct {
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type ProfileItem struct {
+	UserID    pgtype.UUID        `json:"user_id"`
+	Key       string             `json:"key"`
+	Kind      string             `json:"kind"`
+	Target    string             `json:"target"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Provider struct {
 	Key           string             `json:"key"`
 	DisplayName   string             `json:"display_name"`

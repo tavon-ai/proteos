@@ -26,6 +26,7 @@ import (
 	agentapi "github.com/tavon/proteos/nodeagent/api"
 
 	"github.com/tavon/proteos/controlplane/internal/audit"
+	"github.com/tavon/proteos/controlplane/internal/profile"
 	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 )
@@ -43,11 +44,13 @@ type Injector struct {
 	registry *providers.Registry
 	secrets  secrets.Store
 	audit    *audit.Recorder
+	profile  *profile.Store
 }
 
-// New builds an Injector.
-func New(guests GuestDialer, registry *providers.Registry, sec secrets.Store, rec *audit.Recorder) *Injector {
-	return &Injector{guests: guests, registry: registry, secrets: sec, audit: rec}
+// New builds an Injector. prof may be nil (no portable-profile items are then
+// composed; provider secrets behave exactly as before).
+func New(guests GuestDialer, registry *providers.Registry, sec secrets.Store, rec *audit.Recorder, prof *profile.Store) *Injector {
+	return &Injector{guests: guests, registry: registry, secrets: sec, audit: rec, profile: prof}
 }
 
 // pushTimeout bounds a single tunnel dial + PUT /secrets.
@@ -98,6 +101,33 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 	if err != nil {
 		return guestwire.SecretsRequest{}, err
 	}
+
+	// Resolve the user's env-kind portable-profile items once and group the
+	// provider-tied ones by provider. A provider credential (e.g. the Claude
+	// subscription token → CLAUDE_CODE_OAUTH_TOKEN) must be merged into *that
+	// provider's* Env, not a standalone entry: login shells source every
+	// provider's env file, but an agent session overlays only the launched
+	// provider's env, so a standalone entry would reach the terminal but not an
+	// agent-launched `claude`.
+	byProvider := map[string]map[string]string{}
+	if i.profile != nil {
+		envItems, err := i.profile.EnvValues(ctx, userID)
+		if err != nil {
+			return guestwire.SecretsRequest{}, fmt.Errorf("profile env: %w", err)
+		}
+		for _, it := range envItems {
+			if it.Provider == "" {
+				continue // generic (non-provider) env items are deferred (login-shell-only)
+			}
+			env := byProvider[it.Provider]
+			if env == nil {
+				env = map[string]string{}
+				byProvider[it.Provider] = env
+			}
+			env[it.Target] = it.Value
+		}
+	}
+
 	out := guestwire.SecretsRequest{Providers: map[string]guestwire.ProviderDef{}}
 	for _, p := range provs {
 		if !p.Enabled {
@@ -107,13 +137,20 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 		data, err := i.secrets.Get(path)
 		if errors.Is(err, secrets.ErrNotFound) {
 			// No stored key. A subscription-capable provider (Claude Code) still
-			// gets its launch command pushed with an empty env, so the guest can
-			// spawn it and let the in-image login authenticate; any other provider
-			// is simply skipped (it cannot run without its key).
+			// gets its launch command pushed, so the guest can spawn it and let the
+			// subscription credential authenticate; any other provider is simply
+			// skipped (it cannot run without its key). The env is keyless here — no
+			// ANTHROPIC_API_KEY is emitted — but a provider-tied profile credential
+			// (the OAuth token) is merged in so `claude` runs authenticated without
+			// an interactive login.
 			if p.AllowsSubscriptionAuth() {
+				env := byProvider[p.Key]
+				if env == nil {
+					env = map[string]string{}
+				}
 				out.Providers[p.Key] = guestwire.ProviderDef{
 					Command:      p.LaunchCommand,
-					Env:          map[string]string{},
+					Env:          env,
 					SetupCommand: p.SetupCommand,
 				}
 			}

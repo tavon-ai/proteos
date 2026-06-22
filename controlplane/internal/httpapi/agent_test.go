@@ -90,7 +90,7 @@ func setupAgent(t *testing.T) agentFixture {
 		Providers: reg,
 		Secrets:   sec,
 		Audit:     rec,
-		Injector:  injector.New(errDialer{}, reg, sec, rec),
+		Injector:  injector.New(errDialer{}, reg, sec, rec, nil),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

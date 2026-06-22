@@ -1,0 +1,232 @@
+package httpapi_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tavon/proteos/controlplane/internal/audit"
+	"github.com/tavon/proteos/controlplane/internal/auth"
+	"github.com/tavon/proteos/controlplane/internal/httpapi"
+	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon/proteos/controlplane/internal/profile"
+	"github.com/tavon/proteos/controlplane/internal/secrets"
+	"github.com/tavon/proteos/controlplane/internal/session"
+	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon/proteos/controlplane/internal/testutil"
+)
+
+type profileFixture struct {
+	url    string
+	token  string
+	userID pgtype.UUID
+	sec    *secrets.MemStore
+	pool   *pgxpool.Pool
+}
+
+func setupProfile(t *testing.T) profileFixture {
+	t.Helper()
+	ctx := context.Background()
+	pool, q := testutil.Postgres(t)
+
+	user, err := q.UpsertUser(ctx, store.UpsertUserParams{
+		GithubUserID: 71, Login: "prof-user", Email: "p@example.com",
+	})
+	if err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	sessions := session.NewManager(q, time.Hour)
+	token, err := sessions.Create(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	sec := secrets.NewMemStore()
+	rec := audit.NewRecorder(q)
+
+	srv := &httpapi.Server{
+		Sessions: sessions,
+		Queries:  q,
+		Secrets:  sec,
+		Audit:    rec,
+		Profile:  profile.NewStore(q, sec, rec),
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	return profileFixture{url: ts.URL, token: token, userID: user.ID, sec: sec, pool: pool}
+}
+
+func (fx profileFixture) uid() string { return machine.UUIDString(fx.userID) }
+
+func (fx profileFixture) do(t *testing.T, method, path, body string, csrf bool) *http.Response {
+	t.Helper()
+	var r io.Reader
+	if body != "" {
+		r = strings.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, fx.url+path, r)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fx.token})
+	if csrf {
+		req.Header.Set("X-Requested-By", "proteos")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	return resp
+}
+
+const claudeItemPath = "/api/profile/items/" + profile.ClaudeOAuthKey
+
+// TestProfileSetListDelete exercises the full Phase 1 lifecycle: set stores the
+// value in OpenBao + a metadata row; list returns metadata only; delete removes
+// both. The value never appears in Postgres or any response.
+func TestProfileSetListDelete(t *testing.T) {
+	fx := setupProfile(t)
+	const tok = "claude-oauth-token-abc123"
+
+	// Empty list to start.
+	r0 := fx.do(t, http.MethodGet, "/api/profile/items", "", false)
+	var initial []map[string]any
+	_ = json.NewDecoder(r0.Body).Decode(&initial)
+	r0.Body.Close()
+	if len(initial) != 0 {
+		t.Fatalf("expected no items initially, got %v", initial)
+	}
+
+	// Set the Claude OAuth token.
+	r1 := fx.do(t, http.MethodPut, claudeItemPath, `{"value":"`+tok+`"}`, true)
+	r1.Body.Close()
+	if r1.StatusCode != http.StatusNoContent {
+		t.Fatalf("put: status %d, want 204", r1.StatusCode)
+	}
+
+	// The value lives in OpenBao under the profile path.
+	stored, err := fx.sec.Get(secrets.UserProfilePath(fx.uid(), profile.ClaudeOAuthKey))
+	if err != nil {
+		t.Fatalf("value not stored in OpenBao: %v", err)
+	}
+	if stored["value"] != tok {
+		t.Fatalf("stored value = %v", stored)
+	}
+
+	// A metadata row exists; it must NOT carry the value in any column.
+	var key, kind, target string
+	if err := fx.pool.QueryRow(context.Background(),
+		"SELECT key, kind, target FROM profile_items WHERE user_id=$1 AND key=$2",
+		fx.userID, profile.ClaudeOAuthKey).Scan(&key, &kind, &target); err != nil {
+		t.Fatalf("metadata row missing: %v", err)
+	}
+	if kind != string(profile.KindEnv) || target != "CLAUDE_CODE_OAUTH_TOKEN" {
+		t.Fatalf("metadata wrong: kind=%q target=%q", kind, target)
+	}
+
+	// List returns the item's metadata, never the value.
+	r2 := fx.do(t, http.MethodGet, "/api/profile/items", "", false)
+	body, _ := io.ReadAll(r2.Body)
+	r2.Body.Close()
+	if bytes.Contains(body, []byte(tok)) {
+		t.Fatalf("list response leaked the token: %s", body)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(body, &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0]["key"] != profile.ClaudeOAuthKey {
+		t.Fatalf("list = %v", items)
+	}
+	if items[0]["connected"] != true || items[0]["kind"] != "env" {
+		t.Fatalf("item view = %v", items[0])
+	}
+	if items[0]["expires_at"] == nil || items[0]["expires_at"] == "" {
+		t.Fatalf("expected expires_at for the 1y token, got %v", items[0]["expires_at"])
+	}
+
+	// Delete removes both the value and the row.
+	r3 := fx.do(t, http.MethodDelete, claudeItemPath, "", true)
+	r3.Body.Close()
+	if r3.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: status %d, want 204", r3.StatusCode)
+	}
+	if _, err := fx.sec.Get(secrets.UserProfilePath(fx.uid(), profile.ClaudeOAuthKey)); err == nil {
+		t.Fatal("value should be gone after delete")
+	}
+	var rows int
+	_ = fx.pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM profile_items WHERE user_id=$1 AND key=$2",
+		fx.userID, profile.ClaudeOAuthKey).Scan(&rows)
+	if rows != 0 {
+		t.Fatalf("metadata row should be gone after delete, found %d", rows)
+	}
+}
+
+func TestProfilePutUnknownItem404(t *testing.T) {
+	fx := setupProfile(t)
+	resp := fx.do(t, http.MethodPut, "/api/profile/items/nope", `{"value":"x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown item: status %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestProfilePutEmptyValue422(t *testing.T) {
+	fx := setupProfile(t)
+	resp := fx.do(t, http.MethodPut, claudeItemPath, `{"value":"   "}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("empty value: status %d, want 422", resp.StatusCode)
+	}
+}
+
+func TestProfilePutRequiresCSRF(t *testing.T) {
+	fx := setupProfile(t)
+	resp := fx.do(t, http.MethodPut, claudeItemPath, `{"value":"x"}`, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing CSRF: status %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestProfileAuditNoLeak asserts put/delete write audit rows whose target is the
+// path, never the value.
+func TestProfileAuditNoLeak(t *testing.T) {
+	fx := setupProfile(t)
+	const tok = "tok-must-not-leak-7777"
+
+	fx.do(t, http.MethodPut, claudeItemPath, `{"value":"`+tok+`"}`, true).Body.Close()
+	fx.do(t, http.MethodDelete, claudeItemPath, "", true).Body.Close()
+
+	rows, err := fx.pool.Query(context.Background(), "SELECT action, target FROM audit_log ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var sawPut, sawDelete bool
+	for rows.Next() {
+		var action, target string
+		if err := rows.Scan(&action, &target); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(target, tok) {
+			t.Fatalf("audit target leaked the value: %q", target)
+		}
+		switch action {
+		case audit.ActionSecretPut:
+			sawPut = true
+		case audit.ActionSecretDelete:
+			sawDelete = true
+		}
+	}
+	if !sawPut || !sawDelete {
+		t.Fatalf("missing audit rows: put=%v delete=%v", sawPut, sawDelete)
+	}
+}

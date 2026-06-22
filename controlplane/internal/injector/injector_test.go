@@ -13,6 +13,7 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/audit"
 	"github.com/tavon/proteos/controlplane/internal/injector"
 	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon/proteos/controlplane/internal/profile"
 	"github.com/tavon/proteos/controlplane/internal/providers"
 	"github.com/tavon/proteos/controlplane/internal/secrets"
 	"github.com/tavon/proteos/controlplane/internal/store"
@@ -107,7 +108,7 @@ func TestInjectorPushesComposedSecrets(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q))
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q), nil)
 
 	if err := inj.Inject(ctx, uid, "machine-1"); err != nil {
 		t.Fatalf("inject: %v", err)
@@ -194,7 +195,7 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q))
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q), nil)
 	if err := inj.Inject(ctx, uid, "m-multi"); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -216,6 +217,87 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 	}
 }
 
+// TestInjectorMergesClaudeProfileToken proves the portable-profile path: an
+// env-kind item tied to the claude provider (the subscription OAuth token) is
+// merged into the claude ProviderDef's env in the keyless branch — so it reaches
+// both login shells and agent-launched sessions — and no empty ANTHROPIC_API_KEY
+// is emitted alongside it (the plan's precedence constraint).
+func TestInjectorMergesClaudeProfileToken(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 102, Login: "subtok"})
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	rec := audit.NewRecorder(q)
+	prof := profile.NewStore(q, sec, rec)
+	def, ok := profile.Lookup(profile.ClaudeOAuthKey)
+	if !ok {
+		t.Fatal("claude-oauth not a registered profile item")
+	}
+	if err := prof.Set(ctx, uid, def, "oauth-tok-xyz"); err != nil {
+		t.Fatalf("set profile item: %v", err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	if err := inj.Inject(ctx, uid, "m-tok"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	cdef, ok := guest.last.Providers["claude"]
+	if !ok {
+		t.Fatalf("claude not pushed: %v", guest.last.Providers)
+	}
+	if cdef.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth-tok-xyz" {
+		t.Fatalf("oauth token not merged into claude env: %v", cdef.Env)
+	}
+	if _, present := cdef.Env["ANTHROPIC_API_KEY"]; present {
+		t.Fatalf("ANTHROPIC_API_KEY must not be emitted alongside the OAuth token: %v", cdef.Env)
+	}
+}
+
+// TestInjectorPrefersStoredApiKeyOverProfileToken proves the precedence guard:
+// when a user has BOTH a stored claude API key and a profile OAuth token, the
+// injector emits the API key (ANTHROPIC_API_KEY outranks the subscription token)
+// and does NOT leak the OAuth token into the provider env — the token belongs
+// only to the keyless/subscription branch.
+func TestInjectorPrefersStoredApiKeyOverProfileToken(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 103, Login: "bothauth"})
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	rec := audit.NewRecorder(q)
+	if err := sec.Put(secrets.UserProviderPath(uid, "claude"), map[string]string{"api_key": "sk-real-key"}); err != nil {
+		t.Fatal(err)
+	}
+	prof := profile.NewStore(q, sec, rec)
+	def, _ := profile.Lookup(profile.ClaudeOAuthKey)
+	if err := prof.Set(ctx, uid, def, "oauth-should-not-leak"); err != nil {
+		t.Fatal(err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	if err := inj.Inject(ctx, uid, "m-both"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	cdef := guest.last.Providers["claude"]
+	if cdef.Env["ANTHROPIC_API_KEY"] != "sk-real-key" {
+		t.Fatalf("stored API key not emitted: %v", cdef.Env)
+	}
+	if _, present := cdef.Env["CLAUDE_CODE_OAUTH_TOKEN"]; present {
+		t.Fatalf("OAuth token leaked into the keyed branch: %v", cdef.Env)
+	}
+}
+
 // TestInjectorPushesSubscriptionProviderWhenNoKeys proves that a user with no
 // stored keys still gets the subscription-capable provider (Claude Code) pushed
 // with an empty env — so the guest can launch claude on the image's own login —
@@ -227,7 +309,7 @@ func TestInjectorPushesSubscriptionProviderWhenNoKeys(t *testing.T) {
 	uid := machine.UUIDString(user.ID)
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q))
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q), nil)
 
 	if err := inj.Inject(ctx, uid, "m"); err != nil {
 		t.Fatalf("inject: %v", err)

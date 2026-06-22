@@ -110,7 +110,35 @@ Checked against the official docs (`code.claude.com/docs/en/authentication.md`,
 
 ---
 
-## Phase 1: Generic profile store + Claude token (backend tracer bullet)
+## Phase 1: Generic profile store + Claude token (backend tracer bullet) — **landed (backend, CP tests green)**
+
+> Implemented 2026-06-23. Backend tracer bullet complete and unit/integration-tested
+> against a Testcontainers Postgres. The two acceptance criteria that require a booted
+> VM running the pinned Claude Code (`CLAUDE_CODE_OAUTH_TOKEN` present in shell + agent
+> env; `claude` starts authenticated with no interactive login) remain **operator-pending**
+> on-machine smoke tests. What shipped:
+>
+> - Migration `000011_profile_items` (metadata only: `key, kind, target, expires_at,
+>   created/updated_at`, PK `(user_id, key)`, FK→users `ON DELETE CASCADE`). Values live
+>   only in OpenBao at `secret/users/<id>/profile/<key>` (`secrets.UserProfilePath`),
+>   covered by the existing `user-<id>` policy — no policy change.
+> - New `internal/profile` package: a server-side `Def` registry (Phase 1 ships exactly
+>   `claude-oauth` → env `CLAUDE_CODE_OAUTH_TOKEN`, provider `claude`, 1y TTL) and a
+>   `Store` combining Postgres metadata + OpenBao values (value-first write; reads audited).
+> - `injector.compose()` resolves the user's env-kind profile items and merges
+>   provider-tied credentials into **that provider's** `ProviderDef.Env` in the
+>   keyless/subscription branch — so the token reaches both login shells and agent
+>   sessions — and never emits an empty `ANTHROPIC_API_KEY` alongside it. A stored API key
+>   still wins (token is not injected in the keyed branch; covered by a test).
+> - Routes (auth + CSRF on mutations, owner-scoped, no value-read route):
+>   `GET /api/profile/items`, `PUT|DELETE /api/profile/items/{key}`. Unknown key → 404;
+>   empty/oversized value → 422.
+> - Tests: injector merge + API-key precedence; API lifecycle (store→list→delete),
+>   metadata-only list, no-value-in-Postgres/response/audit, 404/422/CSRF guards.
+> - No guestagent code changed (criterion met).
+
+### (original plan below)
+
 
 **User stories**: As a user, after I register my Claude subscription token once, every new
 machine I create launches with `claude` already authenticated — no per-machine login flow.

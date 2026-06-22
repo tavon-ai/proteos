@@ -43,6 +43,14 @@ func UserProviderPath(userID, providerKey string) string {
 	return fmt.Sprintf("secret/users/%s/providers/%s", userID, providerKey)
 }
 
+// UserProfilePath returns the canonical secret path for a user's portable
+// profile item (e.g. the Claude subscription token). It is a sibling of the
+// providers/ namespace under the same user subtree, so the existing user-<id>
+// Bao policy (secret/.../users/<id>/*) covers it with no policy change.
+func UserProfilePath(userID, key string) string {
+	return fmt.Sprintf("secret/users/%s/profile/%s", userID, key)
+}
+
 // MachineVolumeKeyPath returns the canonical secret path for a machine's LUKS
 // volume key (Phase 4 decision #2). The shape matches the OpenBao convention so
 // the Phase 5 backend swap touches the store, not the callers.

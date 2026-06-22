@@ -326,3 +326,24 @@ UPDATE personal_access_tokens SET last_used_at = now() WHERE id = $1;
 UPDATE personal_access_tokens SET revoked_at = now()
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
 RETURNING id;
+
+-- name: UpsertProfileItem :one
+-- Set/replace a portable-profile item's metadata (the value lives only in
+-- OpenBao). kind/target come from the server-side Def registry; updated_at is
+-- bumped on every write so the UI can show "last updated".
+INSERT INTO profile_items (user_id, key, kind, target, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id, key) DO UPDATE
+    SET kind = EXCLUDED.kind,
+        target = EXCLUDED.target,
+        expires_at = EXCLUDED.expires_at,
+        updated_at = now()
+RETURNING *;
+
+-- name: ListProfileItems :many
+-- A user's profile items (metadata only — never the secret value), keyed order.
+SELECT * FROM profile_items WHERE user_id = $1 ORDER BY key;
+
+-- name: DeleteProfileItem :exec
+-- Remove a profile item's metadata row. Deleting a missing item is a no-op.
+DELETE FROM profile_items WHERE user_id = $1 AND key = $2;
