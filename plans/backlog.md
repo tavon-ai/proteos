@@ -10,9 +10,9 @@
             does not exist) · run claude install to repair
           ⚠claude command at /home/dev/.local/bin/claude missing or broken · run claude install to
             repair
-[ ] The GitHub App only allows repos from my main account. All the repos from the other Orgs I belong, are not there. What do I have to change to be able to work on all those repos?
+[x] The GitHub App only allows repos from my main account. All the repos from the other Orgs I belong, are not there. What do I have to change to be able to work on all those repos?
   https://github.com/apps/tavon-proteos
-[ ] Let's improve the code server initial configuration. Let's run it with the following flags --disable-workspace-trust --disable-getting-started-override and let's add this file ~/.local/share/code-server/User/settings.json with the following content:
+[x] Let's improve the code server initial configuration. Let's run it with the following flags --disable-workspace-trust --disable-getting-started-override and let's add this file ~/.local/share/code-server/User/settings.json with the following content:
         {
           "git.path": "/usr/bin/git",
           "workbench.colorTheme": "Dark+", 
@@ -23,4 +23,5 @@
 [ ] Improve ansible playbook, spit out/copy:
       - cat /etc/proteos/node-agent.env | grep "PROTEOS_ROOTFS_REF="
       - /var/lib/proteos/images/proteos-templates.json
+      - tailscale install
 [x] Add "Download" button to project: we zip and download the project as it is.
