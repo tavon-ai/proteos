@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { ProvidersPanel } from '../components/ProvidersPanel';
+import { ClaudeSubscriptionPanel } from '../components/ClaudeSubscriptionPanel';
 import { TokensPanel } from '../components/TokensPanel';
 import { DownloadsPanel } from '../components/DownloadsPanel';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { reconnectRequired, useRepos } from '../api/hooks';
 
-type Tab = 'providers' | 'github' | 'tokens' | 'downloads';
+type Tab = 'providers' | 'claude' | 'github' | 'tokens' | 'downloads';
 
 // SettingsWindow folds the Phase 5–7 panels into one window with tabs
 // (decision #7): the Providers tab manages each provider's write-only API key
@@ -24,6 +25,14 @@ export function SettingsWindow() {
           onClick={() => setTab('providers')}
         >
           AI providers
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'claude'}
+          className={tab === 'claude' ? 'settings-tab active' : 'settings-tab'}
+          onClick={() => setTab('claude')}
+        >
+          Claude subscription
         </button>
         <button
           role="tab"
@@ -52,6 +61,7 @@ export function SettingsWindow() {
       </div>
       <div className="settings-body">
         {tab === 'providers' && <ProvidersPanel />}
+        {tab === 'claude' && <ClaudeSubscriptionPanel />}
         {tab === 'github' && <GitHubTab />}
         {tab === 'tokens' && <TokensPanel />}
         {tab === 'downloads' && <DownloadsPanel />}

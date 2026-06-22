@@ -114,8 +114,13 @@ func agentSessionName(providerKey string) string {
 	return guestwire.AgentSessionPrefix + providerKey
 }
 
-// Injector is the secret-push surface the agent route needs (satisfied by
-// *injector.Injector). Defined as an interface so the route stays testable.
+// Injector is the secret-push surface the API needs (satisfied by
+// *injector.Injector). Defined as an interface so the routes stay testable.
+// Inject is synchronous (the agent/task routes push before a launch and surface
+// the error); InjectAsync is fire-and-forget with bounded retry, used to
+// re-inject a profile change to already-running machines without blocking the
+// request on guest availability.
 type Injector interface {
 	Inject(ctx context.Context, userID, machineID string) error
+	InjectAsync(userID, machineID string)
 }

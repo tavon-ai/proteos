@@ -973,6 +973,33 @@ func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 	return items, nil
 }
 
+const listRunningMachineIDsByUserID = `-- name: ListRunningMachineIDsByUserID :many
+SELECT id FROM machines WHERE user_id = $1 AND state = 'running' ORDER BY id
+`
+
+// The ids of a user's currently-running machines. Drives re-injection of a
+// profile/secret change to already-running machines (Phase 2 portable profile),
+// so a change takes effect without recreating a machine.
+func (q *Queries) ListRunningMachineIDsByUserID(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listRunningMachineIDsByUserID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserMachineEventsAfter = `-- name: ListUserMachineEventsAfter :many
 SELECT me.id, me.machine_id, me.type, me.from_state, me.to_state, me.actor, me.payload, me.created_at FROM machine_events me
 JOIN machines m ON m.id = me.machine_id

@@ -25,3 +25,14 @@
       - /var/lib/proteos/images/proteos-templates.json
       - tailscale install
 [x] Add "Download" button to project: we zip and download the project as it is.
+[ ] Speed up tests?
+        ok      github.com/tavon/proteos/controlplane/internal/auth     11.943s
+        ok      github.com/tavon/proteos/controlplane/internal/github   7.244s
+        ok      github.com/tavon/proteos/controlplane/internal/guestctl 8.032s
+        ok      github.com/tavon/proteos/controlplane/internal/httpapi  140.349s
+        ok      github.com/tavon/proteos/controlplane/internal/injector 7.313s
+        ok      github.com/tavon/proteos/controlplane/internal/machine  27.772s
+        ok      github.com/tavon/proteos/controlplane/internal/providers        2.587s
+        ok      github.com/tavon/proteos/controlplane/internal/session  1.309s
+        ok      github.com/tavon/proteos/controlplane/internal/store    7.324s
+        ok      github.com/tavon/proteos/controlplane/internal/token    8.252s

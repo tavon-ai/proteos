@@ -103,6 +103,12 @@ SELECT * FROM machines WHERE user_id = $1 ORDER BY created_at ASC, id ASC;
 -- Number of machines a user owns, for enforcing the per-user cap on create.
 SELECT count(*) FROM machines WHERE user_id = $1;
 
+-- name: ListRunningMachineIDsByUserID :many
+-- The ids of a user's currently-running machines. Drives re-injection of a
+-- profile/secret change to already-running machines (Phase 2 portable profile),
+-- so a change takes effect without recreating a machine.
+SELECT id FROM machines WHERE user_id = $1 AND state = 'running' ORDER BY id;
+
 -- name: RenameMachine :one
 -- Set a machine's display name. Ownership is enforced by the caller.
 UPDATE machines SET name = $2, updated_at = now()

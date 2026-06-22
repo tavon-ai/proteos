@@ -180,7 +180,38 @@ and on-machine, with the product surface following in Phase 2.
 
 ---
 
-## Phase 2: Claude subscription product surface
+## Phase 2: Claude subscription product surface — **landed (CP + web green)**
+
+> Implemented 2026-06-23. Product surface + lifecycle gaps closed; CP backend and web
+> build/typecheck/lint/tests green. What shipped:
+>
+> - **Re-inject to running machines**: `PUT`/`DELETE /api/profile/items/{key}` now call
+>   `Server.reinjectRunningMachines`, which lists the user's running machines
+>   (`ListRunningMachineIDsByUserID`) and fires `Injector.InjectAsync` per machine
+>   (best-effort, owner-scoped). So connect/disconnect takes effect without a recreate.
+>   The `httpapi.Injector` interface gained `InjectAsync` (the real `*injector.Injector`
+>   already had it).
+> - **Needs-reconnect status**: the list view computes `needs_reconnect` from the item's
+>   metadata `expires_at` (a token past its ~1-year TTL). (The "reported invalid by
+>   upstream" variant is not implemented — there's no upstream probe yet; only the
+>   metadata-expiry path is surfaced. Noted as a residual.)
+> - **UI**: a new "Claude subscription" Settings tab (`ClaudeSubscriptionPanel`) — paste
+>   the `claude setup-token` output (write-only, never rendered back), Connected /
+>   Reconnect-needed / Not-connected status, Replace, and Disconnect with a confirm that
+>   states disconnect stops propagation but does **not** revoke upstream. API client
+>   (`listProfileItems`/`setProfileItem`/`deleteProfileItem`) + `useProfileItems`/
+>   `useProfileMutations` hooks.
+> - **Security/redaction**: value stays OpenBao-only; never in list responses, Postgres,
+>   audit targets, or logs (the two new `slog.Warn` calls log only a uuid-parse error and
+>   a DB-list error). Routes auth+CSRF, owner-scoped. Tests cover re-injection targeting
+>   exactly the running machine (stopped + other-user machines skipped) and the
+>   needs-reconnect transition.
+>
+> **Operator-pending:** same as Phase 1 — the on-VM smoke that a running machine picks up
+> the token after a live connect (the re-injection path) and that `claude` is authed.
+
+### (original plan below)
+
 
 **User stories**: As a user, I can connect and disconnect my Claude subscription from the UI,
 see whether it's connected, and have an already-running machine pick up a newly connected

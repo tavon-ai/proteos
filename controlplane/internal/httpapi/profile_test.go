@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,27 @@ import (
 	"github.com/tavon/proteos/controlplane/internal/store"
 	"github.com/tavon/proteos/controlplane/internal/testutil"
 )
+
+// recordingInjector implements httpapi.Injector, recording the machine ids passed
+// to InjectAsync so a test can assert re-injection targeted exactly the user's
+// running machines. The fake is synchronous, so calls are recorded before the
+// handler returns — no waiting on a goroutine.
+type recordingInjector struct {
+	mu    sync.Mutex
+	async []string
+}
+
+func (r *recordingInjector) Inject(context.Context, string, string) error { return nil }
+func (r *recordingInjector) InjectAsync(_ string, machineID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.async = append(r.async, machineID)
+}
+func (r *recordingInjector) calls() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.async...)
+}
 
 type profileFixture struct {
 	url    string
@@ -166,6 +188,122 @@ func TestProfileSetListDelete(t *testing.T) {
 		fx.userID, profile.ClaudeOAuthKey).Scan(&rows)
 	if rows != 0 {
 		t.Fatalf("metadata row should be gone after delete, found %d", rows)
+	}
+}
+
+// TestProfileReinjectsRunningMachines proves Phase 2's lifecycle gap is closed:
+// connecting (and disconnecting) a token re-injects to the user's currently-
+// running machines — and only those — so the change takes effect without a
+// recreate. A stopped machine and another user's running machine are never targeted.
+func TestProfileReinjectsRunningMachines(t *testing.T) {
+	ctx := context.Background()
+	pool, q := testutil.Postgres(t)
+
+	user, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 81, Login: "reinj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 82, Login: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(owner pgtype.UUID, state string) string {
+		m, err := q.CreateMachine(ctx, store.CreateMachineParams{
+			UserID: owner, HostID: host.ID, KernelRef: "k", RootfsRef: "r", ResourceSpec: []byte("{}"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "UPDATE machines SET state=$2 WHERE id=$1", m.ID, state); err != nil {
+			t.Fatal(err)
+		}
+		return machine.UUIDString(m.ID)
+	}
+	runningID := mk(user.ID, "running")
+	_ = mk(user.ID, "stopped")  // same user, not running → must be skipped
+	_ = mk(other.ID, "running") // other user, running → must never be targeted
+
+	sessions := session.NewManager(q, time.Hour)
+	token, err := sessions.Create(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec := secrets.NewMemStore()
+	rec := audit.NewRecorder(q)
+	inj := &recordingInjector{}
+	srv := &httpapi.Server{
+		Sessions: sessions,
+		Queries:  q,
+		Secrets:  sec,
+		Audit:    rec,
+		Profile:  profile.NewStore(q, sec, rec),
+		Injector: inj,
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	do := func(method string) {
+		req, _ := http.NewRequest(method, ts.URL+claudeItemPath, strings.NewReader(`{"value":"tok-abc"}`))
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: token})
+		req.Header.Set("X-Requested-By", "proteos")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s: status %d, want 204", method, resp.StatusCode)
+		}
+	}
+
+	do(http.MethodPut)
+	if got := inj.calls(); len(got) != 1 || got[0] != runningID {
+		t.Fatalf("after connect: re-injected %v, want exactly [%s]", got, runningID)
+	}
+
+	do(http.MethodDelete)
+	if got := inj.calls(); len(got) != 2 || got[1] != runningID {
+		t.Fatalf("after disconnect: re-injected %v, want second call to %s", got, runningID)
+	}
+}
+
+// TestProfileNeedsReconnectWhenExpired proves the list surfaces a known-expired
+// token (from its metadata expiry) as needs_reconnect rather than reporting it as
+// healthily connected. A freshly-set token (1y TTL) is not flagged.
+func TestProfileNeedsReconnectWhenExpired(t *testing.T) {
+	fx := setupProfile(t)
+
+	fx.do(t, http.MethodPut, claudeItemPath, `{"value":"fresh-token"}`, true).Body.Close()
+
+	needsReconnect := func() bool {
+		r := fx.do(t, http.MethodGet, "/api/profile/items", "", false)
+		defer r.Body.Close()
+		var items []map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("want one item, got %v", items)
+		}
+		return items[0]["needs_reconnect"] == true
+	}
+
+	if needsReconnect() {
+		t.Fatal("a freshly-set 1y token must not be needs_reconnect")
+	}
+
+	// Force the metadata expiry into the past (a token past its TTL).
+	if _, err := fx.pool.Exec(context.Background(),
+		"UPDATE profile_items SET expires_at = now() - interval '1 day' WHERE user_id=$1 AND key=$2",
+		fx.userID, profile.ClaudeOAuthKey); err != nil {
+		t.Fatal(err)
+	}
+	if !needsReconnect() {
+		t.Fatal("an expired token must surface needs_reconnect")
 	}
 }
 

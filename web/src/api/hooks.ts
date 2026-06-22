@@ -168,6 +168,43 @@ export function useProviderMutations() {
   return { setKey, deleteKey };
 }
 
+// profileItemsKey is the query cache key for the user's portable-profile items.
+const profileItemsKey = ['profile-items'] as const;
+
+// useProfileItems loads the user's portable-profile items (Phase 1/2) — metadata
+// only; the stored value is never returned. Drives the Claude-subscription panel's
+// connected / needs-reconnect status.
+export function useProfileItems() {
+  return useQuery({
+    queryKey: profileItemsKey,
+    queryFn: api.listProfileItems,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useProfileMutations exposes set/delete of a profile item's write-only value.
+// Both invalidate the items query so connection status re-renders from the server
+// (the value itself is never held client-side). Connect/disconnect also re-inject
+// to the user's running machines server-side, so the change takes effect without
+// recreating a machine.
+export function useProfileMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: profileItemsKey });
+
+  const setItem = useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) => api.setProfileItem(key, value),
+    onSuccess: invalidate,
+  });
+  const deleteItem = useMutation({
+    mutationFn: (key: string) => api.deleteProfileItem(key),
+    onSuccess: invalidate,
+  });
+  return { setItem, deleteItem };
+}
+
 // tokensKey is the query cache key for the user's personal access tokens.
 const tokensKey = ['tokens'] as const;
 

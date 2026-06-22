@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tavon/proteos/controlplane/internal/profile"
 )
@@ -13,14 +17,18 @@ import (
 // non-secret metadata — never the stored value. `connected` is always true for a
 // listed item (a row exists only because a value was set); it is surfaced
 // explicitly so the UI does not infer connection state from presence alone.
+// `needs_reconnect` is true when the item is known-expired from its metadata
+// (e.g. a Claude setup-token past its ~1-year TTL) — the UI shows a reconnect
+// prompt rather than silently failing on the machine.
 type profileItemView struct {
-	Key       string  `json:"key"`
-	Kind      string  `json:"kind"`
-	Target    string  `json:"target"`
-	Connected bool    `json:"connected"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	Key            string  `json:"key"`
+	Kind           string  `json:"kind"`
+	Target         string  `json:"target"`
+	Connected      bool    `json:"connected"`
+	NeedsReconnect bool    `json:"needs_reconnect"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+	ExpiresAt      *string `json:"expires_at,omitempty"`
 }
 
 // handleListProfileItems returns the caller's portable-profile items as metadata
@@ -36,6 +44,7 @@ func (s *Server) handleListProfileItems(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
+	now := time.Now()
 	out := make([]profileItemView, 0, len(items))
 	for _, it := range items {
 		v := profileItemView{
@@ -49,6 +58,7 @@ func (s *Server) handleListProfileItems(w http.ResponseWriter, r *http.Request) 
 		if it.ExpiresAt != nil {
 			s := it.ExpiresAt.UTC().Format(time.RFC3339)
 			v.ExpiresAt = &s
+			v.NeedsReconnect = it.ExpiresAt.Before(now)
 		}
 		out = append(out, v)
 	}
@@ -93,10 +103,14 @@ func (s *Server) handleSetProfileItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.Profile.Set(r.Context(), uuidString(user.ID), def, value); err != nil {
+	uid := uuidString(user.ID)
+	if err := s.Profile.Set(r.Context(), uid, def, value); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
+	// Re-inject to already-running machines so the new token takes effect without
+	// recreating a machine (newly created ones pick it up on their boot injection).
+	s.reinjectRunningMachines(r.Context(), uid)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -112,9 +126,37 @@ func (s *Server) handleDeleteProfileItem(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "unknown_item")
 		return
 	}
-	if err := s.Profile.Delete(r.Context(), uuidString(user.ID), r.PathValue("key")); err != nil {
+	uid := uuidString(user.ID)
+	if err := s.Profile.Delete(r.Context(), uid, r.PathValue("key")); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
+	// Re-inject (replace-all) to running machines so the now-removed item drops
+	// from their env on the next push, not only on their next boot.
+	s.reinjectRunningMachines(r.Context(), uid)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// reinjectRunningMachines pushes the user's current composed secret/profile set
+// to every running machine they own. Best-effort and async (InjectAsync has its
+// own bounded retry): a profile change must not block on, or fail because of,
+// guest availability. A machine only ever receives its owner's secrets, so this
+// stays owner-scoped by construction. No-op when the injector or store is unwired.
+func (s *Server) reinjectRunningMachines(ctx context.Context, userID string) {
+	if s.Injector == nil || s.Queries == nil {
+		return
+	}
+	var uid pgtype.UUID
+	if err := uid.Scan(userID); err != nil {
+		slog.Warn("profile: bad user id for re-injection", "err", err)
+		return
+	}
+	ids, err := s.Queries.ListRunningMachineIDsByUserID(ctx, uid)
+	if err != nil {
+		slog.Warn("profile: list running machines for re-injection", "err", err)
+		return
+	}
+	for _, id := range ids {
+		s.Injector.InjectAsync(userID, uuidString(id))
+	}
 }

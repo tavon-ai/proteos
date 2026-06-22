@@ -177,6 +177,26 @@ export interface Provider {
   secret_fields: SecretField[];
 }
 
+// ProfileItem is one row of GET /api/profile/items — a portable user-profile
+// item (Phase 1/2), e.g. the Claude subscription token. The API never returns the
+// stored value; `connected` reports that a value is set and `needs_reconnect`
+// that it is known-expired (from metadata). Timestamps are RFC3339; expires_at is
+// omitted when the item has no expiry.
+export interface ProfileItem {
+  key: string;
+  kind: string;
+  target: string;
+  connected: boolean;
+  needs_reconnect: boolean;
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+}
+
+// The well-known profile item key for the Claude subscription OAuth token
+// (`claude setup-token` output → CLAUDE_CODE_OAUTH_TOKEN in the machine).
+export const CLAUDE_OAUTH_KEY = 'claude-oauth';
+
 // AccessToken is one row of GET /api/tokens (AC1) — a personal access token the
 // user minted for the CLI. The secret is never returned here; only the non-secret
 // `prefix` (the token's leading characters) is shown so tokens are distinguishable.
@@ -501,6 +521,20 @@ export const api = {
     }),
   deleteProviderKey: (key: string) =>
     request<void>(`/api/secrets/providers/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+
+  // Portable user profile (Phase 1/2). listProfileItems returns metadata only
+  // (never the stored value); setProfileItem/deleteProfileItem return 204. The
+  // server fixes each item's kind/target by key, so the body is just the value.
+  // 404 unknown_item for an unregistered key; 422 missing_value / value_too_long.
+  listProfileItems: () => request<ProfileItem[]>('/api/profile/items'),
+  setProfileItem: (key: string, value: string) =>
+    request<void>(`/api/profile/items/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    }),
+  deleteProfileItem: (key: string) =>
+    request<void>(`/api/profile/items/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // Personal access tokens (AC1): the user mints/revokes CLI credentials here.
   // createToken returns the plaintext exactly once (shown then discarded);
