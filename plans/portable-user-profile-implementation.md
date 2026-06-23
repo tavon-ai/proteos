@@ -307,7 +307,41 @@ deliberately generic and proven with a single trivial dotfile (not yet gitconfig
 
 ---
 
-## Phase 4: Git identity + SSH key as profile items
+## Phase 4: Git identity + SSH key as profile items — **landed (CP + guest + web green, security-reviewed)**
+
+> Implemented 2026-06-23. Typed git-identity + SSH-key conveniences on the Phase 3 file
+> primitive, reconciled with the Phase 7 git stack. CP + guest + web all green; a focused
+> private-key security review found no high/critical issues (mediums addressed). What shipped:
+>
+> - **Git identity** (reconciliation, not a competing file): stored non-secret in Postgres
+>   (`user_git_identity`, migration `000013`) and read by the existing Phase 7 `git.configure`
+>   control op, which stays the **single ~/.gitconfig writer** — the profile identity just
+>   overrides the GitHub-derived default. `GET/PUT/DELETE /api/profile/git` (PUT/DELETE
+>   re-apply to running machines via `Manager.ReconfigureUser`). So git identity does NOT use
+>   the materializer (avoids two writers) — the materializer-built item is the SSH key.
+> - **SSH key**: `POST /api/profile/ssh` generates an ed25519 keypair (`crypto/rand`); the
+>   private key is stored in OpenBao and materialized as a file-kind item at `~/.ssh/id_ed25519`
+>   (0600, `~/.ssh` 0700 via the guest's parent-dir creation); the public key (sibling OpenBao
+>   field) + fingerprint are returned for the user to add to GitHub. A scoped `~/.ssh/config`
+>   item (git hosts only, `StrictHostKeyChecking accept-new`) lets SSH git ops connect
+>   non-interactively. `GET` returns public-only; `DELETE` removes key+config and re-injects.
+>   The **private key is never returned by any API, logged, or written to Postgres**.
+> - **UI**: a "Git & SSH" Settings tab (`GitSshPanel`) — git identity form (custom vs
+>   GitHub-default badge, reset), SSH generate/show-public/copy/regenerate/remove with copy
+>   that discloses removal is separate from GitHub.
+> - **Security pass** (ssdlc auditor): no high/critical. Fixed: SSH config scoped to git hosts
+>   instead of `Host *` (M1); `PUT /secrets` body bounded 1 MiB (M2); stricter email check (L1);
+>   disconnect copy clarifies GitHub removal is separate (L3). Confirmed: auth+CSRF+owner-scoped,
+>   layered path-traversal defense, atomic chmod-before-rename writes.
+> - **Tests**: guestctl identity-override; API git-identity lifecycle/validation/re-apply; SSH
+>   generate→store→list→get→delete with private-key-never-leaks assertions; injector emits the
+>   SSH key (0600) + config as Files.
+>
+> **Operator-pending:** on-VM smoke that `git commit` uses the profile identity and an SSH git
+> remote op succeeds with the generated key on a fresh machine.
+
+### (original plan below)
+
 
 **User stories**: As a user, my git identity (`~/.gitconfig`) and my SSH key (`~/.ssh`) are
 present on every machine automatically, so I can commit with the right identity and push/pull

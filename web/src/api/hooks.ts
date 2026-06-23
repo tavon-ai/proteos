@@ -205,6 +205,60 @@ export function useProfileMutations() {
   return { setItem, deleteItem };
 }
 
+// gitIdentityKey / sshKeyKey cache the Phase 4 typed profile conveniences.
+const gitIdentityKey = ['git-identity'] as const;
+const sshKeyKey = ['ssh-key'] as const;
+
+// useGitIdentity loads the effective git identity (portable or GitHub default).
+export function useGitIdentity() {
+  return useQuery({
+    queryKey: gitIdentityKey,
+    queryFn: api.getGitIdentity,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useGitIdentityMutations exposes set/clear of the portable git identity. Both
+// invalidate the query so the displayed identity + source re-render from the server.
+export function useGitIdentityMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: gitIdentityKey });
+  const set = useMutation({
+    mutationFn: ({ name, email }: { name: string; email: string }) =>
+      api.setGitIdentity(name, email),
+    onSuccess: invalidate,
+  });
+  const clear = useMutation({ mutationFn: () => api.deleteGitIdentity(), onSuccess: invalidate });
+  return { set, clear };
+}
+
+// useSSHKey loads the SSH key status (present + public key/fingerprint, never the
+// private key).
+export function useSSHKey() {
+  return useQuery({
+    queryKey: sshKeyKey,
+    queryFn: api.getSSHKey,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useSSHKeyMutations exposes generate/delete of the SSH key. Both invalidate the
+// query so status re-renders from the server. generate returns the public key in
+// its result so the panel can show it immediately.
+export function useSSHKeyMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: sshKeyKey });
+  const generate = useMutation({ mutationFn: () => api.generateSSHKey(), onSuccess: invalidate });
+  const remove = useMutation({ mutationFn: () => api.deleteSSHKey(), onSuccess: invalidate });
+  return { generate, remove };
+}
+
 // tokensKey is the query cache key for the user's personal access tokens.
 const tokensKey = ['tokens'] as const;
 

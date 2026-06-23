@@ -298,6 +298,8 @@ func run(migrate, migrateOnly bool) error {
 		srv.GitWorktree = guestCtl
 		// AT1: and the headless agent-run dispatch surface.
 		srv.TaskChannel = guestCtl
+		// Phase 4: re-apply a portable git-identity change to running machines.
+		srv.GitConfigurer = guestCtl
 	}
 	// AT2: the live agent-task event stream (independent of the OAuth/git stack).
 	srv.TaskEvents = taskHub

@@ -118,3 +118,34 @@ func Lookup(key string) (Def, bool) {
 	d, ok := defs[key]
 	return d, ok
 }
+
+// SSH profile items (Phase 4). The key and config are server-managed file-kind
+// items materialized under ~/.ssh by the injector; they are set through the typed
+// /api/profile/ssh route, not the generic PUT, so they are not in the `defs`
+// registry. The private key is stored 0600; ~/.ssh becomes 0700 via the guest's
+// parent-dir creation.
+const (
+	SSHKeyItemKey    = "ssh-key"
+	SSHConfigItemKey = "ssh-config"
+
+	sshKeyPath    = ".ssh/id_ed25519"
+	sshConfigPath = ".ssh/config"
+
+	// sshPublicField is the sibling OpenBao field (under the SSH key item) holding
+	// the non-secret public key, so the UI can show it without the private key.
+	sshPublicField = "public"
+)
+
+// sshConfigContent makes git-over-SSH connect without an interactive host-key
+// prompt on first use (accept-new is TOFU: it records the key but rejects a later
+// change), so an SSH remote operation succeeds on a fresh machine. It is scoped to
+// the common git hosts (not "Host *"), so it never weakens host-key checking for
+// arbitrary SSH the user runs from the terminal.
+const sshConfigContent = "Host github.com gitlab.com bitbucket.org ssh.dev.azure.com\n" +
+	"    StrictHostKeyChecking accept-new\n" +
+	"    IdentityFile ~/.ssh/id_ed25519\n"
+
+func sshKeyDef() Def { return Def{Key: SSHKeyItemKey, Kind: KindFile, Target: sshKeyPath, Mode: 0o600} }
+func sshConfigDef() Def {
+	return Def{Key: SSHConfigItemKey, Kind: KindFile, Target: sshConfigPath, Mode: 0o600}
+}

@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { ProvidersPanel } from '../components/ProvidersPanel';
 import { ClaudeSubscriptionPanel } from '../components/ClaudeSubscriptionPanel';
+import { GitSshPanel } from '../components/GitSshPanel';
 import { TokensPanel } from '../components/TokensPanel';
 import { DownloadsPanel } from '../components/DownloadsPanel';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { reconnectRequired, useRepos } from '../api/hooks';
 
-type Tab = 'providers' | 'claude' | 'github' | 'tokens' | 'downloads';
+type Tab = 'providers' | 'claude' | 'gitssh' | 'github' | 'tokens' | 'downloads';
 
 // SettingsWindow folds the Phase 5–7 panels into one window with tabs
 // (decision #7): the Providers tab manages each provider's write-only API key
@@ -36,6 +37,14 @@ export function SettingsWindow() {
         </button>
         <button
           role="tab"
+          aria-selected={tab === 'gitssh'}
+          className={tab === 'gitssh' ? 'settings-tab active' : 'settings-tab'}
+          onClick={() => setTab('gitssh')}
+        >
+          Git &amp; SSH
+        </button>
+        <button
+          role="tab"
           aria-selected={tab === 'github'}
           className={tab === 'github' ? 'settings-tab active' : 'settings-tab'}
           onClick={() => setTab('github')}
@@ -62,6 +71,7 @@ export function SettingsWindow() {
       <div className="settings-body">
         {tab === 'providers' && <ProvidersPanel />}
         {tab === 'claude' && <ClaudeSubscriptionPanel />}
+        {tab === 'gitssh' && <GitSshPanel />}
         {tab === 'github' && <GitHubTab />}
         {tab === 'tokens' && <TokensPanel />}
         {tab === 'downloads' && <DownloadsPanel />}

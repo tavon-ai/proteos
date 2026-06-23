@@ -734,6 +734,27 @@ body {
   font-size: 0.9rem;
 }
 
+/* Phase 4 Git & SSH panel: section divider and the read-only public-key box. */
+.panel-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.1rem 0;
+}
+
+.ssh-public-key {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
 /* The provider key form buttons sit inline (no top margin like the default .btn). */
 .provider-key-form .btn,
 .provider-row-actions .btn {

@@ -296,6 +296,56 @@ func TestInjectorEmitsFileItems(t *testing.T) {
 	}
 }
 
+// TestInjectorEmitsSSHKeyFiles proves an SSH key set via the typed store is
+// composed into SecretsRequest.Files: the private key at ~/.ssh/id_ed25519 (0600)
+// and the SSH client config, so the guest materializes them under ~/.ssh.
+func TestInjectorEmitsSSHKeyFiles(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 105, Login: "sshuser"})
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	rec := audit.NewRecorder(q)
+	prof := profile.NewStore(q, sec, rec)
+	priv, pub, _, err := profile.GenerateSSHKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prof.SetSSHKey(ctx, uid, priv, pub); err != nil {
+		t.Fatalf("set ssh key: %v", err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	if err := inj.Inject(ctx, uid, "m-ssh"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	byPath := map[string]struct {
+		mode    uint32
+		content string
+	}{}
+	for _, f := range guest.last.Files {
+		byPath[f.Path] = struct {
+			mode    uint32
+			content string
+		}{f.Mode, f.Content}
+	}
+	key, ok := byPath[".ssh/id_ed25519"]
+	if !ok {
+		t.Fatalf("private key file not pushed: %v", guest.last.Files)
+	}
+	if key.mode != 0o600 || key.content != priv {
+		t.Fatalf("private key file wrong: mode=%o content-is-priv=%v", key.mode, key.content == priv)
+	}
+	if _, ok := byPath[".ssh/config"]; !ok {
+		t.Fatalf("ssh config file not pushed: %v", guest.last.Files)
+	}
+}
+
 // TestInjectorPrefersStoredApiKeyOverProfileToken proves the precedence guard:
 // when a user has BOTH a stored claude API key and a profile OAuth token, the
 // injector emits the API key (ANTHROPIC_API_KEY outranks the subscription token)

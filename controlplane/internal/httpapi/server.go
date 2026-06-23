@@ -66,6 +66,10 @@ type Server struct {
 	// Nil disables those routes.
 	Profile *profile.Store
 
+	// GitConfigurer re-applies a portable git-identity change to running machines
+	// (Phase 4). Satisfied by *guestctl.Manager; nil ⇒ changes apply on next boot.
+	GitConfigurer GitConfigurer
+
 	// Injector pushes provider secrets into a running guest before an agent
 	// launch (Phase 5). Nil ⇒ the push step is skipped (the poller's start-time
 	// injection is then the only path).
@@ -174,6 +178,16 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/profile/items", s.requireAuth(http.HandlerFunc(s.handleListProfileItems)))
 		mux.Handle("PUT /api/profile/items/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetProfileItem))))
 		mux.Handle("DELETE /api/profile/items/{key}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteProfileItem))))
+
+		// Typed Phase 4 conveniences over the same store: git identity (reconciled
+		// with the Phase 7 git.configure path) and the SSH key. Reads are auth-only;
+		// mutations require the CSRF header. No private key is ever returned.
+		mux.Handle("GET /api/profile/git", s.requireAuth(http.HandlerFunc(s.handleGetGitIdentity)))
+		mux.Handle("PUT /api/profile/git", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetGitIdentity))))
+		mux.Handle("DELETE /api/profile/git", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteGitIdentity))))
+		mux.Handle("GET /api/profile/ssh", s.requireAuth(http.HandlerFunc(s.handleGetSSHKey)))
+		mux.Handle("POST /api/profile/ssh", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGenerateSSHKey))))
+		mux.Handle("DELETE /api/profile/ssh", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteSSHKey))))
 	}
 
 	// Git operations (Phase 7). Reads are auth-only; clone mutates state so it

@@ -152,3 +152,10 @@ type User struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	DownloadAsIs bool               `json:"download_as_is"`
 }
+
+type UserGitIdentity struct {
+	UserID    pgtype.UUID        `json:"user_id"`
+	Name      string             `json:"name"`
+	Email     string             `json:"email"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}

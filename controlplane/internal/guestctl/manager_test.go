@@ -210,6 +210,45 @@ func setupManager(t *testing.T) (*guestctl.Manager, *machine.Broker, *fakeGuest,
 	return mgr, broker, fg, mc, q, hub
 }
 
+// TestControlChannel_ProfileGitIdentityOverrides proves the Phase 4 reconciliation:
+// when the user has a portable git identity, git.configure writes THAT identity
+// (still a single ~/.gitconfig writer), not the GitHub-derived default.
+func TestControlChannel_ProfileGitIdentityOverrides(t *testing.T) {
+	mgr, broker, fg, mc, q, _ := setupManager(t)
+	if _, err := q.UpsertGitIdentity(context.Background(), store.UpsertGitIdentityParams{
+		UserID: mc.UserID, Name: "Ada Lovelace", Email: "ada@example.com",
+	}); err != nil {
+		t.Fatalf("set git identity: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	machineID := machine.UUIDString(mc.ID)
+	go func() {
+		for i := 0; i < 60; i++ {
+			if mgr.HasChannel(machineID) {
+				return
+			}
+			broker.Publish(machine.Update{Machine: mc})
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case cfg := <-fg.configured:
+		if cfg.Name != "Ada Lovelace" || cfg.Email != "ada@example.com" {
+			t.Fatalf("configure should use the profile identity, got %+v", cfg)
+		}
+		if cfg.Helper != guestwire.HelperBinPath {
+			t.Fatalf("helper must still be wired: %q", cfg.Helper)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("git.configure was never applied")
+	}
+}
+
 func TestControlChannel_ConfigureCredentialClone(t *testing.T) {
 	mgr, broker, fg, mc, q, _ := setupManager(t)
 	ctx, cancel := context.WithCancel(context.Background())

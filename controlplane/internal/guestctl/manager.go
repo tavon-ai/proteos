@@ -230,6 +230,17 @@ func (m *Manager) configure(ctx context.Context, c *conn, userID string) error {
 	if email == "" {
 		email = fmt.Sprintf("%s@users.noreply.github.com", u.Login)
 	}
+	// A portable-profile git identity (Phase 4) overrides the GitHub-derived
+	// default. This keeps git.configure the single writer of ~/.gitconfig — the
+	// profile only changes the identity it writes, so the two never fight.
+	if gi, err := m.q.GetGitIdentity(ctx, uid); err == nil {
+		if gi.Name != "" {
+			name = gi.Name
+		}
+		if gi.Email != "" {
+			email = gi.Email
+		}
+	}
 	rctx, cancel := context.WithTimeout(ctx, configTimeout)
 	defer cancel()
 	_, err = c.request(rctx, guestwire.OpGitConfigure, guestwire.GitConfigurePayload{
@@ -238,6 +249,34 @@ func (m *Manager) configure(ctx context.Context, c *conn, userID string) error {
 		Helper: guestwire.HelperBinPath,
 	})
 	return err
+}
+
+// ReconfigureUser re-pushes git.configure to every running machine the user owns
+// that currently has a live control channel, so a portable git-identity change
+// takes effect without recreating the machine (Phase 4). Best-effort: machines
+// without a channel pick the new identity up on their next (re)connect. A failure
+// for one machine does not stop the others.
+func (m *Manager) ReconfigureUser(ctx context.Context, userID string) {
+	uid, err := machine.ParseUUID(userID)
+	if err != nil {
+		slog.Warn("guestctl: reconfigure bad user id", "err", err)
+		return
+	}
+	ids, err := m.q.ListRunningMachineIDsByUserID(ctx, uid)
+	if err != nil {
+		slog.Warn("guestctl: reconfigure list machines", "err", err)
+		return
+	}
+	for _, id := range ids {
+		mid := machine.UUIDString(id)
+		c := m.getConn(mid)
+		if c == nil {
+			continue
+		}
+		if err := m.configure(ctx, c, userID); err != nil {
+			slog.Warn("guestctl: reconfigure failed", "machine", mid, "err", err)
+		}
+	}
 }
 
 // makeHandler returns the guest → CP request handler bound to this machine's

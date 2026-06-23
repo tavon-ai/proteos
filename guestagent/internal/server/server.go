@@ -128,6 +128,10 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// maxSecretsBody bounds PUT /secrets — generous for providers + file-kind items
+// (a few KB each), tiny relative to guest RAM, so a malformed/huge body can't OOM.
+const maxSecretsBody = 1 << 20 // 1 MiB
+
 // handleSecrets installs the pushed provider set (replace-all). The body's
 // secret values are never logged.
 func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +139,9 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "secret injection disabled", http.StatusServiceUnavailable)
 		return
 	}
+	// Bound the body: the only caller is the trusted node-agent over vsock, but a
+	// compromised agent must not be able to OOM the guest with a giant payload.
+	r.Body = http.MaxBytesReader(w, r.Body, maxSecretsBody)
 	var req guestwire.SecretsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)

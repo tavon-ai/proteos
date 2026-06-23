@@ -197,6 +197,24 @@ export interface ProfileItem {
 // (`claude setup-token` output → CLAUDE_CODE_OAUTH_TOKEN in the machine).
 export const CLAUDE_OAUTH_KEY = 'claude-oauth';
 
+// GitIdentity is GET /api/profile/git: the effective git identity written to
+// ~/.gitconfig on the user's machines. source is "profile" when the user set a
+// portable identity, else "github" (the GitHub-derived default).
+export interface GitIdentity {
+  name: string;
+  email: string;
+  source: 'profile' | 'github';
+}
+
+// SSHKeyStatus is GET/POST /api/profile/ssh. The private key is never returned;
+// only the public key (to add to GitHub) and its fingerprint. public_key/
+// fingerprint are present only when present is true.
+export interface SSHKeyStatus {
+  present: boolean;
+  public_key?: string;
+  fingerprint?: string;
+}
+
 // AccessToken is one row of GET /api/tokens (AC1) — a personal access token the
 // user minted for the CLI. The secret is never returned here; only the non-secret
 // `prefix` (the token's leading characters) is shown so tokens are distinguishable.
@@ -535,6 +553,24 @@ export const api = {
     }),
   deleteProfileItem: (key: string) =>
     request<void>(`/api/profile/items/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+
+  // Git identity (Phase 4): the portable name/email written to ~/.gitconfig. set
+  // returns 204; delete reverts to the GitHub default (404 when none was set).
+  getGitIdentity: () => request<GitIdentity>('/api/profile/git'),
+  setGitIdentity: (name: string, email: string) =>
+    request<void>('/api/profile/git', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email }),
+    }),
+  deleteGitIdentity: () => request<void>('/api/profile/git', { method: 'DELETE' }),
+
+  // SSH key (Phase 4): generate replaces any existing key and returns the public
+  // key once for the user to add to GitHub; the private key never leaves the
+  // server. delete removes it (404 when none).
+  getSSHKey: () => request<SSHKeyStatus>('/api/profile/ssh'),
+  generateSSHKey: () => request<SSHKeyStatus>('/api/profile/ssh', { method: 'POST' }),
+  deleteSSHKey: () => request<void>('/api/profile/ssh', { method: 'DELETE' }),
 
   // Personal access tokens (AC1): the user mints/revokes CLI credentials here.
   // createToken returns the plaintext exactly once (shown then discarded);

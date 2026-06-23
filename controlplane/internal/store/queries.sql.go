@@ -165,6 +165,20 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	return i, err
 }
 
+const deleteGitIdentity = `-- name: DeleteGitIdentity :execrows
+DELETE FROM user_git_identity WHERE user_id = $1
+`
+
+// Clear a user's portable git identity (revert to the GitHub default). Returns
+// the number of rows removed (0 ⇒ none was set), which the API maps to 404.
+func (q *Queries) DeleteGitIdentity(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteGitIdentity, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteMachine = `-- name: DeleteMachine :exec
 DELETE FROM machines WHERE id = $1
 `
@@ -297,6 +311,23 @@ func (q *Queries) GetGitHubLink(ctx context.Context, userID pgtype.UUID) (Github
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getGitIdentity = `-- name: GetGitIdentity :one
+SELECT name, email FROM user_git_identity WHERE user_id = $1
+`
+
+type GetGitIdentityRow struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// A user's portable git identity, or ErrNoRows when unset (fall back to GitHub).
+func (q *Queries) GetGitIdentity(ctx context.Context, userID pgtype.UUID) (GetGitIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getGitIdentity, userID)
+	var i GetGitIdentityRow
+	err := row.Scan(&i.Name, &i.Email)
 	return i, err
 }
 
@@ -1459,6 +1490,34 @@ func (q *Queries) UpsertGitHubLink(ctx context.Context, arg UpsertGitHubLinkPara
 		&i.Metadata,
 		&i.SecretRef,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertGitIdentity = `-- name: UpsertGitIdentity :one
+INSERT INTO user_git_identity (user_id, name, email)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id) DO UPDATE
+    SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = now()
+RETURNING user_id, name, email, updated_at
+`
+
+type UpsertGitIdentityParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	Name   string      `json:"name"`
+	Email  string      `json:"email"`
+}
+
+// Set/replace a user's portable git identity (name + email). Read by the
+// git.configure control op to override the GitHub-derived default.
+func (q *Queries) UpsertGitIdentity(ctx context.Context, arg UpsertGitIdentityParams) (UserGitIdentity, error) {
+	row := q.db.QueryRow(ctx, upsertGitIdentity, arg.UserID, arg.Name, arg.Email)
+	var i UserGitIdentity
+	err := row.Scan(
+		&i.UserID,
+		&i.Name,
+		&i.Email,
 		&i.UpdatedAt,
 	)
 	return i, err

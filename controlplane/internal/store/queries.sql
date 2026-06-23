@@ -352,6 +352,24 @@ RETURNING *;
 -- A user's profile items (metadata only — never the secret value), keyed order.
 SELECT * FROM profile_items WHERE user_id = $1 ORDER BY key;
 
+-- name: UpsertGitIdentity :one
+-- Set/replace a user's portable git identity (name + email). Read by the
+-- git.configure control op to override the GitHub-derived default.
+INSERT INTO user_git_identity (user_id, name, email)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id) DO UPDATE
+    SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = now()
+RETURNING *;
+
+-- name: GetGitIdentity :one
+-- A user's portable git identity, or ErrNoRows when unset (fall back to GitHub).
+SELECT name, email FROM user_git_identity WHERE user_id = $1;
+
+-- name: DeleteGitIdentity :execrows
+-- Clear a user's portable git identity (revert to the GitHub default). Returns
+-- the number of rows removed (0 ⇒ none was set), which the API maps to 404.
+DELETE FROM user_git_identity WHERE user_id = $1;
+
 -- name: DeleteProfileItem :execrows
 -- Remove a profile item's metadata row, returning the number of rows deleted (0
 -- ⇒ the user had no such item, which the API maps to 404). Deleting a missing
