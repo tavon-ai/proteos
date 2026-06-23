@@ -111,6 +111,7 @@ type ProfileItem struct {
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Mode      *int32             `json:"mode"`
 }
 
 type Provider struct {

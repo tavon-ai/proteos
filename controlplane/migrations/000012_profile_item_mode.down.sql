@@ -1,0 +1,1 @@
+ALTER TABLE profile_items DROP COLUMN IF EXISTS mode;

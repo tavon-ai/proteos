@@ -177,7 +177,7 @@ func (q *Queries) DeleteMachine(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
-const deleteProfileItem = `-- name: DeleteProfileItem :exec
+const deleteProfileItem = `-- name: DeleteProfileItem :execrows
 DELETE FROM profile_items WHERE user_id = $1 AND key = $2
 `
 
@@ -186,10 +186,15 @@ type DeleteProfileItemParams struct {
 	Key    string      `json:"key"`
 }
 
-// Remove a profile item's metadata row. Deleting a missing item is a no-op.
-func (q *Queries) DeleteProfileItem(ctx context.Context, arg DeleteProfileItemParams) error {
-	_, err := q.db.Exec(ctx, deleteProfileItem, arg.UserID, arg.Key)
-	return err
+// Remove a profile item's metadata row, returning the number of rows deleted (0
+// ⇒ the user had no such item, which the API maps to 404). Deleting a missing
+// item is otherwise a harmless no-op.
+func (q *Queries) DeleteProfileItem(ctx context.Context, arg DeleteProfileItemParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProfileItem, arg.UserID, arg.Key)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteSnapshot = `-- name: DeleteSnapshot :exec
@@ -908,7 +913,7 @@ func (q *Queries) ListPATsByUserID(ctx context.Context, userID pgtype.UUID) ([]P
 }
 
 const listProfileItems = `-- name: ListProfileItems :many
-SELECT user_id, key, kind, target, expires_at, created_at, updated_at FROM profile_items WHERE user_id = $1 ORDER BY key
+SELECT user_id, key, kind, target, expires_at, created_at, updated_at, mode FROM profile_items WHERE user_id = $1 ORDER BY key
 `
 
 // A user's profile items (metadata only — never the secret value), keyed order.
@@ -929,6 +934,7 @@ func (q *Queries) ListProfileItems(ctx context.Context, userID pgtype.UUID) ([]P
 			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}
@@ -1486,14 +1492,15 @@ func (q *Queries) UpsertHostByName(ctx context.Context, arg UpsertHostByNamePara
 }
 
 const upsertProfileItem = `-- name: UpsertProfileItem :one
-INSERT INTO profile_items (user_id, key, kind, target, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO profile_items (user_id, key, kind, target, expires_at, mode)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_id, key) DO UPDATE
     SET kind = EXCLUDED.kind,
         target = EXCLUDED.target,
         expires_at = EXCLUDED.expires_at,
+        mode = EXCLUDED.mode,
         updated_at = now()
-RETURNING user_id, key, kind, target, expires_at, created_at, updated_at
+RETURNING user_id, key, kind, target, expires_at, created_at, updated_at, mode
 `
 
 type UpsertProfileItemParams struct {
@@ -1502,11 +1509,13 @@ type UpsertProfileItemParams struct {
 	Kind      string             `json:"kind"`
 	Target    string             `json:"target"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	Mode      *int32             `json:"mode"`
 }
 
 // Set/replace a portable-profile item's metadata (the value lives only in
-// OpenBao). kind/target come from the server-side Def registry; updated_at is
-// bumped on every write so the UI can show "last updated".
+// OpenBao). kind/target/mode come from the server-side Def (or, for a generic
+// file item, the request); mode is NULL for env-kind items. updated_at is bumped
+// on every write so the UI can show "last updated".
 func (q *Queries) UpsertProfileItem(ctx context.Context, arg UpsertProfileItemParams) (ProfileItem, error) {
 	row := q.db.QueryRow(ctx, upsertProfileItem,
 		arg.UserID,
@@ -1514,6 +1523,7 @@ func (q *Queries) UpsertProfileItem(ctx context.Context, arg UpsertProfileItemPa
 		arg.Kind,
 		arg.Target,
 		arg.ExpiresAt,
+		arg.Mode,
 	)
 	var i ProfileItem
 	err := row.Scan(
@@ -1524,6 +1534,7 @@ func (q *Queries) UpsertProfileItem(ctx context.Context, arg UpsertProfileItemPa
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mode,
 	)
 	return i, err
 }

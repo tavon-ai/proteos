@@ -15,7 +15,13 @@
 // var or claiming the not-yet-supported file kind.
 package profile
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"path"
+	"strings"
+	"time"
+)
 
 // Kind is the materialization shape of a profile item.
 type Kind string
@@ -38,18 +44,61 @@ const MaxValueLen = 8192
 // CLI for Pro/Max/Team/Enterprise subscription users without an API key.
 const ClaudeOAuthKey = "claude-oauth"
 
-// Def is the server-side definition of a profile item type. The kind/target are
-// fixed here, not supplied by the client. Provider, when non-empty, marks the
-// env var as that provider's auth credential: the injector merges it into the
-// provider's own ProviderDef.Env (not a standalone entry) so it reaches both
-// login shells and agent-launched sessions. TTL, when non-zero, is recorded as
-// the item's expires_at (drives the Phase 2 "needs reconnect" status).
+// DefaultFileMode is applied to a file-kind item whose requested mode is 0.
+const DefaultFileMode os.FileMode = 0o600
+
+// Def is the server-side definition of a profile item type. For a registered
+// item the kind/target are fixed here, not supplied by the client; a generic
+// file item (Phase 3) is described by an ad-hoc Def the handler builds from the
+// request. Provider, when non-empty, marks an env var as that provider's auth
+// credential: the injector merges it into the provider's own ProviderDef.Env (not
+// a standalone entry) so it reaches both login shells and agent-launched
+// sessions. Mode is the file permission for kind=file (0 ⇒ DefaultFileMode). TTL,
+// when non-zero, is recorded as the item's expires_at (drives the "needs
+// reconnect" status).
 type Def struct {
 	Key      string
 	Kind     Kind
 	Target   string
 	Provider string
+	Mode     os.FileMode
 	TTL      time.Duration
+}
+
+// MaxFilePathLen bounds a $HOME-relative file path (defensive).
+const MaxFilePathLen = 1024
+
+// FileDef builds a Def for a generic file-kind item (Phase 3): a client-specified
+// $HOME-relative path and mode. It validates the path stays within $HOME; a 0
+// mode is normalized to DefaultFileMode.
+func FileDef(key, relPath string, mode os.FileMode) (Def, error) {
+	if err := ValidateFilePath(relPath); err != nil {
+		return Def{}, err
+	}
+	if mode == 0 {
+		mode = DefaultFileMode
+	}
+	return Def{Key: key, Kind: KindFile, Target: path.Clean(relPath), Mode: mode & os.ModePerm}, nil
+}
+
+// ValidateFilePath checks a $HOME-relative file path: non-empty, within
+// MaxFilePathLen, not absolute, and not escaping $HOME via "..". The guest
+// re-validates (defense in depth), but rejecting here gives a clean 4xx.
+func ValidateFilePath(p string) error {
+	if strings.TrimSpace(p) == "" {
+		return fmt.Errorf("file path is empty")
+	}
+	if len(p) > MaxFilePathLen {
+		return fmt.Errorf("file path too long")
+	}
+	if path.IsAbs(p) || strings.HasPrefix(p, "/") {
+		return fmt.Errorf("file path must be $HOME-relative")
+	}
+	clean := path.Clean(p)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("file path escapes $HOME")
+	}
+	return nil
 }
 
 // defs is the registry of known profile item types. Phase 1 ships exactly one.

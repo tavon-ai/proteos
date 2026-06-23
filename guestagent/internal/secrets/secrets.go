@@ -21,6 +21,7 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -34,6 +35,17 @@ import (
 	guestwire "github.com/tavon/proteos/guestagent/api"
 	"github.com/tavon/proteos/guestagent/internal/runas"
 )
+
+// defaultFileMode is applied to a file-kind profile item whose FileDef.Mode is 0.
+const defaultFileMode = 0o600
+
+// stateDirName is the per-home directory holding the guest's profile-file
+// manifest (the list of files this guest materialized, for replace-all drop
+// across reboots). It sits under the session user's $HOME on the persist disk.
+const stateDirName = ".proteos"
+
+// fileManifestName is the manifest file (a JSON array of $HOME-relative paths).
+const fileManifestName = "profile-files.json"
 
 // setupTimeout bounds a single setup_command run. A login step that hangs past
 // this is treated as a failure (the provider is marked degraded).
@@ -64,6 +76,12 @@ type Store struct {
 	// of the current one.
 	gen uint64
 
+	// managedFiles is the set of $HOME-relative paths this guest has materialized
+	// for file-kind profile items. It is loaded from the on-disk manifest at New
+	// (so a file dropped while the machine was off is still removed on the next
+	// push) and kept in lockstep with the manifest on every Replace.
+	managedFiles map[string]struct{}
+
 	// setupWG tracks in-flight setup goroutines so AwaitSetup can block until
 	// they finish (used by tests for determinism; harmless in production).
 	setupWG sync.WaitGroup
@@ -87,9 +105,10 @@ func New(envDir string, owner runas.Identity) (*Store, error) {
 		slog.Warn("secrets: chown env dir failed", "dir", envDir, "err", err)
 	}
 	s := &Store{
-		envDir:    envDir,
-		owner:     owner,
-		providers: make(map[string]providerState),
+		envDir:       envDir,
+		owner:        owner,
+		providers:    make(map[string]providerState),
+		managedFiles: make(map[string]struct{}),
 	}
 	s.runSetup = s.runSetupCommand
 	// Start clean: drop any stale env files left by a previous run (these live on
@@ -97,15 +116,22 @@ func New(envDir string, owner runas.Identity) (*Store, error) {
 	if err := s.pruneExcept(nil); err != nil {
 		return nil, err
 	}
+	// Load the file manifest (file-kind items persist on the disk, unlike env
+	// files): this lets a later push that omits a file still remove it, even if
+	// the item was deleted while the machine was off.
+	s.managedFiles = s.loadManifest()
 	return s, nil
 }
 
-// Replace installs providers as the complete injected set, replacing any prior
-// set: it writes a 0600 env file per provider and deletes files for providers no
-// longer present, then swaps the in-memory map. Providers with a setup_command
-// are (re)run asynchronously and start un-degraded; a failing run flips the flag.
-// Idempotent for equal input (setup commands must themselves be idempotent).
-func (s *Store) Replace(providers map[string]guestwire.ProviderDef) error {
+// Replace installs the pushed set as the complete injected state, replacing any
+// prior set: it writes a 0600 env file per provider (deleting files for providers
+// no longer present), materializes file-kind profile items under $HOME (removing
+// any it previously wrote that are now absent), then swaps the in-memory map.
+// Providers with a setup_command are (re)run asynchronously and start
+// un-degraded; a failing run flips the flag. Idempotent for equal input (setup
+// commands must themselves be idempotent).
+func (s *Store) Replace(req guestwire.SecretsRequest) error {
+	providers := req.Providers
 	s.mu.Lock()
 	for key, def := range providers {
 		if err := s.writeEnvFile(key, def.Env); err != nil {
@@ -114,6 +140,12 @@ func (s *Store) Replace(providers map[string]guestwire.ProviderDef) error {
 		}
 	}
 	if err := s.pruneExcept(providers); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	// Materialize file-kind items and drop any previously-written file now absent
+	// (replace-all). Done under the same lock as the env mirror.
+	if err := s.writeFiles(req.Files); err != nil {
 		s.mu.Unlock()
 		return err
 	}
@@ -295,6 +327,177 @@ func (s *Store) pruneExcept(keep map[string]guestwire.ProviderDef) error {
 		if err := os.Remove(filepath.Join(s.envDir, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale env file: %w", err)
 		}
+	}
+	return nil
+}
+
+// writeFiles materializes each file-kind item under the session user's $HOME with
+// the requested mode and ownership, then removes any file this guest previously
+// wrote that is no longer present (replace-all), and persists the new manifest.
+// Caller holds s.mu. The session user owns the files (and any parent dirs the
+// guest creates); the agent runs as root so it can always write them.
+func (s *Store) writeFiles(files []guestwire.FileDef) error {
+	// Fast path: a user with no file-kind items (the common case) never causes the
+	// guest to touch $HOME or create the state dir/manifest.
+	if len(files) == 0 && len(s.managedFiles) == 0 {
+		return nil
+	}
+	next := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		rel, full, err := s.resolveHomePath(f.Path)
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(f.Mode) & os.ModePerm
+		if mode == 0 {
+			mode = defaultFileMode
+		}
+		if err := s.writeOwnedFile(full, []byte(f.Content), mode); err != nil {
+			return err
+		}
+		next[rel] = struct{}{}
+	}
+	// Drop files we wrote on a previous push that are absent now.
+	for rel := range s.managedFiles {
+		if _, keep := next[rel]; keep {
+			continue
+		}
+		if _, _, err := s.validateRel(rel); err != nil {
+			continue // never trust a manifest entry that no longer cleans safely
+		}
+		if err := os.Remove(filepath.Join(s.owner.Home, rel)); err != nil && !os.IsNotExist(err) {
+			slog.Warn("secrets: remove dropped profile file failed", "err", err)
+		}
+	}
+	s.managedFiles = next
+	if err := s.saveManifest(next); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeOwnedFile writes content to full atomically with the given mode, creating
+// any missing parent dirs (0700, owned by the session user), and chowns the file
+// to the session user. The value is never logged.
+func (s *Store) writeOwnedFile(full string, content []byte, mode os.FileMode) error {
+	dir := filepath.Dir(full)
+	if err := s.mkdirOwned(dir); err != nil {
+		return err
+	}
+	tmp := full + ".tmp"
+	if err := os.WriteFile(tmp, content, mode); err != nil {
+		return fmt.Errorf("write profile file: %w", err)
+	}
+	// WriteFile honors umask; force the exact mode.
+	if err := os.Chmod(tmp, mode); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("chmod profile file: %w", err)
+	}
+	if err := os.Rename(tmp, full); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename profile file: %w", err)
+	}
+	if err := s.owner.Chown(full); err != nil {
+		slog.Warn("secrets: chown profile file failed", "err", err)
+	}
+	return nil
+}
+
+// mkdirOwned ensures dir exists (0700) and that dir and any ancestors it had to
+// create are owned by the session user, stopping at $HOME (which already exists).
+func (s *Store) mkdirOwned(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create profile dir: %w", err)
+	}
+	// Chown the chain from $HOME down to dir, so a freshly created ~/.ssh is owned
+	// by the user (root-owned dirs in a user's home break tools like ssh).
+	home := filepath.Clean(s.owner.Home)
+	for d := filepath.Clean(dir); strings.HasPrefix(d, home) && d != home; d = filepath.Dir(d) {
+		if err := s.owner.Chown(d); err != nil {
+			slog.Warn("secrets: chown profile dir failed", "dir", d, "err", err)
+		}
+	}
+	return nil
+}
+
+// resolveHomePath validates a $HOME-relative path and returns its cleaned
+// relative form and absolute path under $HOME. It rejects empty/absolute paths
+// and any path that escapes $HOME via "..".
+func (s *Store) resolveHomePath(rel string) (cleanRel, full string, err error) {
+	return s.validateRel(rel)
+}
+
+func (s *Store) validateRel(rel string) (cleanRel, full string, err error) {
+	if strings.TrimSpace(rel) == "" {
+		return "", "", fmt.Errorf("profile file: empty path")
+	}
+	if filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("profile file: path %q must be $HOME-relative", rel)
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("profile file: path %q escapes $HOME", rel)
+	}
+	home := filepath.Clean(s.owner.Home)
+	full = filepath.Join(home, clean)
+	// Defense in depth: the joined path must stay within $HOME.
+	if full != home && !strings.HasPrefix(full, home+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("profile file: path %q escapes $HOME", rel)
+	}
+	return clean, full, nil
+}
+
+// manifestPath is the on-disk manifest of materialized profile files.
+func (s *Store) manifestPath() string {
+	return filepath.Join(s.owner.Home, stateDirName, fileManifestName)
+}
+
+// loadManifest reads the set of previously-materialized $HOME-relative paths. A
+// missing/unreadable manifest yields an empty set (the safe default).
+func (s *Store) loadManifest() map[string]struct{} {
+	out := make(map[string]struct{})
+	b, err := os.ReadFile(s.manifestPath())
+	if err != nil {
+		return out
+	}
+	var paths []string
+	if err := json.Unmarshal(b, &paths); err != nil {
+		slog.Warn("secrets: unreadable profile-file manifest; ignoring", "err", err)
+		return out
+	}
+	for _, p := range paths {
+		out[p] = struct{}{}
+	}
+	return out
+}
+
+// saveManifest persists the current set of materialized paths (sorted for a
+// stable file), creating the state dir (owned by the session user) as needed.
+func (s *Store) saveManifest(set map[string]struct{}) error {
+	dir := filepath.Join(s.owner.Home, stateDirName)
+	if err := s.mkdirOwned(dir); err != nil {
+		return err
+	}
+	paths := make([]string, 0, len(set))
+	for p := range set {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	b, err := json.Marshal(paths)
+	if err != nil {
+		return fmt.Errorf("marshal profile-file manifest: %w", err)
+	}
+	path := s.manifestPath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return fmt.Errorf("write profile-file manifest: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename profile-file manifest: %w", err)
+	}
+	if err := s.owner.Chown(path); err != nil {
+		slog.Warn("secrets: chown profile-file manifest failed", "err", err)
 	}
 	return nil
 }

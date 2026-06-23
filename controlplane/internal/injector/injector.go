@@ -110,6 +110,7 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 	// provider's env, so a standalone entry would reach the terminal but not an
 	// agent-launched `claude`.
 	byProvider := map[string]map[string]string{}
+	var files []guestwire.FileDef
 	if i.profile != nil {
 		envItems, err := i.profile.EnvValues(ctx, userID)
 		if err != nil {
@@ -126,9 +127,18 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 			}
 			env[it.Target] = it.Value
 		}
+		// File-kind items (Phase 3): materialized under $HOME by the guest. Pushed
+		// alongside providers in the same replace-all request.
+		fileItems, err := i.profile.FileValues(ctx, userID)
+		if err != nil {
+			return guestwire.SecretsRequest{}, fmt.Errorf("profile files: %w", err)
+		}
+		for _, f := range fileItems {
+			files = append(files, guestwire.FileDef{Path: f.Path, Mode: uint32(f.Mode), Content: f.Value})
+		}
 	}
 
-	out := guestwire.SecretsRequest{Providers: map[string]guestwire.ProviderDef{}}
+	out := guestwire.SecretsRequest{Providers: map[string]guestwire.ProviderDef{}, Files: files}
 	for _, p := range provs {
 		if !p.Enabled {
 			continue

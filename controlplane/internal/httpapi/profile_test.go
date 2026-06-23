@@ -316,6 +316,98 @@ func TestProfilePutUnknownItem404(t *testing.T) {
 	}
 }
 
+// TestProfileFileItemLifecycle exercises a generic file-kind item (Phase 3): an
+// unregistered key with kind:"file" + path + mode stores the content in OpenBao
+// and path/mode/kind in Postgres; the list surfaces them (never the content);
+// delete removes both. The content never appears in Postgres or any response.
+func TestProfileFileItemLifecycle(t *testing.T) {
+	fx := setupProfile(t)
+	const content = "[user]\n\temail = ada@example.com\n"
+	const path = "/api/profile/items/gitconfig"
+
+	r1 := fx.do(t, http.MethodPut, path, `{"kind":"file","path":".gitconfig","mode":420,"value":`+jsonString(content)+`}`, true)
+	r1.Body.Close()
+	if r1.StatusCode != http.StatusNoContent {
+		t.Fatalf("put file item: status %d, want 204", r1.StatusCode)
+	}
+
+	// Content in OpenBao under the profile path.
+	stored, err := fx.sec.Get(secrets.UserProfilePath(fx.uid(), "gitconfig"))
+	if err != nil || stored["value"] != content {
+		t.Fatalf("file content not stored exactly: %v err=%v", stored, err)
+	}
+
+	// Metadata row carries kind=file, target=path, mode — never the content.
+	var kind, target string
+	var mode *int32
+	if err := fx.pool.QueryRow(context.Background(),
+		"SELECT kind, target, mode FROM profile_items WHERE user_id=$1 AND key=$2",
+		fx.userID, "gitconfig").Scan(&kind, &target, &mode); err != nil {
+		t.Fatalf("metadata row: %v", err)
+	}
+	if kind != "file" || target != ".gitconfig" || mode == nil || *mode != 0o644 {
+		t.Fatalf("metadata wrong: kind=%q target=%q mode=%v", kind, target, mode)
+	}
+
+	// List exposes path+mode, not the content.
+	r2 := fx.do(t, http.MethodGet, "/api/profile/items", "", false)
+	body, _ := io.ReadAll(r2.Body)
+	r2.Body.Close()
+	if bytes.Contains(body, []byte("ada@example.com")) {
+		t.Fatalf("list leaked file content: %s", body)
+	}
+	var items []map[string]any
+	_ = json.Unmarshal(body, &items)
+	if len(items) != 1 || items[0]["kind"] != "file" || items[0]["target"] != ".gitconfig" || items[0]["mode"] != "0644" {
+		t.Fatalf("file item view = %v", items)
+	}
+
+	// Delete removes it.
+	r3 := fx.do(t, http.MethodDelete, path, "", true)
+	r3.Body.Close()
+	if r3.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: status %d, want 204", r3.StatusCode)
+	}
+	if _, err := fx.sec.Get(secrets.UserProfilePath(fx.uid(), "gitconfig")); err == nil {
+		t.Fatal("content should be gone after delete")
+	}
+}
+
+// TestProfileFileItemRejectsEscape proves a $HOME-escaping path is rejected (422)
+// and an unregistered key without kind:"file" is a 404 (not a silent generic item).
+func TestProfileFileItemRejectsEscape(t *testing.T) {
+	fx := setupProfile(t)
+	esc := fx.do(t, http.MethodPut, "/api/profile/items/evil",
+		`{"kind":"file","path":"../../etc/cron.d/x","value":"x"}`, true)
+	esc.Body.Close()
+	if esc.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("escaping path: status %d, want 422", esc.StatusCode)
+	}
+	noKind := fx.do(t, http.MethodPut, "/api/profile/items/whatever", `{"value":"x"}`, true)
+	noKind.Body.Close()
+	if noKind.StatusCode != http.StatusNotFound {
+		t.Fatalf("unregistered non-file: status %d, want 404", noKind.StatusCode)
+	}
+}
+
+// TestProfileDeleteUnknown404 proves deleting an item the user does not have is a
+// 404 (the row-count gate), not a false 204.
+func TestProfileDeleteUnknown404(t *testing.T) {
+	fx := setupProfile(t)
+	resp := fx.do(t, http.MethodDelete, claudeItemPath, "", true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete absent item: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// jsonString renders s as a JSON string literal (so embedded newlines/quotes are
+// escaped) for building request bodies in tests.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 func TestProfilePutEmptyValue422(t *testing.T) {
 	fx := setupProfile(t)
 	resp := fx.do(t, http.MethodPut, claudeItemPath, `{"value":"   "}`, true)

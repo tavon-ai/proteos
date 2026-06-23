@@ -17,6 +17,12 @@ import (
 	"github.com/tavon/proteos/guestagent/internal/term"
 )
 
+// replaceProviders wraps a provider-only push in a SecretsRequest (Phase 3
+// generalized the guest's Replace to take file-kind items too).
+func replaceProviders(sec *secrets.Store, providers map[string]guestwire.ProviderDef) error {
+	return sec.Replace(guestwire.SecretsRequest{Providers: providers})
+}
+
 // newAgentServer starts a server wired with a real secrets store over a temp env
 // dir, plus a stub "claude" provider whose launch command is a script that
 // echoes its ANTHROPIC_API_KEY then stays alive (so the attach catches output).
@@ -35,7 +41,7 @@ func newAgentServer(t *testing.T, key string) (*httptest.Server, *secrets.Store)
 		t.Fatal(err)
 	}
 	if key != "" {
-		if err := sec.Replace(map[string]guestwire.ProviderDef{
+		if err := replaceProviders(sec, map[string]guestwire.ProviderDef{
 			"claude": {Command: script, Env: map[string]string{"ANTHROPIC_API_KEY": key}},
 		}); err != nil {
 			t.Fatal(err)
@@ -90,7 +96,7 @@ func TestAgentRepushReplacesDefinition(t *testing.T) {
 	// Re-push with a new key, reusing the same stub script path from the first
 	// injection so the command still exists.
 	def, _ := sec.Get("claude")
-	if err := sec.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(sec, map[string]guestwire.ProviderDef{
 		"claude": {Command: def.Command, Env: map[string]string{"ANTHROPIC_API_KEY": "sk-new"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -123,7 +129,7 @@ func TestAgentSessionDegradedClosesSetupFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sec.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(sec, map[string]guestwire.ProviderDef{
 		"openai": {Command: "/bin/sh", SetupCommand: "exit 3", Env: map[string]string{"OPENAI_API_KEY": "sk"}},
 	}); err != nil {
 		t.Fatal(err)

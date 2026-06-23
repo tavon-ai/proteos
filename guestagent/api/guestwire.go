@@ -631,10 +631,26 @@ type ProviderDef struct {
 	SetupCommand string `json:"setup_command,omitempty"`
 }
 
+// FileDef is one file-kind profile item to materialize under the session user's
+// $HOME (portable user profile, Phase 3). Path is $HOME-relative and must not
+// escape $HOME (the guest rejects absolute paths and any ".." escape). Mode is
+// the octal file permission (e.g. 0600); 0 ⇒ the guest's default (0600).
+// Content is the file body and is SENSITIVE (e.g. a private SSH key) — it must
+// never be logged.
+type FileDef struct {
+	Path    string `json:"path"`
+	Mode    uint32 `json:"mode,omitempty"`
+	Content string `json:"content"`
+}
+
 // SecretsRequest is the body of PUT /secrets: the full set of provider
-// definitions to install, replacing any previously injected set.
+// definitions to install and files to materialize, replacing any previously
+// injected set (replace-all — an omitted provider/file is removed on the guest).
 type SecretsRequest struct {
 	Providers map[string]ProviderDef `json:"providers"`
+	// Files are $HOME-relative file-kind profile items. Omitted ⇒ none (the guest
+	// removes any it previously wrote). Contents are sensitive — never logged.
+	Files []FileDef `json:"files,omitempty"`
 }
 
 // ProviderKeyFromSession returns the provider key for an agent session name, and

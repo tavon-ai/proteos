@@ -259,6 +259,43 @@ func TestInjectorMergesClaudeProfileToken(t *testing.T) {
 	}
 }
 
+// TestInjectorEmitsFileItems proves a file-kind profile item is composed into the
+// pushed SecretsRequest.Files with its $HOME-relative path, mode, and content, so
+// the guest materializes it. Env-kind items are unaffected.
+func TestInjectorEmitsFileItems(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 104, Login: "fileitem"})
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	rec := audit.NewRecorder(q)
+	prof := profile.NewStore(q, sec, rec)
+	def, err := profile.FileDef("gitconfig", ".gitconfig", 0o640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prof.Set(ctx, uid, def, "[user]\n\tname = Ada\n"); err != nil {
+		t.Fatalf("set file item: %v", err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	if err := inj.Inject(ctx, uid, "m-file"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	if len(guest.last.Files) != 1 {
+		t.Fatalf("pushed files = %v, want one", guest.last.Files)
+	}
+	f := guest.last.Files[0]
+	if f.Path != ".gitconfig" || f.Mode != 0o640 || f.Content != "[user]\n\tname = Ada\n" {
+		t.Fatalf("file def wrong: %+v", f)
+	}
+}
+
 // TestInjectorPrefersStoredApiKeyOverProfileToken proves the precedence guard:
 // when a user has BOTH a stored claude API key and a profile OAuth token, the
 // injector emits the API key (ANTHROPIC_API_KEY outranks the subscription token)

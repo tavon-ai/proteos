@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +26,7 @@ type profileItemView struct {
 	Key            string  `json:"key"`
 	Kind           string  `json:"kind"`
 	Target         string  `json:"target"`
+	Mode           *string `json:"mode,omitempty"`
 	Connected      bool    `json:"connected"`
 	NeedsReconnect bool    `json:"needs_reconnect"`
 	CreatedAt      string  `json:"created_at"`
@@ -60,43 +63,70 @@ func (s *Server) handleListProfileItems(w http.ResponseWriter, r *http.Request) 
 			v.ExpiresAt = &s
 			v.NeedsReconnect = it.ExpiresAt.Before(now)
 		}
+		if it.Kind == profile.KindFile {
+			m := "0" + strconv.FormatUint(uint64(it.Mode.Perm()), 8) // octal, e.g. "0600"
+			v.Mode = &m
+		}
 		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // setProfileItemRequest is the write-only body of PUT /api/profile/items/{key}.
-// Only the value is client-supplied; the item's kind/target come from the
-// server-side Def registry keyed by the path. The value is stored in OpenBao and
-// never echoed.
+// For a registered key only `value` is read — kind/target are fixed server-side.
+// For an unregistered key the request describes a generic file-kind item: `kind`
+// must be "file" and `path` (+ optional octal `mode`) give its $HOME-relative
+// destination. The value is stored in OpenBao and never echoed.
 type setProfileItemRequest struct {
 	Value string `json:"value"`
+	Kind  string `json:"kind,omitempty"`
+	Path  string `json:"path,omitempty"`
+	Mode  uint32 `json:"mode,omitempty"`
 }
 
-// handleSetProfileItem stores (never echoes) a profile item's value. The path
-// key must be a registered item type (404 otherwise), which fixes the item's
-// kind/target so a client cannot target an arbitrary destination.
+// handleSetProfileItem stores (never echoes) a profile item's value. A registered
+// key uses its server-fixed Def (env or file). An unregistered key is accepted
+// only as a generic file-kind item (kind:"file" + a $HOME-relative path), which
+// the guest materializes under the user's home — never an arbitrary location.
 func (s *Server) handleSetProfileItem(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	def, ok := profile.Lookup(r.PathValue("key"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "unknown_item")
-		return
-	}
+	key := r.PathValue("key")
 
 	var req setProfileItemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	value := strings.TrimSpace(req.Value)
-	if value == "" {
+
+	def, ok := profile.Lookup(key)
+	if !ok {
+		// Unregistered key: the only client-defined item type is a file (generic
+		// env items are not supported — they would be login-shell-only).
+		if req.Kind != string(profile.KindFile) {
+			writeError(w, http.StatusNotFound, "unknown_item")
+			return
+		}
+		fdef, err := profile.FileDef(key, req.Path, os.FileMode(req.Mode))
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_path")
+			return
+		}
+		def = fdef
+	}
+
+	if strings.TrimSpace(req.Value) == "" {
 		writeError(w, http.StatusUnprocessableEntity, "missing_value")
 		return
+	}
+	// Trim env/token values (a pasted token often carries a trailing newline);
+	// preserve file content exactly (an SSH key's formatting/newlines are load-bearing).
+	value := req.Value
+	if def.Kind == profile.KindEnv {
+		value = strings.TrimSpace(req.Value)
 	}
 	if len(value) > profile.MaxValueLen {
 		writeError(w, http.StatusUnprocessableEntity, "value_too_long")
@@ -122,17 +152,20 @@ func (s *Server) handleDeleteProfileItem(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if _, ok := profile.Lookup(r.PathValue("key")); !ok {
-		writeError(w, http.StatusNotFound, "unknown_item")
-		return
-	}
 	uid := uuidString(user.ID)
-	if err := s.Profile.Delete(r.Context(), uid, r.PathValue("key")); err != nil {
+	// No registry gate: a generic file item isn't registered but is still deletable.
+	// 404 only when the user actually has no such item.
+	existed, err := s.Profile.Delete(r.Context(), uid, r.PathValue("key"))
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
+	if !existed {
+		writeError(w, http.StatusNotFound, "unknown_item")
+		return
+	}
 	// Re-inject (replace-all) to running machines so the now-removed item drops
-	// from their env on the next push, not only on their next boot.
+	// from their env/files on the next push, not only on their next boot.
 	s.reinjectRunningMachines(r.Context(), uid)
 	w.WriteHeader(http.StatusNoContent)
 }

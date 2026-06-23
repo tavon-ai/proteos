@@ -9,6 +9,12 @@ import (
 	"github.com/tavon/proteos/guestagent/internal/runas"
 )
 
+// replaceProviders is a test shim for the common provider-only push, wrapping the
+// providers map in a SecretsRequest (Phase 3 generalized Replace to take files too).
+func replaceProviders(s *Store, providers map[string]guestwire.ProviderDef) error {
+	return s.Replace(guestwire.SecretsRequest{Providers: providers})
+}
+
 func TestReplaceWritesEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir, runas.Root())
@@ -16,7 +22,7 @@ func TestReplaceWritesEnvFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = s.Replace(map[string]guestwire.ProviderDef{
+	err = replaceProviders(s, map[string]guestwire.ProviderDef{
 		"claude": {Command: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "sk-abc"}},
 	})
 	if err != nil {
@@ -52,7 +58,7 @@ func TestReplaceIsReplaceAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"claude": {Command: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "v1"}},
 		"gemini": {Command: "gemini", Env: map[string]string{"GEMINI_API_KEY": "g1"}},
 	}); err != nil {
@@ -60,7 +66,7 @@ func TestReplaceIsReplaceAll(t *testing.T) {
 	}
 
 	// A second push that drops gemini must delete gemini.env and update claude.
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"claude": {Command: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "v2"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -81,7 +87,7 @@ func TestReplaceIsReplaceAll(t *testing.T) {
 func TestSingleQuoteEscaping(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := New(dir, runas.Root())
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"x": {Command: "x", Env: map[string]string{"K": "a'b"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -108,7 +114,7 @@ func TestSetupCommandRunsAfterEnvFile(t *testing.T) {
 	setup := "test -f " + filepath.Join(dir, "openai.env") +
 		" && printf '%s' \"$OPENAI_API_KEY\" > " + marker
 
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"openai": {Command: "codex", SetupCommand: setup, Env: map[string]string{"OPENAI_API_KEY": "sk-codex-1"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -132,7 +138,7 @@ func TestSetupCommandRunsAfterEnvFile(t *testing.T) {
 func TestSetupFailureMarksDegraded(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := New(dir, runas.Root())
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"openai": {Command: "codex", SetupCommand: "exit 7", Env: map[string]string{"OPENAI_API_KEY": "sk"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -149,7 +155,7 @@ func TestSuccessfulRepushClearsDegraded(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := New(dir, runas.Root())
 
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"openai": {Command: "codex", SetupCommand: "exit 1", Env: map[string]string{"OPENAI_API_KEY": "bad"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -159,7 +165,7 @@ func TestSuccessfulRepushClearsDegraded(t *testing.T) {
 		t.Fatal("expected degraded after failing setup")
 	}
 
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"openai": {Command: "codex", SetupCommand: "true", Env: map[string]string{"OPENAI_API_KEY": "good"}},
 	}); err != nil {
 		t.Fatal(err)
@@ -175,7 +181,7 @@ func TestSuccessfulRepushClearsDegraded(t *testing.T) {
 func TestProvidersWithoutSetupAreNeverDegraded(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := New(dir, runas.Root())
-	if err := s.Replace(map[string]guestwire.ProviderDef{
+	if err := replaceProviders(s, map[string]guestwire.ProviderDef{
 		"claude": {Command: "claude", Env: map[string]string{"ANTHROPIC_API_KEY": "sk"}},
 	}); err != nil {
 		t.Fatal(err)

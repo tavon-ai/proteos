@@ -335,14 +335,16 @@ RETURNING id;
 
 -- name: UpsertProfileItem :one
 -- Set/replace a portable-profile item's metadata (the value lives only in
--- OpenBao). kind/target come from the server-side Def registry; updated_at is
--- bumped on every write so the UI can show "last updated".
-INSERT INTO profile_items (user_id, key, kind, target, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+-- OpenBao). kind/target/mode come from the server-side Def (or, for a generic
+-- file item, the request); mode is NULL for env-kind items. updated_at is bumped
+-- on every write so the UI can show "last updated".
+INSERT INTO profile_items (user_id, key, kind, target, expires_at, mode)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_id, key) DO UPDATE
     SET kind = EXCLUDED.kind,
         target = EXCLUDED.target,
         expires_at = EXCLUDED.expires_at,
+        mode = EXCLUDED.mode,
         updated_at = now()
 RETURNING *;
 
@@ -350,6 +352,8 @@ RETURNING *;
 -- A user's profile items (metadata only — never the secret value), keyed order.
 SELECT * FROM profile_items WHERE user_id = $1 ORDER BY key;
 
--- name: DeleteProfileItem :exec
--- Remove a profile item's metadata row. Deleting a missing item is a no-op.
+-- name: DeleteProfileItem :execrows
+-- Remove a profile item's metadata row, returning the number of rows deleted (0
+-- ⇒ the user had no such item, which the API maps to 404). Deleting a missing
+-- item is otherwise a harmless no-op.
 DELETE FROM profile_items WHERE user_id = $1 AND key = $2;

@@ -62,8 +62,9 @@ type Persister interface {
 // that run without injection, in which case PUT /secrets reports 503 and agent
 // sessions close with CloseProviderUnavailable.
 type SecretStore interface {
-	// Replace installs providers as the complete injected set.
-	Replace(providers map[string]guestwire.ProviderDef) error
+	// Replace installs the pushed set (providers + file-kind items) as the
+	// complete injected state (replace-all).
+	Replace(req guestwire.SecretsRequest) error
 	// Get returns the injected definition for a provider key.
 	Get(key string) (guestwire.ProviderDef, bool)
 	// EnvList returns a provider's environment as KEY=VALUE pairs.
@@ -139,7 +140,7 @@ func (s *Server) handleSecrets(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if err := s.sec.Replace(req.Providers); err != nil {
+	if err := s.sec.Replace(req); err != nil {
 		slog.Error("install secrets failed", "err", err)
 		http.Error(w, "install failed", http.StatusInternalServerError)
 		return

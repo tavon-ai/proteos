@@ -245,7 +245,37 @@ Wrap Phase 1's backend in a usable, safe product surface and close the lifecycle
 
 ---
 
-## Phase 3: File-kind profile items (the guest materializer)
+## Phase 3: File-kind profile items (the guest materializer) — **landed (CP + guest green)**
+
+> Implemented 2026-06-23. The `file` kind is proven end-to-end with a generic dotfile
+> (gitconfig/ssh typing is Phase 4). CP + guest build/vet/tests green. What shipped:
+>
+> - **Wire**: `SecretsRequest` gained `Files []FileDef{Path,Mode,Content}` (Content
+>   sensitive, never logged). The guest's `Replace` now takes the whole `SecretsRequest`
+>   (was `map[...]ProviderDef`).
+> - **Guest materializer** (`guestagent/internal/secrets`): writes each file under the
+>   session user's `$HOME` at the requested mode, owned by the session user (parent dirs
+>   created 0700 + chowned — the `~/.ssh` shape). Path safety: absolute/`..`-escaping paths
+>   rejected. Replace-all drop via a **persistent manifest** (`$HOME/.proteos/profile-files.json`)
+>   so a file deleted while the machine was off is still removed on the next boot push. A
+>   user with no file items never touches `$HOME` (fast path). File content is written
+>   exactly (not trimmed) — SSH-key formatting is load-bearing.
+> - **CP**: migration `000012` adds a nullable `mode` column. `PUT /api/profile/items/{key}`
+>   accepts a generic file item for an unregistered key (`kind:"file"` + `$HOME`-relative
+>   `path` + optional octal `mode`); registered keys stay server-fixed. `DELETE` no longer
+>   gates on the registry (generic items are deletable) and 404s only when the user has no
+>   such item (`:execrows`). `injector.compose()` emits `Files` from `profile.FileValues`.
+>   List view exposes `mode` (octal string) for file items.
+> - **Tests**: guest path/mode/ownership, replace-all drop, cross-reboot drop via manifest,
+>   path-escape rejection, env+file coexistence; CP injector emits Files; API file-item
+>   lifecycle (store→list→delete, content never in PG/response), escape→422, non-file
+>   unregistered→404, delete-absent→404.
+>
+> **Operator-pending:** on-VM smoke that a file-kind item lands at its `$HOME` path/mode on
+> a freshly created machine.
+
+### (original plan below)
+
 
 **User stories**: As a user, a file I register in my profile appears at the right path in my
 home directory on every machine, with the right permissions — proving the `file` kind
