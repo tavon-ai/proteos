@@ -13,6 +13,10 @@
   become: true
   roles:
     - common       # apt packages (incl. vim), /dev/kvm preflight, IP forwarding, dirs
+    # optional (off by default): join the host to a tailnet. Re-run just this on a
+    # provisioned node with `--tags tailscale`.
+    - role: tailscale
+      tags: [tailscale]
     - go           # pinned Go toolchain (to build the node-agent binary) + PATH
     - taskfile     # pinned go-task `task` CLI on PATH
     - firecracker  # pinned firecracker + jailer binaries, kernel, ext4 rootfs

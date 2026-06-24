@@ -1,0 +1,90 @@
+---
+# Optional: join the KVM host to a Tailscale tailnet. Off by default. When on, the
+# app stack can reach the node-agent over the tailnet (a stable 100.x address that
+# survives the host's LAN IP changing), so PROTEOS_NODE_ADDR in the controller can
+# point at the tailscale IP rather than a brittle inventory IP. The tailscale IP is
+# exported in the controller artifact the node_agent role writes (node-<host>.env).
+#
+# Enable with proteos_tailscale_enabled=true and supply an auth key
+# (proteos_tailscale_authkey) — generate a reusable/ephemeral key in the admin
+# console and pass it via ansible-vault or --extra-vars, never commit it.
+- name: Tailscale — block (enabled only)
+  when: proteos_tailscale_enabled | bool
+  block:
+    - name: Tailscale — require an auth key
+      ansible.builtin.assert:
+        that:
+          - proteos_tailscale_authkey is defined
+          - proteos_tailscale_authkey | length > 0
+        fail_msg: >-
+          proteos_tailscale_enabled is true but proteos_tailscale_authkey is empty.
+          Generate a key at https://login.tailscale.com/admin/settings/keys and pass
+          it via ansible-vault or --extra-vars "proteos_tailscale_authkey=tskey-...".
+
+    # Official apt repo, keyed on the host's Ubuntu codename. get_url is idempotent
+    # (skips when the key/list already match), so re-runs are a no-op.
+    - name: Tailscale — add the package signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Tailscale — add the apt repository
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.tailscale-keyring.list"
+        dest: /etc/apt/sources.list.d/tailscale.list
+        owner: root
+        group: root
+        mode: "0644"
+      register: ts_repo
+
+    - name: Tailscale — install the package
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: true
+
+    - name: Tailscale — enable and start tailscaled
+      ansible.builtin.systemd:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    # Idempotency: only run `tailscale up` when the backend isn't already Running,
+    # so re-runs don't churn the connection or report a spurious change.
+    - name: Tailscale — read current backend state
+      ansible.builtin.command: tailscale status --json
+      register: ts_status
+      changed_when: false
+      failed_when: false
+
+    - name: Tailscale — bring the node onto the tailnet (authenticate)
+      ansible.builtin.command:
+        argv: >-
+          {{ ['tailscale', 'up',
+              '--authkey', proteos_tailscale_authkey,
+              '--hostname', (proteos_tailscale_hostname | default(inventory_hostname, true))]
+             + (['--ssh'] if (proteos_tailscale_ssh | bool) else [])
+             + (proteos_tailscale_up_args | default([], true)) }}
+      when: >-
+        ts_status.rc != 0
+        or (ts_status.stdout | from_json).BackendState | default('') != 'Running'
+      # tailscale up has no useful rc-based change signal; we gate on state above.
+      changed_when: true
+
+    # Surface the tailnet IPv4 so the node_agent role can advertise it to the
+    # control plane (and the run summary can print it).
+    - name: Tailscale — read the tailnet IPv4
+      ansible.builtin.command: tailscale ip -4
+      register: ts_ip
+      changed_when: false
+      failed_when: false
+
+    - name: Tailscale — record the tailnet IPv4 as a fact
+      ansible.builtin.set_fact:
+        proteos_tailscale_ip: "{{ ts_ip.stdout_lines[0] | trim }}"
+      when:
+        - ts_ip.rc == 0
+        - ts_ip.stdout_lines | length > 0

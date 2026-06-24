@@ -2,6 +2,7 @@
 # Guard against shipping the placeholder token to a host (it must match the app
 # stack, and a real deploy with CHANGE_ME would silently 401 every agent call).
 - name: Assert a real agent token was provided
+  tags: [outputs]
   ansible.builtin.assert:
     that:
       - proteos_agent_token is defined
@@ -244,6 +245,7 @@
 # Read every template's manifest back to learn its baked image name. Each
 # manifest-<id>.lock has a line: "image          = proteos-rootfs-<id>-<base>-ga<sha>.ext4".
 - name: Read each template's baked rootfs manifest
+  tags: [outputs]
   ansible.builtin.slurp:
     src: "{{ proteos_images_dir }}/manifest-{{ item.id }}.lock"
   loop: "{{ proteos_templates }}"
@@ -254,6 +256,7 @@
 # Map template id → baked image name (the rootfs_ref). The slurp loop above
 # preserves proteos_templates order, so ids and parsed images zip 1:1.
 - name: Build the template id → image map
+  tags: [outputs]
   ansible.builtin.set_fact:
     proteos_template_images: >-
       {{ dict(proteos_templates | map(attribute='id') | list
@@ -265,6 +268,7 @@
 # PROTEOS_ROOTFS_REF (node-agent env + the single-image acceptance gates / smoke
 # boot below) tracks the PRIMARY template's image.
 - name: Pin PROTEOS_ROOTFS_REF to the primary template image
+  tags: [outputs]
   ansible.builtin.set_fact:
     proteos_rootfs_ref: "{{ proteos_template_images[proteos_primary_template] }}"
 
@@ -282,12 +286,14 @@
 # for the app-stack deploy to install. kernel_ref is omitted so the control plane
 # fills it from its own PROTEOS_KERNEL_REF (keeps the kernel name on one host).
 - name: Render the control-plane template catalog (proteos-templates.json)
+  tags: [outputs]
   ansible.builtin.template:
     src: proteos-templates.json.j2
     dest: "{{ proteos_images_dir }}/proteos-templates.json"
     mode: "0644"
 
 - name: Ensure the controller artifacts dir exists
+  tags: [outputs]
   ansible.builtin.file:
     path: "{{ proteos_templates_fetch_dir }}"
     state: directory
@@ -297,10 +303,34 @@
   run_once: true
 
 - name: Fetch the template catalog to the controller for the app-stack deploy
+  tags: [outputs]
   ansible.builtin.fetch:
     src: "{{ proteos_images_dir }}/proteos-templates.json"
     dest: "{{ proteos_templates_fetch_dir }}/proteos-templates.json"
     flat: true
+
+# Bundle the controlplane resources you'd otherwise SSH in and grep for
+# (PROTEOS_ROOTFS_REF + PROTEOS_AGENT_TOKEN + the node's reachable address) into a
+# single file on the controller, next to the template catalog. Rendered locally so
+# the token never lands on disk anywhere but the controller (0600).
+- name: Write the controlplane resource file to the controller
+  tags: [outputs]
+  ansible.builtin.template:
+    src: node-controlplane.env.j2
+    dest: "{{ proteos_templates_fetch_dir }}/node-{{ inventory_hostname }}.env"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+
+- name: Show where the controlplane resources landed
+  tags: [outputs]
+  ansible.builtin.debug:
+    msg:
+      - "Node {{ inventory_hostname }} ready. Controlplane resources written to:"
+      - "  {{ proteos_templates_fetch_dir }}/node-{{ inventory_hostname }}.env  (PROTEOS_ROOTFS_REF, PROTEOS_AGENT_TOKEN, PROTEOS_NODE_ADDR — secret, 0600)"
+      - "  {{ proteos_templates_fetch_dir }}/proteos-templates.json            (PROTEOS_TEMPLATES_FILE)"
+      - "PROTEOS_ROOTFS_REF = {{ proteos_rootfs_ref }}"
+      - "PROTEOS_NODE_ADDR  = {{ (proteos_tailscale_ip | default(ansible_host, true)) }}:{{ proteos_agent_port }}{{ ' (tailnet)' if proteos_tailscale_ip is defined else '' }}"
 
 # Phase 7 gate: verify the baked image actually contains git + the credential
 # helper subcommand and bakes NO token/gitconfig material. Loop-mount only (no VM

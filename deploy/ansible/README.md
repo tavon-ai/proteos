@@ -13,6 +13,7 @@ web) — that runs on a separate VM, see `deploy/app-stack/`.
 | Role          | Actions |
 | ------------- | ------- |
 | `common`      | apt packages, assert `/dev/kvm`, persistent `net.ipv4.ip_forward=1`, create `/var/lib/proteos/{images,agent,volumes}` + `/srv/jailer` + `/etc/proteos` |
+| `tailscale`   | optional (off by default): add the apt repo, install `tailscale`, `tailscale up` with the supplied auth key; records the tailnet IP for the controller artifact |
 | `go`          | install pinned Go (`go.mod` needs 1.26.4) from the official tarball |
 | `firecracker` | install pinned firecracker + jailer to `/usr/local/bin`, download the pinned CI kernel, build the ext4 rootfs with a generated SSH key |
 | `node_agent`  | sync source to `/opt/proteos/src`, build the binary, bake the guest-agent rootfs, **run the KVM acceptance gate**, render `/etc/proteos/node-agent.env`, install + enable the systemd unit, optional port firewall |
@@ -58,6 +59,54 @@ ansible-playbook -i inventory.ini site.yml --ask-vault-pass
 Useful flags: `--check --diff` (dry run), `--tags`/`--start-at-task`,
 `-l fc-node-1` (limit to one host).
 
+## Outputs (controller artifacts)
+
+After a run, the controlplane resources you'd otherwise SSH in and grep for are
+written to `{{ proteos_templates_fetch_dir }}` (default `artifacts/`, gitignored)
+— no more `ssh host sudo cat /etc/proteos/node-agent.env | grep ...`:
+
+| File | Contents |
+| ---- | -------- |
+| `artifacts/node-<host>.env` | `PROTEOS_ROOTFS_REF`, `PROTEOS_AGENT_TOKEN`, `PROTEOS_KERNEL_REF`, `PROTEOS_NODE_ADDR` (the tailnet IP when Tailscale is on, else the inventory IP). **Holds the bearer token — mode 0600, never committed.** Source it or read the values into the control plane. |
+| `artifacts/proteos-templates.json` | the control plane's `PROTEOS_TEMPLATES_FILE` (template catalog with baked image names). |
+
+The final play also prints a `debug` summary with the file paths,
+`PROTEOS_ROOTFS_REF`, and the node address.
+
+Regenerate **just these artifacts** on an already-provisioned node (reads the
+baked manifests, re-renders the catalog + `node-<host>.env`, fetches them back) —
+no rebake, no service restart:
+
+```bash
+ansible-playbook -i inventory.ini site.yml --tags outputs \
+  --extra-vars "proteos_agent_token=..."   # token still needed for node-<host>.env
+```
+
+## Tailscale (optional)
+
+Off by default. Enable it to join the KVM host to a tailnet so the control plane
+can reach the node-agent over a stable `100.x` address (survives the host's LAN IP
+changing) — that address is exported as `PROTEOS_NODE_ADDR` in `node-<host>.env`.
+
+```bash
+# Generate a reusable/ephemeral auth key in the Tailscale admin console:
+#   https://login.tailscale.com/admin/settings/keys
+ansible-playbook -i inventory.ini site.yml \
+  --extra-vars "proteos_agent_token=$(openssl rand -hex 32) \
+                proteos_tailscale_enabled=true \
+                proteos_tailscale_authkey=tskey-auth-..."
+```
+
+Better: keep `proteos_tailscale_authkey` in vault alongside the agent token. The
+role adds the official apt repo, installs `tailscale`, and runs `tailscale up`
+(idempotent — skipped when the backend is already `Running`). Knobs in
+`group_vars/all.yml`: `proteos_tailscale_hostname` (default `inventory_hostname`),
+`proteos_tailscale_ssh` (adds `--ssh`), `proteos_tailscale_up_args`
+(e.g. `["--advertise-tags=tag:proteos"]`).
+
+Run **just the Tailscale step** on an already-provisioned node with
+`--tags tailscale` (still pass `proteos_tailscale_enabled=true` + the auth key).
+
 ## Key variables (`group_vars/all.yml`)
 
 | Variable | Default | Notes |
@@ -72,6 +121,8 @@ Useful flags: `--check --diff` (dry run), `--tags`/`--start-at-task`,
 | `proteos_restrict_agent_port` | `false` | set with `proteos_app_vm_ip` to lock `:9090` to the app VM |
 | `proteos_run_acceptance_test` | `true` | run the KVM integration suite as a green-light gate before the service starts; auto-skips a node already serving machines |
 | `proteos_agent_tls_cert`/`_key` | `""` | set both to serve the agent channel over TLS |
+| `proteos_tailscale_enabled` | `false` | join the host to a tailnet; requires `proteos_tailscale_authkey` |
+| `proteos_tailscale_authkey` | `""` | tailnet auth key (`tskey-...`); supply via vault/`--extra-vars` |
 
 ## Verify
 

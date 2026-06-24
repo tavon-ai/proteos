@@ -239,3 +239,19 @@ proteos_src_git_version: "main"
 proteos_restrict_agent_port: false
 proteos_app_vm_ip: ""
 proteos_agent_port: 9090
+
+# ============================================================================
+# Optional: join the KVM host to a Tailscale tailnet. Off by default. When on,
+# the control plane can reach the node-agent over a stable 100.x tailnet address
+# (which survives the host's LAN IP changing) instead of a brittle inventory IP.
+# The tailnet IPv4 is written into the controller artifact (artifacts/node-<host>.env)
+# as PROTEOS_NODE_ADDR for the app-stack deploy to consume.
+#
+# Supply a key from https://login.tailscale.com/admin/settings/keys (reusable or
+# ephemeral) via ansible-vault or --extra-vars — NEVER commit a real key.
+# ============================================================================
+proteos_tailscale_enabled: false
+proteos_tailscale_authkey: "" # tskey-... ; required when enabled (vault/--extra-vars)
+proteos_tailscale_hostname: "" # empty ⇒ inventory_hostname
+proteos_tailscale_ssh: false # add --ssh to `tailscale up` (Tailscale SSH)
+proteos_tailscale_up_args: [] # extra `tailscale up` args, e.g. ["--advertise-tags=tag:proteos"]
