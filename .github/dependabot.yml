@@ -1,0 +1,71 @@
+version: 2
+updates:
+  # Go modules — one entry per module in the go.work workspace.
+  - package-ecosystem: gomod
+    directory: /controlplane
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-controlplane:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /nodeagent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-nodeagent:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /guestagent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-guestagent:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /cli
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-cli:
+        patterns: ["*"]
+
+  # Web SPA (npm).
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      web-dev:
+        dependency-type: development
+      web-prod:
+        dependency-type: production
+
+  # GitHub Actions used in our workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]

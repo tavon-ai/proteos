@@ -1,0 +1,29 @@
+# Code owners for ProteOS. Owners are auto-requested for review on PRs that
+# touch matching paths. Order matters — the last matching pattern wins.
+#
+# NOTE (maintainers): replace @ipedrazas with the correct GitHub handle, or a
+# team like @tavon-ai/maintainers. An unrecognized owner is silently ignored by
+# GitHub, so verify this resolves on the public repo.
+
+# Default owner for everything in the repo.
+*                       @ipedrazas
+
+# Go services.
+/controlplane/          @ipedrazas
+/nodeagent/             @ipedrazas
+/guestagent/            @ipedrazas
+/cli/                   @ipedrazas
+
+# Web SPA.
+/web/                   @ipedrazas
+
+# Deploy, ops, and CI — change with care.
+/deploy/                @ipedrazas
+/.github/               @ipedrazas
+/Taskfile.yaml          @ipedrazas
+/DEPLOYMENT.md          @ipedrazas
+/RUNBOOK.md             @ipedrazas
+
+# Security-sensitive policy files.
+/SECURITY.md            @ipedrazas
+/.gitleaks.toml         @ipedrazas
