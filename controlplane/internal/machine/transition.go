@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // ErrInvalidTransition is returned when from→to is not in the allowed table.

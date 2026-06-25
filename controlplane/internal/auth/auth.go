@@ -12,10 +12,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/github"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/session"
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // Cookie names owned by the auth flow.

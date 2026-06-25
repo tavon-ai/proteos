@@ -10,7 +10,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon/proteos/controlplane/migrations"
+	"github.com/tavon-ai/proteos/controlplane/migrations"
 )
 
 // NewPool opens a pgx connection pool and verifies connectivity.

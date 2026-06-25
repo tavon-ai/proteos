@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // ErrInvalidToken is returned when a token does not map to a live PAT.

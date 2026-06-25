@@ -5,7 +5,7 @@
 // It is a separate Go module from the control plane: it carries the
 // Firecracker/netlink dependencies and a different (root-on-host) deploy story,
 // and it never imports the control plane. The only shared code is the wire
-// contract in github.com/tavon/proteos/nodeagent/api.
+// contract in github.com/tavon-ai/proteos/nodeagent/api.
 package main
 
 import (
@@ -18,11 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tavon/proteos/nodeagent/internal/config"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
-	"github.com/tavon/proteos/nodeagent/internal/driver/dev"
-	"github.com/tavon/proteos/nodeagent/internal/httpapi"
-	"github.com/tavon/proteos/nodeagent/internal/state"
+	"github.com/tavon-ai/proteos/nodeagent/internal/config"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver/dev"
+	"github.com/tavon-ai/proteos/nodeagent/internal/httpapi"
+	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 func main() {

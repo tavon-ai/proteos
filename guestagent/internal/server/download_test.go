@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // TestDownloadStreamsZip verifies the guest zips a project directory under the

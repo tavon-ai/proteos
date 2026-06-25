@@ -1,6 +1,6 @@
 [Unit]
 Description=ProteOS guest agent (PTY broker over vsock)
-Documentation=https://github.com/tavon/proteos
+Documentation=https://github.com/tavon-ai/proteos
 # Start once the vsock device and base filesystems are ready. The agent does
 # not need the network (it serves over vsock), so we do not order on it.
 After=local-fs.target

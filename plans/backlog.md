@@ -20,19 +20,19 @@
 [x] Maximise window when double click on the top window bar, like in other OS.
 [x] Right now, we can only use Claude Code using the cli (or via remote agent). Add pi.dev as a new remote provider.
 [ ] Take screenshots and use Claude Design to improve UI
-[ ] Improve ansible playbook, spit out/copy:
+[x] Improve ansible playbook, spit out/copy:
       - cat /etc/proteos/node-agent.env | grep "PROTEOS_ROOTFS_REF="
       - /var/lib/proteos/images/proteos-templates.json
       - tailscale install
 [x] Add "Download" button to project: we zip and download the project as it is.
 [x] Speed up tests?
-ok      github.com/tavon/proteos/controlplane/internal/auth     11.943s
-ok      github.com/tavon/proteos/controlplane/internal/github   7.244s
-ok      github.com/tavon/proteos/controlplane/internal/guestctl 8.032s
-ok      github.com/tavon/proteos/controlplane/internal/httpapi  140.349s
-ok      github.com/tavon/proteos/controlplane/internal/injector 7.313s
-ok      github.com/tavon/proteos/controlplane/internal/machine  27.772s
-ok      github.com/tavon/proteos/controlplane/internal/providers        2.587s
-ok      github.com/tavon/proteos/controlplane/internal/session  1.309s
-ok      github.com/tavon/proteos/controlplane/internal/store    7.324s
-ok      github.com/tavon/proteos/controlplane/internal/token    8.252s
+ok      github.com/tavon-ai/proteos/controlplane/internal/auth     11.943s
+ok      github.com/tavon-ai/proteos/controlplane/internal/github   7.244s
+ok      github.com/tavon-ai/proteos/controlplane/internal/guestctl 8.032s
+ok      github.com/tavon-ai/proteos/controlplane/internal/httpapi  140.349s
+ok      github.com/tavon-ai/proteos/controlplane/internal/injector 7.313s
+ok      github.com/tavon-ai/proteos/controlplane/internal/machine  27.772s
+ok      github.com/tavon-ai/proteos/controlplane/internal/providers        2.587s
+ok      github.com/tavon-ai/proteos/controlplane/internal/session  1.309s
+ok      github.com/tavon-ai/proteos/controlplane/internal/store    7.324s
+ok      github.com/tavon-ai/proteos/controlplane/internal/token    8.252s

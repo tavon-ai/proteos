@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon/proteos/nodeagent/api"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // TestGuestWebForwardCodeServer proves the Phase 8 web path end-to-end on a real

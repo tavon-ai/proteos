@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	api "github.com/tavon/proteos/nodeagent/api"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 )
 
 // guestCID is the vsock context id used for every VM (Phase 3 decision #3). The

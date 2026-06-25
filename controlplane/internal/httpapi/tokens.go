@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 )
 
 // createTokenRequest is the body of POST /api/tokens. ExpiresInDays == 0 mints a

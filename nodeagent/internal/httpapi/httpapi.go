@@ -13,8 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	api "github.com/tavon/proteos/nodeagent/api"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 )
 
 // Server wires the routes to a driver, holding the shared bearer token and the

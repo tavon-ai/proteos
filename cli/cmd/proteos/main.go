@@ -6,8 +6,8 @@ package main
 import (
 	"os"
 
-	"github.com/tavon/proteos/cli/internal/app"
-	"github.com/tavon/proteos/cli/internal/client"
+	"github.com/tavon-ai/proteos/cli/internal/app"
+	"github.com/tavon-ai/proteos/cli/internal/client"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".

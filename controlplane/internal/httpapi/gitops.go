@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"strings"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/github"
-	"github.com/tavon/proteos/controlplane/internal/guestctl"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // GitWorktree is the control-channel surface the worktree-review API needs (GR1):

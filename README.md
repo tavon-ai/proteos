@@ -106,3 +106,14 @@ Provider API keys (Claude, Gemini, OpenAI Codex) are no longer set via process
 environment. They are entered per-user in the desktop **Settings → AI providers**
 window, stored encrypted (OpenBao), and injected into the machine on demand. The
 GitHub connection is managed from the same Settings window.
+
+## 🤝 Contributing
+
+Contributions are welcome! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for dev
+setup, the checks your change must pass, and PR guidelines, and please review our
+**[Code of Conduct](CODE_OF_CONDUCT.md)**. For security issues, follow
+**[SECURITY.md](SECURITY.md)** — do not open a public issue.
+
+## 📄 License
+
+ProteOS is released under the [MIT License](LICENSE).

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // GR1 worktree-review surface: read a repo's status and unified diff over the

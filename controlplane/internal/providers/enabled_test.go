@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tavon/proteos/controlplane/internal/providers"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
+	"github.com/tavon-ai/proteos/controlplane/internal/providers"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
 )
 
 // TestSetEnabledReconciles proves SetEnabled enables exactly the listed providers

@@ -11,17 +11,17 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/auth"
-	"github.com/tavon/proteos/controlplane/internal/gateway"
-	"github.com/tavon/proteos/controlplane/internal/httpapi"
-	"github.com/tavon/proteos/controlplane/internal/injector"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/providers"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/session"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
+	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
+	"github.com/tavon-ai/proteos/controlplane/internal/injector"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/providers"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
 )
 
 // errDialer fails the guest tunnel dial with an ordinary error (unlike

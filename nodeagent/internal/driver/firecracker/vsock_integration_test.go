@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon/proteos/nodeagent/api"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // TestGuestVsockTerminal proves the Phase 3 vsock path end-to-end on a real

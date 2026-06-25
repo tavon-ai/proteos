@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // ErrUnknown is returned by Get when no provider has the given key.

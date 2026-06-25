@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tavon/proteos/controlplane/internal/profile"
+	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 )
 
 // GitConfigurer re-pushes git.configure to a user's running machines so a

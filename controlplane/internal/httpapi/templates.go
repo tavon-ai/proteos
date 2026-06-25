@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 )
 
 // TemplateView is one machine-template as exposed to the SPA. It deliberately

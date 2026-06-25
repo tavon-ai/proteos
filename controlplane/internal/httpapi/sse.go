@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // sseHeartbeat is how often we emit an SSE comment to keep proxies/clients from

@@ -11,10 +11,10 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/github"
-	"github.com/tavon/proteos/controlplane/internal/guestctl"
-	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 )
 
 // GitChannel is the control-channel surface the git API needs: ask whether a

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon/proteos/nodeagent/api"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
-	"github.com/tavon/proteos/nodeagent/internal/httpapi"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/httpapi"
 )
 
 // fakeGuestDriver is a Driver that reports a configurable state and dials a

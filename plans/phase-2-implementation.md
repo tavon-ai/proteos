@@ -105,7 +105,7 @@ MachineSummary: {id, state, guest_ip|null, kernel_ref, rootfs_ref,
 ```
 go.work                                   # use ./controlplane ./nodeagent
 nodeagent/
-  go.mod                                  # module github.com/tavon/proteos/nodeagent
+  go.mod                                  # module github.com/tavon-ai/proteos/nodeagent
   cmd/nodeagent/main.go
   api/                                    # package agentapi — wire types, imported by controlplane
   internal/

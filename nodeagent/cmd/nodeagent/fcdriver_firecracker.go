@@ -3,10 +3,10 @@
 package main
 
 import (
-	"github.com/tavon/proteos/nodeagent/internal/config"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
-	"github.com/tavon/proteos/nodeagent/internal/driver/firecracker"
-	"github.com/tavon/proteos/nodeagent/internal/state"
+	"github.com/tavon-ai/proteos/nodeagent/internal/config"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver/firecracker"
+	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 // newFirecrackerDriver wires the real linux-only Firecracker driver. Built only

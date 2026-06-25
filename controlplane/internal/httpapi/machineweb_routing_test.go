@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tavon/proteos/controlplane/internal/gateway"
+	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
 )
 
 const routeMachineID = "11111111-1111-1111-1111-111111111111"

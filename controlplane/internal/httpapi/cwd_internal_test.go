@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // stubProjects is a fake ProjectChannel for the cwd-validation matrix.

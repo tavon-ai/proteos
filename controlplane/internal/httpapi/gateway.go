@@ -6,11 +6,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
-	"github.com/tavon/proteos/controlplane/internal/gateway"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // handleGatewayTerminal authenticates (via requireAuth), resolves and authorizes

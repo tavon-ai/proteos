@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/tavon/proteos/cli/internal/client"
-	"github.com/tavon/proteos/cli/internal/config"
+	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/tavon-ai/proteos/cli/internal/config"
 )
 
 // Env carries the process I/O and build metadata into the command tree, so tests

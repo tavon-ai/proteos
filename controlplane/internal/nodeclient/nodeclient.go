@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	agentapi "github.com/tavon/proteos/nodeagent/api"
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // ErrUnknownMachine is returned when the agent reports 404 unknown_machine.

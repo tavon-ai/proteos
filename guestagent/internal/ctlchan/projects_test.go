@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	"github.com/tavon/proteos/guestagent/internal/runas"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/runas"
 )
 
 // gitInit creates a git repo at dir with one commit on branch main, an origin

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	api "github.com/tavon/proteos/nodeagent/api"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // Config is the fully-resolved node-agent configuration.

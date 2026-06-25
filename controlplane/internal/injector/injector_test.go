@@ -8,16 +8,16 @@ import (
 	"sync"
 	"testing"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/injector"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/profile"
-	"github.com/tavon/proteos/controlplane/internal/providers"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/injector"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/profile"
+	"github.com/tavon-ai/proteos/controlplane/internal/providers"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
 )
 
 // fakeGuest records the last PUT /secrets payload, standing in for the guest

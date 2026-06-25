@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tavon/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
 )
 
 func TestFileStorePutGetDelete(t *testing.T) {

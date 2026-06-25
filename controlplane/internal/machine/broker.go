@@ -3,7 +3,7 @@ package machine
 import (
 	"sync"
 
-	"github.com/tavon/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
 // Update is one published machine change: the post-commit machine row plus the

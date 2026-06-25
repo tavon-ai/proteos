@@ -9,7 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // guestHandshake carries the per-session parameters the gateway forwards to the

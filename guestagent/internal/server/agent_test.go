@@ -11,10 +11,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	"github.com/tavon/proteos/guestagent/internal/runas"
-	"github.com/tavon/proteos/guestagent/internal/secrets"
-	"github.com/tavon/proteos/guestagent/internal/term"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/runas"
+	"github.com/tavon-ai/proteos/guestagent/internal/secrets"
+	"github.com/tavon-ai/proteos/guestagent/internal/term"
 )
 
 // replaceProviders wraps a provider-only push in a SecretsRequest (Phase 3

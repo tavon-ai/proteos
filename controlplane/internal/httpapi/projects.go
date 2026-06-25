@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
-	"github.com/tavon/proteos/controlplane/internal/guestctl"
-	"github.com/tavon/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 )
 
 // ProjectChannel is the control-channel surface the projects/desktop API needs:

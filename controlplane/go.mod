@@ -1,4 +1,4 @@
-module github.com/tavon/proteos/controlplane
+module github.com/tavon-ai/proteos/controlplane
 
 go 1.26.4
 

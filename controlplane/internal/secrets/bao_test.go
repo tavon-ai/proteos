@@ -10,7 +10,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/tavon/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
 )
 
 // devRootToken is the fixed root token the OpenBao dev-mode server boots with.

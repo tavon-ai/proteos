@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/httpapi"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/providers"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/session"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/providers"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 func setupTasks(t *testing.T, machineState string, withKey bool) wtFixture {

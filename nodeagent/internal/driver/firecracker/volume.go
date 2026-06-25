@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tavon/proteos/nodeagent/internal/state"
+	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 // The machine volume (Phase 4 decision #1): one LUKS2 container file per machine

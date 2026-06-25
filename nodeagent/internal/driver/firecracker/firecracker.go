@@ -19,9 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	api "github.com/tavon/proteos/nodeagent/api"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
-	"github.com/tavon/proteos/nodeagent/internal/state"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 // stopGrace bounds how long a graceful SendCtrlAltDel is given before the VMM is

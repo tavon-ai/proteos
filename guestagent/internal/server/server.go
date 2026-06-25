@@ -34,8 +34,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	"github.com/tavon/proteos/guestagent/internal/term"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/term"
 )
 
 // pingInterval is how often each leg sends a WebSocket ping to keep the

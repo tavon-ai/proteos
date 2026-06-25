@@ -67,7 +67,7 @@ Bearer-auth path** in the controlplane, and a **new Go module + binary** for the
 Durable decisions that apply across all stages:
 
 - **New module, added to the workspace.** A new `./cli` module
-  (`github.com/tavon/proteos/cli`), binary at `cli/cmd/proteos`, added to `go.work`. Keeping
+  (`github.com/tavon-ai/proteos/cli`), binary at `cli/cmd/proteos`, added to `go.work`. Keeping
   it a separate module (not a package under `controlplane`) keeps the server's dependency
   graph clean and lets the CLI be built/released independently. The CLI does **not** import
   `controlplane/internal/*`; it owns small DTO structs mirroring the JSON.

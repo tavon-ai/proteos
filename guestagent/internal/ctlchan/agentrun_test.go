@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	"github.com/tavon/proteos/guestagent/internal/runas"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/runas"
 )
 
 func TestParseStreamJSON_Success(t *testing.T) {

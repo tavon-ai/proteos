@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/profile"
+	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 )
 
 // profileItemView is one row of GET /api/profile/items. It exposes only

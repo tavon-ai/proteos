@@ -6,8 +6,8 @@ import (
 	"syscall"
 	"testing"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	"github.com/tavon/proteos/guestagent/internal/runas"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/runas"
 )
 
 // sessionUser is a non-root identity rooted at a temp $HOME whose uid/gid are the

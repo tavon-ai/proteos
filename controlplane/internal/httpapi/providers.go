@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/audit"
-	"github.com/tavon/proteos/controlplane/internal/providers"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/providers"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
 )
 
 // secretFieldView is one declared input of a provider, rendered into

@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tavon/proteos/cli/internal/client"
+	"github.com/tavon-ai/proteos/cli/internal/client"
 )
 
 func runTask(env Env, args []string) int {

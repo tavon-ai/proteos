@@ -17,9 +17,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
 )
 
 // fakeTokenServer is an httptest stand-in for GitHub's token endpoint. It rotates

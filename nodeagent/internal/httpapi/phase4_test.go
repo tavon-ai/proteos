@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	api "github.com/tavon/proteos/nodeagent/api"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // syncBuffer is a concurrency-safe buffer: the global slog default is shared

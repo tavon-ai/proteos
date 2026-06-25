@@ -13,15 +13,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon/proteos/controlplane/internal/auth"
-	"github.com/tavon/proteos/controlplane/internal/httpapi"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/nodeclient"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/session"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
-	agentapi "github.com/tavon/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // --- a minimal fake node-agent (same shape as the machine package test) ------

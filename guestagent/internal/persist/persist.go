@@ -26,7 +26,7 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go driver; keeps the agent CGO_ENABLED=0 static
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // DefaultMountPoint is where the persistent disk is mounted in disk mode.

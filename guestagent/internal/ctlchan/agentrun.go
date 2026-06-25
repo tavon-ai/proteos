@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // AT1 headless agent runner. agent.run dispatches a non-interactive coding-agent

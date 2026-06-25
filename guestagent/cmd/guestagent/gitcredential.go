@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	"github.com/tavon/proteos/guestagent/internal/localsock"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/localsock"
 )
 
 // gitCredential implements the git credential helper protocol (Phase 7 decision

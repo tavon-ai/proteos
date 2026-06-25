@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/taskevents"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/taskevents"
 )
 
 // handleTaskEvents streams one headless task's normalized agent events over SSE

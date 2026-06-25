@@ -6,7 +6,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // side identifies which leg of the relay ended first.

@@ -14,14 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon/proteos/controlplane/internal/auth"
-	"github.com/tavon/proteos/controlplane/internal/github"
-	"github.com/tavon/proteos/controlplane/internal/httpapi"
-	"github.com/tavon/proteos/controlplane/internal/machine"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/session"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
+	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
+	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
 )
 
 // fakeGitHub stands in for GitHub's token + user endpoints. Knobs let each test

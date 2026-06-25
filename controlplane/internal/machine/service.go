@@ -13,10 +13,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon/proteos/controlplane/internal/nodeclient"
-	"github.com/tavon/proteos/controlplane/internal/secrets"
-	"github.com/tavon/proteos/controlplane/internal/store"
-	agentapi "github.com/tavon/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // Service errors mapped by the HTTP layer to status codes.

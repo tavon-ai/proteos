@@ -6,7 +6,9 @@ title = "ProteOS gitleaks config"
 [allowlist]
   description = "Allowlist for ProteOS project"
 
-  # Allow test files with fake secrets for testing the secrets detection check
+  # Allow test files with fake secrets for testing the secrets detection check,
+  # and operator-local secret files that are gitignored (never tracked).
   paths = [
-    '''controlplane/internal/machine/phase4_test.\go''',
+    '''controlplane/internal/machine/phase4_test\.go''',
+    '''deploy/app-stack/\.env$''',
   ]

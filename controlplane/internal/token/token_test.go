@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon/proteos/controlplane/internal/store"
-	"github.com/tavon/proteos/controlplane/internal/testutil"
-	"github.com/tavon/proteos/controlplane/internal/token"
+	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
+	"github.com/tavon-ai/proteos/controlplane/internal/token"
 )
 
 func newUser(t *testing.T, q *store.Queries) store.User {

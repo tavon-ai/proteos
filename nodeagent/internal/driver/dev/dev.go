@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tavon/proteos/nodeagent/api"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
-	"github.com/tavon/proteos/nodeagent/internal/state"
+	"github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 // FailBootRef is the magic kernel_ref that makes a boot fail, for exercising

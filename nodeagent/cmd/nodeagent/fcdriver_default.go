@@ -5,9 +5,9 @@ package main
 import (
 	"errors"
 
-	"github.com/tavon/proteos/nodeagent/internal/config"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
-	"github.com/tavon/proteos/nodeagent/internal/state"
+	"github.com/tavon-ai/proteos/nodeagent/internal/config"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 // newFirecrackerDriver is unavailable in default builds: the firecracker driver

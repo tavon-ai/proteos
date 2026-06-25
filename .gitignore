@@ -20,6 +20,10 @@ controlplane/controlplane
 deploy/app-stack/openbao-secret-id
 deploy/app-stack/openbao-init.json
 
+# Operator-local Ansible inventory (copy from inventory.example.ini); holds
+# real host IPs/users and must never be committed.
+deploy/ansible/inventory.ini
+
 # Web build output / deps
 web/node_modules/
 web/dist/

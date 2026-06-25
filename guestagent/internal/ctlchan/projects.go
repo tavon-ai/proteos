@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // projectsScanTimeout bounds a full workspace scan so a wedged git invocation in

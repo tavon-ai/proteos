@@ -47,25 +47,25 @@ export function openHomeTerminal(wm: WindowManagerContext, machineId: string): v
   });
 }
 
-export function openAgent(
-  wm: WindowManagerContext,
-  machineId: string,
-  project: Project,
-  providerKey: string,
-  providerName: string,
-): void {
-  const session = freshSession();
-  wm.open({
-    id: session,
-    kind: 'agent',
-    title: `${providerName} — ${projectLabel(project)}`,
-    machineId,
-    projectId: project.path,
-    session,
-    provider: providerKey,
-    cwd: project.path,
-  });
-}
+// export function openAgent(
+//   wm: WindowManagerContext,
+//   machineId: string,
+//   project: Project,
+//   providerKey: string,
+//   providerName: string,
+// ): void {
+//   const session = freshSession();
+//   wm.open({
+//     id: session,
+//     kind: 'agent',
+//     title: `${providerName} — ${projectLabel(project)}`,
+//     machineId,
+//     projectId: project.path,
+//     session,
+//     provider: providerKey,
+//     cwd: project.path,
+//   });
+// }
 
 // openChanges opens the worktree-review window for a project (GR1): one window
 // per (machine, project), so reopening focuses the existing one. It is ephemeral

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	agentapi "github.com/tavon/proteos/nodeagent/api"
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // Config is the fully-resolved control-plane configuration.

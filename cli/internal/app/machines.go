@@ -5,7 +5,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/tavon/proteos/cli/internal/client"
+	"github.com/tavon-ai/proteos/cli/internal/client"
 )
 
 func runMachines(env Env, args []string) int {

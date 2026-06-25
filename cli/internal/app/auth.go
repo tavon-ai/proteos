@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tavon/proteos/cli/internal/client"
-	"github.com/tavon/proteos/cli/internal/config"
+	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/tavon-ai/proteos/cli/internal/config"
 )
 
 func runAuth(env Env, args []string) int {

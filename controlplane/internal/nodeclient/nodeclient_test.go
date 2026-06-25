@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	agentapi "github.com/tavon/proteos/nodeagent/api"
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 func TestNewTrimsTrailingSlash(t *testing.T) {

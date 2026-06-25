@@ -82,7 +82,7 @@ guestagent:   PROTEOS_GUEST_LISTEN=vsock:1024|unix:/path|tcp:127.0.0.1:7070,
 ```
 go.work                                   # + ./guestagent
 guestagent/
-  go.mod                                  # module github.com/tavon/proteos/guestagent
+  go.mod                                  # module github.com/tavon-ai/proteos/guestagent
   cmd/guestagent/main.go
   api/                                    # package guestwire — frame types, close codes, session-name rules
   internal/

@@ -15,10 +15,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/tavon/proteos/controlplane/internal/auth"
-	"github.com/tavon/proteos/controlplane/internal/nodeclient"
-	guestwire "github.com/tavon/proteos/guestagent/api"
-	agentapi "github.com/tavon/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // TestGatewayTerminalE2E exercises the whole Phase 3 path on a Mac/Linux dev

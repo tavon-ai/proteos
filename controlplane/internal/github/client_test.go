@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/tavon/proteos/controlplane/internal/github"
+	"github.com/tavon-ai/proteos/controlplane/internal/github"
 )
 
 func TestAuthorizeURL(t *testing.T) {

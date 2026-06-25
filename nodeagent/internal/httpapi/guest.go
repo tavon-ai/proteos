@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	api "github.com/tavon/proteos/nodeagent/api"
-	"github.com/tavon/proteos/nodeagent/internal/driver"
+	api "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 )
 
 // handleGuest opens an opaque byte tunnel between the caller (the control-plane

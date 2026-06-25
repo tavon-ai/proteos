@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon/proteos/guestagent/api"
+	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 )
 
 // dialControlWS speaks the WebSocket client handshake to the guest agent's
