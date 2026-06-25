@@ -16,7 +16,7 @@ export function useLayoutSaver(
   machineId: string | null,
   running: boolean,
 ): (state: DesktopState) => void {
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   return useCallback(
     (state: DesktopState) => {
