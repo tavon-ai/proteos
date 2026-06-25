@@ -33,7 +33,7 @@ export interface TerminalSocketHandlers {
 
 export interface TerminalSocket {
   /** Send user input (keystrokes / paste) to the shell. */
-  send: (data: string | Uint8Array) => void;
+  send: (data: string | Uint8Array<ArrayBuffer>) => void;
   /** Tell the guest the viewport changed. */
   resize: (cols: number, rows: number) => void;
   /** Close the socket and stop reconnecting. */
