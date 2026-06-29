@@ -508,6 +508,63 @@ func TestUnknownSubcommandShowsGroupHelpExit2(t *testing.T) {
 	}
 }
 
+// TestVersionReportsBuildIdentity checks `proteos version` prints the stamped
+// version, commit, and build date.
+func TestVersionReportsBuildIdentity(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+		var out, errb bytes.Buffer
+		code := app.Run(app.Env{
+			Stdout: &out, Stderr: &errb,
+			Version: "v1.2.3", Commit: "abc1234", Date: "2026-06-29T12:00:00Z",
+		}, args)
+		if code != client.ExitOK {
+			t.Fatalf("%v exit = %d, want 0", args, code)
+		}
+		for _, want := range []string{"proteos v1.2.3", "commit: abc1234", "built:  2026-06-29T12:00:00Z"} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("%v output missing %q:\n%s", args, want, out.String())
+			}
+		}
+	}
+}
+
+// TestVersionUnknownWhenUnstamped shows un-stamped build metadata renders as
+// "unknown" rather than a blank field.
+func TestVersionUnknownWhenUnstamped(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := app.Run(app.Env{Stdout: &out, Stderr: &errb, Version: "dev"}, []string{"version"})
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "commit: unknown") || !strings.Contains(out.String(), "built:  unknown") {
+		t.Fatalf("expected unknown commit/date:\n%s", out.String())
+	}
+}
+
+// TestHelpJSONIncludesBuildIdentity checks the agent-facing tree carries the
+// commit and build date alongside the version.
+func TestHelpJSONIncludesBuildIdentity(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := app.Run(app.Env{
+		Stdout: &out, Stderr: &errb,
+		Version: "v1.2.3", Commit: "abc1234", Date: "2026-06-29T12:00:00Z",
+	}, []string{"--help-json"})
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb.String())
+	}
+	var tree struct {
+		Version string `json:"version"`
+		Commit  string `json:"commit"`
+		Date    string `json:"date"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &tree); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if tree.Version != "v1.2.3" || tree.Commit != "abc1234" || tree.Date != "2026-06-29T12:00:00Z" {
+		t.Fatalf("build identity = %+v", tree)
+	}
+}
+
 // helpJSONTree mirrors the shape of `proteos --help-json` for tests.
 type helpJSONTree struct {
 	Program string `json:"program"`

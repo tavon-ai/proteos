@@ -20,7 +20,9 @@ import (
 type Env struct {
 	Stdout  io.Writer
 	Stderr  io.Writer
-	Version string
+	Version string // semantic version, e.g. "v1.2.3" or "dev"
+	Commit  string // git short sha the binary was built from
+	Date    string // build timestamp (RFC 3339, UTC)
 
 	// describe, when non-nil, puts the command tree in introspection mode: each
 	// leaf registers its flags as usual but parse() captures them and returns
@@ -51,7 +53,7 @@ func Run(env Env, args []string) int {
 	case "task", "tasks":
 		return runTask(env, rest)
 	case "version", "--version", "-v":
-		fmt.Fprintln(env.Stdout, env.Version)
+		printVersion(env)
 		return client.ExitOK
 	case "help", "--help", "-h":
 		usage(env.Stdout)
@@ -104,6 +106,23 @@ Authentication:
 Run 'proteos <command> -h' for command-specific flags, or 'proteos --help-json'
 for the whole command tree (flags included) as JSON — handy for tools and agents.
 `)
+}
+
+// printVersion writes the build identity: version on the first line (so
+// `proteos version | head -1` stays simple), then the commit and build date.
+func printVersion(env Env) {
+	fmt.Fprintf(env.Stdout, "proteos %s\n", orUnknown(env.Version))
+	fmt.Fprintf(env.Stdout, "commit: %s\n", orUnknown(env.Commit))
+	fmt.Fprintf(env.Stdout, "built:  %s\n", orUnknown(env.Date))
+}
+
+// orUnknown renders empty build metadata (e.g. an Env built without stamping) as
+// "unknown" rather than a blank field.
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
 }
 
 // newClient resolves credentials (flag > env > file) and returns a ready client.

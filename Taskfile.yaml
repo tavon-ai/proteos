@@ -180,8 +180,13 @@ tasks:
     dir: cli
     vars:
       VERSION: '{{.VERSION | default "dev"}}'
+      COMMIT:
+        sh: git rev-parse --short HEAD
+      DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+      LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}'
     cmds:
-      - go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos ./cmd/proteos
+      - go build -ldflags "{{.LDFLAGS}}" -o dist/proteos ./cmd/proteos
 
   cli:vet:
     desc: "CLI: go vet"
@@ -200,19 +205,29 @@ tasks:
     dir: cli
     vars:
       VERSION: '{{.VERSION | default "dev"}}'
+      COMMIT:
+        sh: git rev-parse --short HEAD
+      DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+      LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}'
     cmds:
-      - go install -ldflags "-X main.version={{.VERSION}}" ./cmd/proteos
+      - go install -ldflags "{{.LDFLAGS}}" ./cmd/proteos
 
   cli:cross:
     desc: "CLI: cross-compile release binaries (darwin/linux, amd64/arm64) into cli/dist"
     dir: cli
     vars:
       VERSION: '{{.VERSION | default "dev"}}'
+      COMMIT:
+        sh: git rev-parse --short HEAD
+      DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+      LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}'
     cmds:
-      - GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-darwin-amd64 ./cmd/proteos
-      - GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-darwin-arm64 ./cmd/proteos
-      - GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-linux-amd64 ./cmd/proteos
-      - GOOS=linux GOARCH=arm64 go build -ldflags "-X main.version={{.VERSION}}" -o dist/proteos-linux-arm64 ./cmd/proteos
+      - GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o dist/proteos-darwin-amd64 ./cmd/proteos
+      - GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o dist/proteos-darwin-arm64 ./cmd/proteos
+      - GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o dist/proteos-linux-amd64 ./cmd/proteos
+      - GOOS=linux GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o dist/proteos-linux-arm64 ./cmd/proteos
 
   # ---------------------------------------------------------------------------
   # Node-agent (Go) — ./nodeagent

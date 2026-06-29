@@ -10,8 +10,14 @@ import (
 	"github.com/tavon-ai/proteos/cli/internal/client"
 )
 
-// version is stamped at build time via -ldflags "-X main.version=...".
-var version = "dev"
+// Stamped at build time via -ldflags, e.g.
+// "-X main.version=v1.2.3 -X main.commit=abc1234 -X main.date=2026-06-29T12:00:00Z".
+// The defaults are what an un-stamped `go build`/`go run` reports.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func main() {
 	client.SetUserAgent("proteos-cli/" + version)
@@ -19,5 +25,7 @@ func main() {
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 		Version: version,
+		Commit:  commit,
+		Date:    date,
 	}, os.Args[1:]))
 }

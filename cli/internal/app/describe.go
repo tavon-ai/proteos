@@ -53,6 +53,8 @@ type helpGroup struct {
 type helpTree struct {
 	Program string      `json:"program"`
 	Version string      `json:"version"`
+	Commit  string      `json:"commit,omitempty"`
+	Date    string      `json:"date,omitempty"`
 	Summary string      `json:"summary"`
 	Groups  []helpGroup `json:"groups"`
 }
@@ -180,6 +182,8 @@ func helpTreeOf(env Env) helpTree {
 	t := helpTree{
 		Program: "proteos",
 		Version: env.Version,
+		Commit:  env.Commit,
+		Date:    env.Date,
 		Summary: "drive the ProteOS Agent Task lane from the command line",
 	}
 	for _, g := range commandRegistry() {
