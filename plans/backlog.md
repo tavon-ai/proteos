@@ -36,3 +36,39 @@ ok      github.com/tavon-ai/proteos/controlplane/internal/providers        2.587
 ok      github.com/tavon-ai/proteos/controlplane/internal/session  1.309s
 ok      github.com/tavon-ai/proteos/controlplane/internal/store    7.324s
 ok      github.com/tavon-ai/proteos/controlplane/internal/token    8.252s
+[ ] When left idle, the started machines report as "error".
+```
+      GET https://proteos.tavon.io/api/me
+      {
+          "user": {
+              "login": "ipedrazas",
+              "email": "ipedrazas@gmail.com",
+              "avatar_url": "https://avatars.githubusercontent.com/u/32796?v=4"
+          },
+          "prefs": {
+              "download_as_is": false
+          },
+          "machines": [
+              {
+                  "id": "2c15b448-40ef-47ca-80dc-f61db018ed51",
+                  "name": "machine-1",
+                  "state": "error",
+                  "guest_ip": "172.30.0.2",
+                  "kernel_ref": "vmlinux",
+                  "rootfs_ref": "proteos-rootfs-full-ubuntu-24.04-gab5881e4.ext4",
+                  "template_id": "full",
+                  "resource_spec": {
+                      "vcpus": 4,
+                      "mem_mib": 4096,
+                      "disk_mib": 20480
+                  },
+                  "last_error": "node-agent unreachable during running sweep: GET /v1/machines/2c15b448-40ef-47ca-80dc-f61db018ed51: Get \"https://fc-node.tavon.io/v1/machines/2c15b448-40ef-47ca-80dc-f61db018ed51\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+                  "created_at": "2026-06-26T09:36:38Z",
+                  "boot": "cold",
+                  "disk_id": "be4bda9f-8513-45ff-abc6-9af214ab0f29",
+                  "disk_mib": 20480,
+                  "snapshot": null
+              }
+          ]
+      }
+```
