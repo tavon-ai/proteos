@@ -90,7 +90,7 @@ func taskRun(env Env, args []string) int {
 	watch := fs.Bool("watch", false, "stream the task's live events until it ends")
 	timeout := fs.Duration("timeout", 30*time.Minute, "max time to wait/watch")
 	asJSON := fs.Bool("json", false, "with --wait/--watch, emit JSON instead of text")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" {
@@ -141,7 +141,7 @@ func taskList(env Env, args []string) int {
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" {
@@ -188,7 +188,7 @@ func taskGet(env Env, args []string) int {
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || fs.NArg() < 1 {
@@ -233,7 +233,7 @@ func taskWatch(env Env, args []string) int {
 	machineID := fs.String("machine", "", "machine id (required)")
 	timeout := fs.Duration("timeout", 30*time.Minute, "max time to watch")
 	asJSON := fs.Bool("json", false, "emit normalized events as NDJSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || fs.NArg() < 1 {
@@ -260,7 +260,7 @@ func taskCancel(env Env, args []string) int {
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
 	allRunning := fs.Bool("all-running", false, "cancel every running/queued task on the machine")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" {
@@ -324,7 +324,7 @@ func taskSend(env Env, args []string) int {
 	watch := fs.Bool("watch", false, "stream the turn's live events until it ends")
 	timeout := fs.Duration("timeout", 30*time.Minute, "max time to wait/watch")
 	asJSON := fs.Bool("json", false, "with --wait/--watch, emit JSON instead of text")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || fs.NArg() < 1 {

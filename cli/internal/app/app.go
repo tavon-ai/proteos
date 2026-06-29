@@ -21,6 +21,11 @@ type Env struct {
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Version string
+
+	// describe, when non-nil, puts the command tree in introspection mode: each
+	// leaf registers its flags as usual but parse() captures them and returns
+	// before any server contact, so '--help-json' can dump the full tree offline.
+	describe *describer
 }
 
 // Run dispatches args (os.Args[1:]) and returns the process exit code.
@@ -51,6 +56,8 @@ func Run(env Env, args []string) int {
 	case "help", "--help", "-h":
 		usage(env.Stdout)
 		return client.ExitOK
+	case "help-json", "--help-json":
+		return emitHelpJSON(env)
 	default:
 		fmt.Fprintf(env.Stderr, "proteos: unknown command %q\n\n", cmd)
 		usage(env.Stderr)
@@ -94,7 +101,8 @@ Authentication:
   'proteos auth login' or set the PROTEOS_TOKEN environment variable. The
   endpoint comes from --url, PROTEOS_URL, or the stored login.
 
-Run 'proteos <command> -h' for command-specific flags.
+Run 'proteos <command> -h' for command-specific flags, or 'proteos --help-json'
+for the whole command tree (flags included) as JSON — handy for tools and agents.
 `)
 }
 
@@ -160,6 +168,12 @@ func flagSet(env Env, name string) *flag.FlagSet {
 // description, usage line, examples, and the flag list — not just flag defaults.
 func cmdFlags(env Env, name string, h cmdHelp) *flag.FlagSet {
 	fs := flagSet(env, name)
+	if env.describe != nil {
+		// Stash the help metadata so the next parse() call can pair it with the
+		// fully-registered flag set when capturing the command for --help-json.
+		env.describe.pendingName = name
+		env.describe.pendingHelp = h
+	}
 	fs.Usage = func() {
 		out := fs.Output()
 		if h.summary != "" {
@@ -203,7 +217,15 @@ func groupHelp(args []string) bool {
 // parse runs fs.Parse and maps the outcome to (ok, exit code): success → (true,
 // 0); -h/-help → (false, ExitOK) since help is a successful, intentional request;
 // any other parse error → (false, ExitUsage).
-func parse(fs *flag.FlagSet, args []string) (bool, int) {
+//
+// In describe mode (env.describe set) it captures the now-registered flag set for
+// --help-json and returns (false, ExitOK) so the leaf returns before touching the
+// server — every leaf calls parse right after registering its flags.
+func parse(env Env, fs *flag.FlagSet, args []string) (bool, int) {
+	if env.describe != nil {
+		env.describe.capture(fs)
+		return false, client.ExitOK
+	}
 	err := fs.Parse(args)
 	if err == nil {
 		return true, client.ExitOK

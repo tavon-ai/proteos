@@ -66,7 +66,7 @@ func authLogin(env Env, args []string) int {
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	tok := fs.String("token", "", "personal access token (or PROTEOS_TOKEN, or stdin)")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 
@@ -120,7 +120,7 @@ func authStatus(env Env, args []string) int {
 		usage:   "proteos auth status",
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	r, err := config.Resolve(*url)

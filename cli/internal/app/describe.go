@@ -1,0 +1,255 @@
+package app
+
+import (
+	"flag"
+	"io"
+	"reflect"
+	"strings"
+
+	"github.com/tavon-ai/proteos/cli/internal/client"
+)
+
+// This file implements 'proteos --help-json': a machine-readable dump of the
+// whole command tree — every group, leaf, and flag — emitted offline (no server
+// contact). It is built for non-human consumers (tooling, agents) that want to
+// enumerate the CLI without scraping -h text or guessing.
+//
+// Single source of truth: rather than re-declaring flags, it runs each leaf in
+// "describe mode" (Env.describe set). In that mode cmdFlags records the leaf's
+// help metadata and parse() captures the fully-registered *flag.FlagSet and
+// returns before any newClient() call. So the JSON can never drift from -h —
+// both read the exact same flag definitions.
+
+// helpFlag describes one flag of a leaf command.
+type helpFlag struct {
+	Name    string `json:"name"`              // flag name without dashes, e.g. "machine"
+	Type    string `json:"type"`              // "string", "bool", "duration", …
+	Default string `json:"default,omitempty"` // default value as printed by -h
+	Usage   string `json:"usage"`             // one-line flag description
+}
+
+// helpCommand describes one leaf command (e.g. "task run").
+type helpCommand struct {
+	Path     string     `json:"path"`               // full invocation path, e.g. "task run"
+	Group    string     `json:"group"`              // owning group, e.g. "task"
+	Name     string     `json:"name"`               // leaf name, e.g. "run"
+	Aliases  []string   `json:"aliases,omitempty"`  // alternative leaf names, e.g. "list" for "ls"
+	Summary  string     `json:"summary,omitempty"`  // one-line description
+	Long     string     `json:"long,omitempty"`     // optional detail paragraph(s)
+	Usage    string     `json:"usage,omitempty"`    // the invocation line shown by -h
+	Examples []string   `json:"examples,omitempty"` // example invocations
+	Flags    []helpFlag `json:"flags"`              // flags, in the order -h prints them
+}
+
+// helpGroup describes a command group (e.g. "task") and its leaves.
+type helpGroup struct {
+	Name     string        `json:"name"`
+	Aliases  []string      `json:"aliases,omitempty"`
+	Summary  string        `json:"summary,omitempty"`
+	Commands []helpCommand `json:"commands"`
+}
+
+// helpTree is the top-level document emitted by --help-json.
+type helpTree struct {
+	Program string      `json:"program"`
+	Version string      `json:"version"`
+	Summary string      `json:"summary"`
+	Groups  []helpGroup `json:"groups"`
+}
+
+// describer captures one leaf command's flag/help metadata while it runs in
+// describe mode. cmdFlags stashes (pendingName, pendingHelp); parse() then pairs
+// them with the registered flag set into captured.
+type describer struct {
+	pendingName string
+	pendingHelp cmdHelp
+	captured    *helpCommand
+}
+
+// capture snapshots fs (already populated with the leaf's flags) together with
+// the help metadata cmdFlags stashed, producing the helpCommand for this leaf.
+func (d *describer) capture(fs *flag.FlagSet) {
+	d.captured = &helpCommand{
+		Path:     d.pendingName,
+		Summary:  d.pendingHelp.summary,
+		Long:     d.pendingHelp.long,
+		Usage:    d.pendingHelp.usage,
+		Examples: d.pendingHelp.examples,
+		Flags:    flagInfos(fs),
+	}
+}
+
+// flagInfos renders fs's flags in the same lexical order -h prints them.
+func flagInfos(fs *flag.FlagSet) []helpFlag {
+	out := []helpFlag{}
+	fs.VisitAll(func(f *flag.Flag) {
+		out = append(out, helpFlag{
+			Name:    f.Name,
+			Type:    flagType(f),
+			Default: f.DefValue,
+			Usage:   f.Usage,
+		})
+	})
+	return out
+}
+
+// flagType reports a flag's value type ("bool", "string", "duration", …). It
+// keys off the same signals the stdlib flag package uses: IsBoolFlag for bools,
+// and the concrete value type's name (e.g. *flag.durationValue → "duration").
+func flagType(f *flag.Flag) string {
+	if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+		return "bool"
+	}
+	t := reflect.TypeOf(f.Value)
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil {
+		return "string"
+	}
+	return strings.TrimSuffix(t.Name(), "Value")
+}
+
+// leaf names a single command and the function that builds/runs it. run is
+// invoked in describe mode to introspect its flags; for the rare command with no
+// flags (and no parse() call) run is nil and summary/usage are given directly.
+type leaf struct {
+	name    string
+	aliases []string
+	run     func(Env, []string) int
+	summary string // used only when run is nil
+	usage   string // used only when run is nil
+}
+
+// group names a command family, its aliases, and the group-usage function whose
+// header line supplies the group summary.
+type group struct {
+	name    string
+	aliases []string
+	usage   func(io.Writer)
+	leaves  []leaf
+}
+
+// commandRegistry mirrors the dispatch tree in app.go and the run* dispatchers.
+// It is the one place that lists which commands exist; flags/help for each leaf
+// come from the leaf itself via describe mode, so only this membership list has
+// to track new commands. (TestHelpJSONCoversDispatch guards against drift.)
+func commandRegistry() []group {
+	return []group{
+		{name: "auth", usage: authGroupUsage, leaves: []leaf{
+			{name: "login", run: authLogin},
+			{name: "status", run: authStatus},
+			{name: "logout", summary: "Remove the stored credentials.", usage: "proteos auth logout"},
+		}},
+		{name: "machines", aliases: []string{"machine"}, usage: machinesGroupUsage, leaves: []leaf{
+			{name: "ls", aliases: []string{"list"}, run: machinesList},
+			{name: "get", aliases: []string{"show"}, run: machinesGet},
+		}},
+		{name: "templates", aliases: []string{"template"}, usage: templatesGroupUsage, leaves: []leaf{
+			{name: "ls", aliases: []string{"list"}, run: templatesList},
+		}},
+		{name: "repo", aliases: []string{"repos"}, usage: reposGroupUsage, leaves: []leaf{
+			{name: "ls", aliases: []string{"list"}, run: reposList},
+		}},
+		{name: "project", aliases: []string{"projects"}, usage: projectsGroupUsage, leaves: []leaf{
+			{name: "ls", aliases: []string{"list"}, run: projectsList},
+			{name: "clone", run: projectClone},
+			{name: "ensure", run: projectEnsure},
+		}},
+		{name: "git", usage: gitGroupUsage, leaves: []leaf{
+			{name: "status", run: gitStatus},
+			{name: "diff", run: gitDiff},
+			{name: "branch", run: gitBranch},
+			{name: "commit", run: gitCommit},
+			{name: "push", run: gitPush},
+			{name: "pr", run: gitPR},
+		}},
+		{name: "task", aliases: []string{"tasks"}, usage: taskGroupUsage, leaves: []leaf{
+			{name: "run", run: taskRun},
+			{name: "ls", aliases: []string{"list"}, run: taskList},
+			{name: "get", aliases: []string{"show"}, run: taskGet},
+			{name: "watch", run: taskWatch},
+			{name: "cancel", run: taskCancel},
+			{name: "send", aliases: []string{"message"}, run: taskSend},
+		}},
+	}
+}
+
+// helpTreeOf builds the full command tree by introspecting every leaf offline.
+func helpTreeOf(env Env) helpTree {
+	t := helpTree{
+		Program: "proteos",
+		Version: env.Version,
+		Summary: "drive the ProteOS Agent Task lane from the command line",
+	}
+	for _, g := range commandRegistry() {
+		hg := helpGroup{
+			Name:    g.name,
+			Aliases: g.aliases,
+			Summary: summaryFromUsage(g.usage),
+		}
+		for _, l := range g.leaves {
+			hg.Commands = append(hg.Commands, describeLeaf(env, g, l))
+		}
+		t.Groups = append(t.Groups, hg)
+	}
+	return t
+}
+
+// describeLeaf produces the helpCommand for one leaf: it runs the leaf in
+// describe mode (which captures its flags before any server call) and fills in
+// the group/name/aliases the leaf itself doesn't know.
+func describeLeaf(baseEnv Env, g group, l leaf) helpCommand {
+	var cmd helpCommand
+	if l.run != nil {
+		d := &describer{}
+		env := baseEnv
+		env.describe = d
+		l.run(env, nil)
+		if d.captured != nil {
+			cmd = *d.captured
+		}
+	}
+	if cmd.Path == "" {
+		cmd.Path = g.name + " " + l.name
+	}
+	if cmd.Summary == "" {
+		cmd.Summary = l.summary
+	}
+	if cmd.Usage == "" {
+		cmd.Usage = l.usage
+	}
+	cmd.Group = g.name
+	cmd.Name = l.name
+	cmd.Aliases = l.aliases
+	if cmd.Flags == nil {
+		cmd.Flags = []helpFlag{}
+	}
+	return cmd
+}
+
+// summaryFromUsage pulls a group's one-line summary from its usage header, whose
+// first line reads "proteos <group> — <summary>".
+func summaryFromUsage(fn func(io.Writer)) string {
+	if fn == nil {
+		return ""
+	}
+	var b strings.Builder
+	fn(&b)
+	line := b.String()
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	if i := strings.Index(line, "— "); i >= 0 {
+		return strings.TrimSpace(line[i+len("— "):])
+	}
+	return strings.TrimSpace(line)
+}
+
+// emitHelpJSON writes the full command tree as indented JSON to stdout.
+func emitHelpJSON(env Env) int {
+	if err := printJSON(env.Stdout, helpTreeOf(env)); err != nil {
+		return fail(env, err)
+	}
+	return client.ExitOK
+}

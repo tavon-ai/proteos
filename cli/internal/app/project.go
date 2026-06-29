@@ -60,7 +60,7 @@ func projectsList(env Env, args []string) int {
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" {
@@ -111,7 +111,7 @@ func projectClone(env Env, args []string) int {
 	wait := fs.Bool("wait", false, "poll until the repo appears in the workspace")
 	timeout := fs.Duration("timeout", 5*time.Minute, "max time to wait for the clone")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || fs.NArg() < 1 {
@@ -143,7 +143,7 @@ func projectEnsure(env Env, args []string) int {
 	machineID := fs.String("machine", "", "machine id (required)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "max time to wait for the clone")
 	asJSON := fs.Bool("json", false, "emit raw JSON of the project once present")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || fs.NArg() < 1 {

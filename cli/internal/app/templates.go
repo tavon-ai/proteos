@@ -47,7 +47,7 @@ func templatesList(env Env, args []string) int {
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	c, _, code, ok := newClient(env, *url)

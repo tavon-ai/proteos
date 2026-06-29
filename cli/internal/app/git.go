@@ -67,7 +67,7 @@ func gitStatus(env Env, args []string) int {
 	machineID := fs.String("machine", "", "machine id (required)")
 	project := fs.String("project", "", "project directory under /workspace (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" {
@@ -121,7 +121,7 @@ func gitDiff(env Env, args []string) int {
 	project := fs.String("project", "", "project directory under /workspace (required)")
 	staged := fs.Bool("staged", false, "show the staged (index) diff instead of the worktree diff")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" {
@@ -164,7 +164,7 @@ func gitBranch(env Env, args []string) int {
 	from := fs.String("from", "", "start point (branch, tag, or sha; defaults to current HEAD)")
 	noCheckout := fs.Bool("no-checkout", false, "create the branch without switching to it")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" || fs.NArg() < 1 {
@@ -208,7 +208,7 @@ func gitCommit(env Env, args []string) int {
 	project := fs.String("project", "", "project directory under /workspace (required)")
 	message := fs.String("m", "", "commit message (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" || *message == "" {
@@ -250,7 +250,7 @@ func gitPush(env Env, args []string) int {
 	branch := fs.String("branch", "", "branch to push (required)")
 	setUpstream := fs.Bool("set-upstream", false, "set the upstream (-u) on first push")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" || *branch == "" {
@@ -296,7 +296,7 @@ func gitPR(env Env, args []string) int {
 	title := fs.String("title", "", "PR title (required)")
 	body := fs.String("body", "", "PR body")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
-	if ok, code := parse(fs, args); !ok {
+	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
 	if *machineID == "" || *project == "" || *head == "" || *title == "" {

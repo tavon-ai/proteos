@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -505,6 +506,126 @@ func TestUnknownSubcommandShowsGroupHelpExit2(t *testing.T) {
 	if !strings.Contains(errs, "unknown task subcommand") || !strings.Contains(errs, "Commands:") {
 		t.Fatalf("expected error + group help on stderr:\n%s", errs)
 	}
+}
+
+// helpJSONTree mirrors the shape of `proteos --help-json` for tests.
+type helpJSONTree struct {
+	Program string `json:"program"`
+	Version string `json:"version"`
+	Groups  []struct {
+		Name     string `json:"name"`
+		Commands []struct {
+			Path  string `json:"path"`
+			Group string `json:"group"`
+			Name  string `json:"name"`
+			Flags []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			} `json:"flags"`
+		} `json:"commands"`
+	} `json:"groups"`
+}
+
+// TestHelpJSONOffline proves --help-json works with no endpoint, no token, and
+// no server — and that it covers exactly the documented command tree.
+func TestHelpJSONOffline(t *testing.T) {
+	for _, form := range [][]string{{"--help-json"}, {"help-json"}} {
+		code, out, errs := runArgs(t, form...)
+		if code != client.ExitOK {
+			t.Fatalf("%v exit = %d, want 0; stderr=%s", form, code, errs)
+		}
+		if errs != "" {
+			t.Fatalf("%v wrote to stderr (should be silent offline):\n%s", form, errs)
+		}
+		var tree helpJSONTree
+		if err := json.Unmarshal([]byte(out), &tree); err != nil {
+			t.Fatalf("%v invalid JSON: %v\n%s", form, err, out)
+		}
+		if tree.Program != "proteos" || tree.Version != "test" {
+			t.Fatalf("program/version = %q/%q, want proteos/test", tree.Program, tree.Version)
+		}
+		var got []string
+		for _, g := range tree.Groups {
+			for _, c := range g.Commands {
+				if c.Group != g.Name {
+					t.Errorf("command %q has group %q, want %q", c.Path, c.Group, g.Name)
+				}
+				got = append(got, c.Path)
+			}
+		}
+		want := []string{
+			"auth login", "auth status", "auth logout",
+			"machines ls", "machines get",
+			"templates ls",
+			"repo ls",
+			"project ls", "project clone", "project ensure",
+			"git status", "git diff", "git branch", "git commit", "git push", "git pr",
+			"task run", "task ls", "task get", "task watch", "task cancel", "task send",
+		}
+		sort.Strings(got)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("command tree drift.\n got: %v\nwant: %v", got, want)
+		}
+	}
+}
+
+// TestHelpJSONMatchesCommandHelp is the anti-drift guard: for every command in
+// the JSON tree, the path must be dispatchable (`<path> -h` exits 0) and its
+// flag set must match exactly what -h prints — the JSON and -h read the same
+// flag definitions, so they can never disagree.
+func TestHelpJSONMatchesCommandHelp(t *testing.T) {
+	_, out, _ := runArgs(t, "--help-json")
+	var tree helpJSONTree
+	if err := json.Unmarshal([]byte(out), &tree); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	for _, g := range tree.Groups {
+		for _, c := range g.Commands {
+			if len(c.Flags) == 0 {
+				continue // e.g. `auth logout` takes no flags and has no -h path
+			}
+			args := append(strings.Fields(c.Path), "-h")
+			code, _, errs := runArgs(t, args...)
+			if code != client.ExitOK {
+				t.Errorf("%q -h exit = %d, want 0 (not dispatchable?)", c.Path, code)
+				continue
+			}
+			got := flagNamesFromHelp(errs)
+			var want []string
+			for _, f := range c.Flags {
+				want = append(want, f.Name)
+			}
+			sort.Strings(got)
+			sort.Strings(want)
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("%q flags drift between -h and --help-json.\n  -h: %v\njson: %v", c.Path, got, want)
+			}
+		}
+	}
+}
+
+// flagNamesFromHelp extracts flag names from the "Flags:" section of -h output.
+func flagNamesFromHelp(help string) []string {
+	i := strings.Index(help, "\nFlags:\n")
+	if i < 0 {
+		return nil
+	}
+	var names []string
+	for _, ln := range strings.Split(help[i+len("\nFlags:\n"):], "\n") {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "-") {
+			continue // continuation lines (flag descriptions) are indented further
+		}
+		t = strings.TrimPrefix(t, "-")
+		if j := strings.IndexAny(t, " \t"); j >= 0 {
+			t = t[:j]
+		}
+		if t != "" {
+			names = append(names, t)
+		}
+	}
+	return names
 }
 
 func TestMachinesListShowsTemplate(t *testing.T) {
