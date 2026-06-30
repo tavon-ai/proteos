@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*.*.*"]
   pull_request:
 
 # Phase 1 CI: every PR builds + tests the Go control plane (with a real Postgres
@@ -192,3 +193,67 @@ jobs:
           name: web-dist
           path: web/dist
           if-no-files-found: error
+
+  # Build + push the two app-stack images to GHCR, but ONLY after the Go and web
+  # jobs above pass (`needs`) and ONLY on push events (`if`) — never on PRs, so
+  # forks/PRs can't publish. Pushes to main publish `latest`; v* tag pushes
+  # publish semver tags. The firecracker job is intentionally NOT a dependency:
+  # it's gated on a self-hosted KVM runner and usually skipped.
+  #
+  # Both Dockerfiles take the REPO ROOT as their build context — the control
+  # plane links sibling Go-workspace modules, and the web image needs both web/
+  # and deploy/app-stack/nginx.conf — so `context: .` is required, not the
+  # Dockerfile's directory.
+  publish:
+    name: publish ${{ matrix.image }}
+    needs: [controlplane, nodeagent, guestagent, web]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR via GITHUB_TOKEN
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: proteos-api
+            dockerfile: deploy/app-stack/controlplane.Dockerfile
+          - image: proteos-ui
+            dockerfile: deploy/app-stack/web.Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tags: `latest` on the default branch, the short+long commit SHA always,
+      # and semver tags (1.2.3 / 1.2) when the push is a v* git tag.
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/tavon-ai/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
