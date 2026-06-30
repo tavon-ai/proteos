@@ -1914,3 +1914,108 @@ body {
   padding-top: 0.6rem;
   border-top: 1px solid var(--border);
 }
+
+/* === Wallpaper panel ================================================== */
+.wallpaper-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.wallpaper-panel h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.wallpaper-autorotate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.wallpaper-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.wallpaper-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.wallpaper-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0;
+}
+
+.wallpaper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.6rem;
+}
+
+.wallpaper-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--panel);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.wallpaper-thumb:hover {
+  border-color: var(--muted);
+}
+
+.wallpaper-thumb.selected {
+  border-color: var(--accent);
+}
+
+.wallpaper-thumb img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+
+.wallpaper-thumb-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.wallpaper-url-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.wallpaper-url-input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.wallpaper-url-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}

@@ -19,6 +19,7 @@ import { useWindowManager } from './windowManagerContext';
 import { openProjects } from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';
+import { WallpaperProvider, useWallpaper } from './wallpaperContext';
 
 // Desktop is the product shell: a project-centric, multi-window desktop. It owns
 // the live machines + event + provider subscriptions once (a single EventSource
@@ -28,9 +29,11 @@ export function Desktop({ me }: { me: Me }) {
   const events = useMachineEvents();
 
   return (
-    <SelectedMachineProvider machines={machines ?? []}>
-      <DesktopScoped me={me} events={events} />
-    </SelectedMachineProvider>
+    <WallpaperProvider>
+      <SelectedMachineProvider machines={machines ?? []}>
+        <DesktopScoped me={me} events={events} />
+      </SelectedMachineProvider>
+    </WallpaperProvider>
   );
 }
 
@@ -69,6 +72,7 @@ function DesktopShell({
   const navigate = useNavigate();
   const logout = useLogout();
   const viewport = useViewport();
+  const { prefs: wallpaper } = useWallpaper();
 
   const selected = machines.find((m) => m.id === selectedId) ?? null;
 
@@ -95,8 +99,17 @@ function DesktopShell({
     });
   };
 
+  const wallpaperStyle: React.CSSProperties = wallpaper.source
+    ? {
+        backgroundImage: `url(${wallpaper.source})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+      }
+    : {};
+
   return (
-    <div className="desktop">
+    <div className="desktop" style={wallpaperStyle}>
       <Taskbar me={me} onLogout={onLogout} loggingOut={logout.isPending} />
 
       <div className="desktop-surface">
