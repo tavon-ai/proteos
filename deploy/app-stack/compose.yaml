@@ -70,6 +70,10 @@ services:
       PROTEOS_ADDR: ":8080"
       DATABASE_URL: "postgres://${POSTGRES_USER:-proteos}:${POSTGRES_PASSWORD:-proteos}@postgres:5432/${POSTGRES_DB:-proteos}?sslmode=disable"
 
+      # Log verbosity: debug | info | warn | error (default info). Set to debug
+      # to surface the underlying error behind "internal" 500 responses.
+      PROTEOS_LOG_LEVEL: ${PROTEOS_LOG_LEVEL:-info}
+
       # Browser-facing origin (the web service below). Must equal the URL you
       # open AND the host+port in the GitHub App's callback URL.
       PROTEOS_BASE_URL: ${PROTEOS_BASE_URL:?set to e.g. http://APP_VM_IP:8080}

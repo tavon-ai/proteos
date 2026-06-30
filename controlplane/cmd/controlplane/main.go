@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
@@ -36,7 +37,7 @@ func main() {
 	migrateSecretsFlag := flag.String("migrate-secrets", "", "one-shot: copy a dev FileStore JSON dump into the configured backend, then exit")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})))
 
 	if *migrateSecretsFlag != "" {
 		if err := migrateSecrets(*migrateSecretsFlag); err != nil {
@@ -49,6 +50,22 @@ func main() {
 	if err := run(*migrateFlag, *migrateOnlyFlag); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
+	}
+}
+
+// logLevel reads PROTEOS_LOG_LEVEL ("debug", "info", "warn", "error";
+// case-insensitive) and returns the corresponding slog.Level. It defaults to
+// info when the var is unset or unrecognized.
+func logLevel() slog.Level {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PROTEOS_LOG_LEVEL"))) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
 }
 

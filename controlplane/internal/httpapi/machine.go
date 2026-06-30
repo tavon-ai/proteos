@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -102,6 +103,7 @@ func (s *Server) handleListMachines(w http.ResponseWriter, r *http.Request) {
 	}
 	ms, err := s.Machines.List(r.Context(), user.ID)
 	if err != nil {
+		slog.Error("list machines failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
@@ -150,6 +152,7 @@ func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &invRes):
 		writeErrorDetail(w, http.StatusBadRequest, "invalid_resources", invRes.Detail)
 	case err != nil:
+		slog.Error("create machine failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
 		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
@@ -191,6 +194,7 @@ func (s *Server) handleRenameMachine(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, machine.ErrNoMachine):
 		writeError(w, http.StatusNotFound, "no_machine")
 	case err != nil:
+		slog.Error("rename machine failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
 		writeJSON(w, http.StatusOK, s.summary(r.Context(), m))
@@ -216,6 +220,7 @@ func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, machine.ErrNoMachine):
 		writeError(w, http.StatusNotFound, "no_machine")
 	case err != nil:
+		slog.Error("destroy machine failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
 		w.WriteHeader(http.StatusNoContent)
@@ -243,6 +248,7 @@ func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func
 	case errors.Is(err, machine.ErrInvalidState):
 		writeError(w, http.StatusConflict, "invalid_state")
 	case err != nil:
+		slog.Error("machine mutation failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
 		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))

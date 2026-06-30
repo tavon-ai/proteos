@@ -184,7 +184,7 @@ tasks:
         sh: git rev-parse --short HEAD
       DATE:
         sh: date -u +%Y-%m-%dT%H:%M:%SZ
-      LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}'
+      LDFLAGS: "-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}"
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o dist/proteos ./cmd/proteos
 
@@ -209,7 +209,7 @@ tasks:
         sh: git rev-parse --short HEAD
       DATE:
         sh: date -u +%Y-%m-%dT%H:%M:%SZ
-      LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}'
+      LDFLAGS: "-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}"
     cmds:
       - go install -ldflags "{{.LDFLAGS}}" ./cmd/proteos
 
@@ -222,7 +222,7 @@ tasks:
         sh: git rev-parse --short HEAD
       DATE:
         sh: date -u +%Y-%m-%dT%H:%M:%SZ
-      LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}'
+      LDFLAGS: "-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.date={{.DATE}}"
     cmds:
       - GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o dist/proteos-darwin-amd64 ./cmd/proteos
       - GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o dist/proteos-darwin-arm64 ./cmd/proteos
