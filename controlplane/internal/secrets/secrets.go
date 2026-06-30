@@ -31,6 +31,38 @@ type Store interface {
 	Delete(path string) error
 }
 
+// selfCheckPath is a reserved machine path used by SelfCheck. "_selfcheck" is
+// never a real machine UUID, so the probe cannot collide with a live secret,
+// and it lives under secret/machines/* so it exercises the same capability
+// (base-token / cp-base policy) that minting a machine volume key needs.
+const selfCheckPath = "secret/machines/_selfcheck/probe"
+
+// SelfCheck verifies the store can write, read back, and delete a machine
+// secret — the exact capability machine creation depends on. It is meant to run
+// once at startup so a misconfigured backend (e.g. an OpenBao policy that does
+// not grant create/update on the machine path namespace) fails loudly at boot
+// instead of as an opaque 500 on the first POST /api/machines.
+//
+// A non-nil error wraps the underlying cause; IsPermissionDenied reports whether
+// it is specifically an authorization failure (the policy/path-mismatch case).
+func SelfCheck(s Store) error {
+	const field = "probe"
+	if err := s.Put(selfCheckPath, map[string]string{field: "ok"}); err != nil {
+		return fmt.Errorf("secrets self-check: write %s failed (does the backend policy grant create/update on machine paths?): %w", selfCheckPath, err)
+	}
+	// Best-effort cleanup regardless of the read-back outcome.
+	defer func() { _ = s.Delete(selfCheckPath) }()
+
+	got, err := s.Get(selfCheckPath)
+	if err != nil {
+		return fmt.Errorf("secrets self-check: read-back %s failed: %w", selfCheckPath, err)
+	}
+	if got[field] != "ok" {
+		return fmt.Errorf("secrets self-check: read-back mismatch on %s: got %v", selfCheckPath, got)
+	}
+	return nil
+}
+
 // UserGitHubPath returns the canonical secret path for a user's GitHub tokens.
 func UserGitHubPath(userID string) string {
 	return fmt.Sprintf("secret/users/%s/github", userID)

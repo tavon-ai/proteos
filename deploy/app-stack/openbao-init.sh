@@ -29,6 +29,14 @@ INIT_JSON="$HERE/openbao-init.json"
 SECRET_ID_FILE="$HERE/openbao-secret-id"
 ENV_FILE="$HERE/.env"
 MOUNT="${PROTEOS_OPENBAO_MOUNT:-secret}"
+# Path namespace inside the mount. MUST match the control plane's
+# PROTEOS_OPENBAO_PREFIX (default "proteos"): secrets live under
+# <mount>/data/<prefix>/... and the policies below grant exactly those paths.
+# Set PROTEOS_OPENBAO_PREFIX="" to disable namespacing (un-prefixed paths).
+PREFIX_RAW="${PROTEOS_OPENBAO_PREFIX-proteos}"
+PREFIX="$(printf '%s' "$PREFIX_RAW" | sed 's#^/*##; s#/*$##')"   # strip leading/trailing slashes
+PREFIX_SEG=""
+[ -n "$PREFIX" ] && PREFIX_SEG="$PREFIX/"                         # "" or "proteos/"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "error: '$1' not found in PATH" >&2; exit 1; }; }
 need bao
@@ -82,7 +90,10 @@ else
 fi
 
 # 4. Policy cp-base: machine secrets + the machinery to mint per-user tokens.
-echo "==> Writing policy cp-base"
+# The machine paths are namespaced by $PREFIX_SEG so they match the control
+# plane's PROTEOS_OPENBAO_PREFIX; per-user policies (user-<id>, written at
+# runtime by the control plane) use the same prefix.
+echo "==> Writing policy cp-base (mount=$MOUNT prefix='${PREFIX:-<none>}')"
 bao policy write cp-base - <<EOF
 path "auth/token/create/proteos-user" {
   capabilities = ["update"]
@@ -90,10 +101,10 @@ path "auth/token/create/proteos-user" {
 path "sys/policies/acl/user-*" {
   capabilities = ["create", "update", "read"]
 }
-path "$MOUNT/data/machines/*" {
+path "$MOUNT/data/${PREFIX_SEG}machines/*" {
   capabilities = ["create", "update", "read", "delete"]
 }
-path "$MOUNT/metadata/machines/*" {
+path "$MOUNT/metadata/${PREFIX_SEG}machines/*" {
   capabilities = ["read", "delete", "list"]
 }
 EOF

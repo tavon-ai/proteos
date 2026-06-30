@@ -14,7 +14,7 @@ func clearEnv(t *testing.T) {
 		"PROTEOS_ADDR", "DATABASE_URL", "PROTEOS_BASE_URL",
 		"GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_SLUG",
 		"PROTEOS_GIT_HOST", "PROTEOS_SECRETS_BACKEND", "PROTEOS_SECRETS_FILE",
-		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_ROLE_ID",
+		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_PREFIX", "PROTEOS_OPENBAO_ROLE_ID",
 		"PROTEOS_OPENBAO_SECRET_ID_FILE", "ALLOWED_GITHUB_LOGINS", "PROTEOS_COOKIE_SECURE",
 		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN",
 		"PROTEOS_NODE_CA_FILE", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
@@ -52,6 +52,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if c.OpenBaoMount != "secret" {
 		t.Errorf("OpenBaoMount = %q, want secret", c.OpenBaoMount)
+	}
+	if c.OpenBaoPrefix != "proteos" {
+		t.Errorf("OpenBaoPrefix = %q, want proteos", c.OpenBaoPrefix)
 	}
 	if c.HostName != "local" {
 		t.Errorf("HostName = %q, want local", c.HostName)

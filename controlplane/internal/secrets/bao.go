@@ -26,7 +26,8 @@ import (
 // Machine paths (secret/machines/...) are covered directly by the base token's
 // cp-base policy and use the base client.
 type BaoStore struct {
-	mount string // KV v2 mount, default "secret"
+	mount  string // KV v2 mount, default "secret"
+	prefix string // optional path namespace inside the mount, e.g. "proteos/" (always "" or trailing-slash terminated)
 
 	mu       sync.Mutex
 	client   *bao.Client
@@ -47,6 +48,7 @@ const childTokenTTL = "90s"
 type BaoConfig struct {
 	Address      string // OpenBao API address, e.g. http://openbao:8200
 	Mount        string // KV v2 mount; defaults to "secret"
+	Prefix       string // optional path namespace inside the mount (e.g. "proteos"); leading/trailing slashes are normalized away
 	Token        string // static token; takes precedence over AppRole when set
 	RoleID       string // AppRole role_id
 	SecretIDFile string // path to a file holding the AppRole secret_id
@@ -71,6 +73,7 @@ func NewBaoStore(cfg BaoConfig) (*BaoStore, error) {
 	}
 	s := &BaoStore{
 		mount:   mount,
+		prefix:  normalizePrefix(cfg.Prefix),
 		client:  client,
 		roleID:  cfg.RoleID,
 		ensured: make(map[string]struct{}),
@@ -240,13 +243,13 @@ func (s *BaoStore) ensurePolicy(uid string) error {
 	s.mu.Unlock()
 
 	rules := fmt.Sprintf(`
-path "%[1]s/data/users/%[2]s/*" {
+path "%[1]s/data/%[3]susers/%[2]s/*" {
   capabilities = ["create", "update", "read", "delete"]
 }
-path "%[1]s/metadata/users/%[2]s/*" {
+path "%[1]s/metadata/%[3]susers/%[2]s/*" {
   capabilities = ["read", "delete", "list"]
 }
-`, s.mount, uid)
+`, s.mount, uid, s.prefix)
 
 	if err := client.Sys().PutPolicyWithContext(context.Background(), userPolicyName(uid), rules); err != nil {
 		if s.roleID != "" && isPermissionError(err) {
@@ -296,8 +299,19 @@ const userTokenRole = "proteos-user"
 
 func userPolicyName(uid string) string { return "user-" + uid }
 
-func (s *BaoStore) dataPath(rel string) string     { return s.mount + "/data/" + rel }
-func (s *BaoStore) metadataPath(rel string) string { return s.mount + "/metadata/" + rel }
+func (s *BaoStore) dataPath(rel string) string     { return s.mount + "/data/" + s.prefix + rel }
+func (s *BaoStore) metadataPath(rel string) string { return s.mount + "/metadata/" + s.prefix + rel }
+
+// normalizePrefix strips any leading/trailing slashes from a configured path
+// namespace and re-adds a single trailing slash, so callers can concatenate it
+// directly. An empty (or slash-only) prefix normalizes to "" (no namespace).
+func normalizePrefix(p string) string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return ""
+	}
+	return p + "/"
+}
 
 // splitPath maps a canonical interface path (always "secret/<rest>") to its KV
 // v2-relative remainder, and classifies it as a user path (returning the user
@@ -330,6 +344,11 @@ func isPermissionError(err error) bool {
 	}
 	return false
 }
+
+// IsPermissionDenied reports whether err (possibly wrapped) is an OpenBao 403.
+// Callers use it to distinguish a misconfigured policy — which will not
+// self-heal and should fail the process — from a transient/connectivity error.
+func IsPermissionDenied(err error) bool { return isPermissionError(err) }
 
 // compile-time check
 var _ Store = (*BaoStore)(nil)

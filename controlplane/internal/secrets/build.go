@@ -10,12 +10,13 @@ import (
 // Store. It mirrors the PROTEOS_SECRETS_* / PROTEOS_OPENBAO_* env knobs so
 // main.go can hand the resolved values straight through.
 type BackendConfig struct {
-	Backend      string // "file" | "openbao"
-	File         string // file backend: path to the JSON store
-	OpenBaoAddr  string
-	OpenBaoMount string
-	RoleID       string
-	SecretIDFile string
+	Backend       string // "file" | "openbao"
+	File          string // file backend: path to the JSON store
+	OpenBaoAddr   string
+	OpenBaoMount  string
+	OpenBaoPrefix string // optional path namespace inside the mount (e.g. "proteos")
+	RoleID        string
+	SecretIDFile  string
 }
 
 // Open constructs the Store selected by cfg.Backend. "file" (default) returns
@@ -28,6 +29,7 @@ func Open(cfg BackendConfig) (Store, error) {
 		return NewBaoStore(BaoConfig{
 			Address:      cfg.OpenBaoAddr,
 			Mount:        cfg.OpenBaoMount,
+			Prefix:       cfg.OpenBaoPrefix,
 			RoleID:       cfg.RoleID,
 			SecretIDFile: cfg.SecretIDFile,
 		})

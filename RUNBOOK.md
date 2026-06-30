@@ -295,6 +295,15 @@ policy `cp-base`, the `proteos-user` token role, and the `proteos-cp` AppRole;
 then emits `PROTEOS_OPENBAO_ROLE_ID` into `.env` and the AppRole secret_id into
 `./openbao-secret-id`.
 
+The `cp-base` policy it writes grants the machine paths **under a namespace
+prefix** — by default `proteos`, so the granted paths are
+`secret/data/proteos/machines/*` (+ metadata). This must match the control
+plane's `PROTEOS_OPENBAO_PREFIX` (also defaulting to `proteos`; see D2). To use
+a different namespace, export it for **both** the init script and the control
+plane, e.g. `PROTEOS_OPENBAO_PREFIX=acme ./openbao-init.sh`. Set it to the empty
+string (`PROTEOS_OPENBAO_PREFIX=`) on both sides to disable namespacing and use
+un-prefixed `secret/data/machines/*` paths.
+
 > **Keep `openbao-init.json` and `openbao-secret-id` safe and uncommitted** (both
 > are gitignored). `openbao-init.json` holds the unseal key + root token.
 
@@ -305,9 +314,32 @@ then emits `PROTEOS_OPENBAO_ROLE_ID` into `.env` and the AppRole secret_id into
 PROTEOS_SECRETS_BACKEND=openbao
 # (PROTEOS_OPENBAO_ROLE_ID was filled in by the init script)
 
+# Path namespace inside the mount. Default "proteos" → secrets live under
+# secret/data/proteos/... It MUST equal the prefix openbao-init.sh granted in
+# cp-base (D1). Leave at the default unless you also re-ran init with a custom
+# prefix; set to empty ("") only for un-prefixed paths.
+PROTEOS_OPENBAO_PREFIX=proteos
+
 docker compose up -d controlplane
-docker compose logs controlplane | grep 'secrets backend'   # → backend=openbao
+docker compose logs controlplane | grep 'secrets backend'      # → backend=openbao
+docker compose logs controlplane | grep 'secrets self-check'   # → secrets self-check passed
 ```
+
+On boot the control plane runs a **secrets self-check** — a write/read/delete of
+a throwaway machine secret — and logs `secrets self-check passed`. If the backend
+policy doesn't grant machine writes for the configured mount+prefix, it instead
+logs `secrets self-check denied: the backend policy is missing machine write
+capability …` (with the `mount` and `prefix` it used) and **refuses to start**.
+That is almost always a `PROTEOS_OPENBAO_PREFIX` ↔ `cp-base` mismatch: make the
+two agree (re-run `openbao-init.sh` with the same prefix, or fix the env), then
+`docker compose up -d --force-recreate controlplane`.
+
+> **Verbose logging.** Set `PROTEOS_LOG_LEVEL` (`debug` | `info` | `warn` |
+> `error`, default `info`) to control log verbosity — e.g.
+> `PROTEOS_LOG_LEVEL=debug` in `.env` then `docker compose up -d controlplane`.
+> The control plane already logs the underlying error behind any `"internal"`
+> 500 at `error` level, so a failed machine create shows its real cause (e.g. an
+> OpenBao `permission denied`) without raising the level.
 
 ### D3. Migrate an existing dev FileStore (optional)
 
@@ -333,9 +365,10 @@ BAO_ADDR=http://127.0.0.1:8200 \
 ### D5. Verify + backup
 
 ```bash
-# A key written via the UI lands under the user's path (operator view):
+# A key written via the UI lands under the user's path (operator view). Note the
+# namespace prefix (default "proteos"); drop it if PROTEOS_OPENBAO_PREFIX="".
 BAO_TOKEN=$(jq -r .root_token openbao-init.json) \
-  bao kv get secret/users/<user-uuid>/providers/claude
+  bao kv get secret/proteos/users/<user-uuid>/providers/claude
 
 # Audit log is being written:
 docker compose exec openbao cat /openbao/logs/audit.log | tail
@@ -384,8 +417,10 @@ paste the key, Save. The badge flips to **Key set**. Verify it never leaves:
 
 ```bash
 # In OpenBao, under the USER's path (operator view). <uuid> = the user's id.
+# Path includes the PROTEOS_OPENBAO_PREFIX namespace (default "proteos"; drop it
+# if you set the prefix to "").
 BAO_TOKEN=$(jq -r .root_token deploy/app-stack/openbao-init.json) \
-  bao kv get secret/users/<uuid>/providers/claude        # → api_key present
+  bao kv get secret/proteos/users/<uuid>/providers/claude   # → api_key present
 
 # NOT in Postgres:
 docker compose -f deploy/app-stack/compose.yaml exec postgres \
@@ -409,7 +444,7 @@ ROOT=$(jq -r .root_token deploy/app-stack/openbao-init.json)
 OTHER=11111111-1111-1111-1111-111111111111            # any uid != the real <uuid>
 TOK_B=$(BAO_TOKEN=$ROOT bao token create -policy="user-$OTHER" \
   -ttl=90s -orphan -field=token)
-VAULT_TOKEN=$TOK_B bao kv get secret/users/<uuid>/providers/claude
+VAULT_TOKEN=$TOK_B bao kv get secret/proteos/users/<uuid>/providers/claude
 #   → 403 permission denied  (user B physically cannot read user A's secret)
 ```
 

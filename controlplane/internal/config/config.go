@@ -52,9 +52,13 @@ type Config struct {
 	SecretsFile string
 
 	// OpenBao* configure the openbao backend. Mount defaults to "secret"; auth is
-	// AppRole (RoleID + a file holding the secret_id).
+	// AppRole (RoleID + a file holding the secret_id). Prefix is an optional path
+	// namespace inside the mount (default "proteos") so ProteOS secrets live under
+	// secret/data/proteos/...; it must match the paths granted by the cp-base /
+	// user-* OpenBao policies.
 	OpenBaoAddr         string
 	OpenBaoMount        string
+	OpenBaoPrefix       string
 	OpenBaoRoleID       string
 	OpenBaoSecretIDFile string
 
@@ -173,6 +177,7 @@ func Load() (*Config, error) {
 		SecretsFile:         getenv("PROTEOS_SECRETS_FILE", ".data/secrets.json"),
 		OpenBaoAddr:         getenv("PROTEOS_OPENBAO_ADDR", "http://127.0.0.1:8200"),
 		OpenBaoMount:        getenv("PROTEOS_OPENBAO_MOUNT", "secret"),
+		OpenBaoPrefix:       getenv("PROTEOS_OPENBAO_PREFIX", "proteos"),
 		OpenBaoRoleID:       os.Getenv("PROTEOS_OPENBAO_ROLE_ID"),
 		OpenBaoSecretIDFile: os.Getenv("PROTEOS_OPENBAO_SECRET_ID_FILE"),
 		AllowedGitHubLogins: splitList(os.Getenv("ALLOWED_GITHUB_LOGINS")),

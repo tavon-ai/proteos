@@ -91,12 +91,13 @@ func migrateSecrets(dumpPath string) error {
 // openSecrets builds the Store selected by config.
 func openSecrets(cfg *config.Config) (secrets.Store, error) {
 	return secrets.Open(secrets.BackendConfig{
-		Backend:      cfg.SecretsBackend,
-		File:         cfg.SecretsFile,
-		OpenBaoAddr:  cfg.OpenBaoAddr,
-		OpenBaoMount: cfg.OpenBaoMount,
-		RoleID:       cfg.OpenBaoRoleID,
-		SecretIDFile: cfg.OpenBaoSecretIDFile,
+		Backend:       cfg.SecretsBackend,
+		File:          cfg.SecretsFile,
+		OpenBaoAddr:   cfg.OpenBaoAddr,
+		OpenBaoMount:  cfg.OpenBaoMount,
+		OpenBaoPrefix: cfg.OpenBaoPrefix,
+		RoleID:        cfg.OpenBaoRoleID,
+		SecretIDFile:  cfg.OpenBaoSecretIDFile,
 	})
 }
 
@@ -130,6 +131,21 @@ func run(migrate, migrateOnly bool) error {
 		return err
 	}
 	slog.Info("secrets backend", "backend", cfg.SecretsBackend)
+
+	// Fail fast if the secrets backend cannot write/read/delete a machine secret.
+	// This catches the classic OpenBao misconfiguration — a cp-base policy whose
+	// granted paths don't match the configured mount/prefix — at boot, with a
+	// clear message, instead of as an opaque 500 on the first machine create.
+	if err := secrets.SelfCheck(sec); err != nil {
+		if secrets.IsPermissionDenied(err) {
+			slog.Error("secrets self-check denied: the backend policy is missing machine write capability; "+
+				"verify the OpenBao cp-base policy grants create/update on the configured mount+prefix",
+				"err", err, "mount", cfg.OpenBaoMount, "prefix", cfg.OpenBaoPrefix)
+			return fmt.Errorf("secrets backend misconfigured: %w", err)
+		}
+		return fmt.Errorf("secrets backend self-check failed: %w", err)
+	}
+	slog.Info("secrets self-check passed")
 
 	sessions := session.NewManager(q, cfg.SessionTTL)
 	// AC1: personal access tokens back bearer auth for the CLI and the

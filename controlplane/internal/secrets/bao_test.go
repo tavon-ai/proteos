@@ -210,6 +210,81 @@ func TestBaoStoreCrossUserDenial(t *testing.T) {
 	}
 }
 
+// TestBaoStorePrefixNamespacesPaths proves the configured prefix lands secrets
+// under <mount>/data/<prefix>/... (and nowhere else), so a namespaced policy
+// like secret/data/proteos/machines/* covers them.
+func TestBaoStorePrefixNamespacesPaths(t *testing.T) {
+	addr := startBao(t)
+	ctx := context.Background()
+	s, err := secrets.NewBaoStore(secrets.BaoConfig{Address: addr, Token: devRootToken, Prefix: "proteos"})
+	if err != nil {
+		t.Fatalf("new prefixed store: %v", err)
+	}
+	if _, err := secrets.MintMachineVolumeKey(s, deterministicReader{}, "m-pref"); err != nil {
+		t.Fatalf("mint volume key: %v", err)
+	}
+
+	root := rootClient(t, addr)
+	// Present at the prefixed KV path.
+	if sec, err := root.Logical().ReadWithContext(ctx, "secret/data/proteos/machines/m-pref/volume-key"); err != nil || sec == nil {
+		t.Fatalf("expected secret at prefixed path: err=%v sec=%v", err, sec)
+	}
+	// Absent at the un-prefixed path.
+	if sec, _ := root.Logical().ReadWithContext(ctx, "secret/data/machines/m-pref/volume-key"); sec != nil {
+		t.Fatal("secret leaked to the un-prefixed path")
+	}
+}
+
+// TestSelfCheckDetectsPolicyMismatch is the regression guard for the cp-base
+// path-mismatch bug: a token whose policy grants machine writes only under the
+// proteos/ prefix, driving a store configured with NO prefix, is denied — and
+// SelfCheck must surface that as a permission error (so the control plane fails
+// fast at boot). The same token with a matching prefix passes.
+func TestSelfCheckDetectsPolicyMismatch(t *testing.T) {
+	addr := startBao(t)
+	ctx := context.Background()
+	root := rootClient(t, addr)
+
+	policy := `
+path "secret/data/proteos/machines/*"     { capabilities = ["create", "update", "read", "delete"] }
+path "secret/metadata/proteos/machines/*" { capabilities = ["read", "delete", "list"] }
+`
+	if err := root.Sys().PutPolicyWithContext(ctx, "cp-prefixed", policy); err != nil {
+		t.Fatalf("put policy: %v", err)
+	}
+	tokSec, err := root.Logical().WriteWithContext(ctx, "auth/token/create", map[string]any{
+		"policies":  []string{"cp-prefixed"},
+		"ttl":       "120s",
+		"no_parent": true,
+	})
+	if err != nil || tokSec == nil || tokSec.Auth == nil {
+		t.Fatalf("mint limited token: %v", err)
+	}
+	limitedTok := tokSec.Auth.ClientToken
+
+	// No prefix → writes secret/data/machines/... → not covered by the policy.
+	mismatched, err := secrets.NewBaoStore(secrets.BaoConfig{Address: addr, Token: limitedTok})
+	if err != nil {
+		t.Fatalf("new mismatched store: %v", err)
+	}
+	err = secrets.SelfCheck(mismatched)
+	if err == nil {
+		t.Fatal("expected SelfCheck to fail on a policy/path mismatch")
+	}
+	if !secrets.IsPermissionDenied(err) {
+		t.Fatalf("mismatch should be a permission denial, got %v", err)
+	}
+
+	// Matching prefix → writes secret/data/proteos/machines/... → covered.
+	matched, err := secrets.NewBaoStore(secrets.BaoConfig{Address: addr, Token: limitedTok, Prefix: "proteos"})
+	if err != nil {
+		t.Fatalf("new matched store: %v", err)
+	}
+	if err := secrets.SelfCheck(matched); err != nil {
+		t.Fatalf("SelfCheck should pass when prefix matches the policy: %v", err)
+	}
+}
+
 // deterministicReader is a fixed entropy source for the volume-key test.
 type deterministicReader struct{}
 

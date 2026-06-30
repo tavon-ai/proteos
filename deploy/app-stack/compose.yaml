@@ -86,6 +86,10 @@ services:
       PROTEOS_SECRETS_FILE: /var/lib/proteos/secrets.json
       PROTEOS_OPENBAO_ADDR: ${PROTEOS_OPENBAO_ADDR:-http://openbao:8200}
       PROTEOS_OPENBAO_MOUNT: ${PROTEOS_OPENBAO_MOUNT:-secret}
+      # Path namespace inside the mount: secrets live under <mount>/data/<prefix>/...
+      # MUST match the prefix openbao-init.sh granted in the cp-base policy.
+      # Default "proteos"; set to "" only if your policy uses un-prefixed paths.
+      PROTEOS_OPENBAO_PREFIX: ${PROTEOS_OPENBAO_PREFIX-proteos}
       PROTEOS_OPENBAO_ROLE_ID: ${PROTEOS_OPENBAO_ROLE_ID:-}
       # The AppRole secret_id is read from a file (kept out of the env/process
       # list). Put it at deploy/app-stack/openbao-secret-id (mounted below).
