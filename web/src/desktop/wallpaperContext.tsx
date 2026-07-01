@@ -39,8 +39,8 @@ function loadPrefs(): WallpaperPrefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch (error) {
-    return { ...JSON.parse(error) };
+  } catch {
+    // ignore malformed/unavailable storage; fall back to defaults
   }
   return DEFAULTS;
 }
@@ -60,8 +60,8 @@ export function WallpaperProvider({ children }: { children: ReactNode }) {
       const next = { ...prev, ...patch };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch (error) {
-        return { ...JSON.parse(error) };
+      } catch {
+        // ignore storage write failures (private mode, quota, etc.)
       }
       return next;
     });
