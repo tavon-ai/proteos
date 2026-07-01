@@ -40,7 +40,7 @@ function loadPrefs(): WallpaperPrefs {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch (error) {
-  	return {...JSON.parse(error)};
+    return { ...JSON.parse(error) };
   }
   return DEFAULTS;
 }
@@ -61,8 +61,8 @@ export function WallpaperProvider({ children }: { children: ReactNode }) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch (error) {
-        return {...JSON.parse(error)};
-  }
+        return { ...JSON.parse(error) };
+      }
       return next;
     });
   }, []);
