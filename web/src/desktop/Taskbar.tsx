@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { type MachineState, type Me } from '../api/client';
 import { useMachineMutations, useTemplates } from '../api/hooks';
-import { useSelectedMachine } from './selectedMachine';
+import { useSelectedMachine } from './selectedMachineStore';
 import { useWindowManager } from './windowManagerContext';
 import { openHomeTerminal, openLogs, openPreview, openProjects, openSettings } from './openers';
 import { CreateMachineDialog } from './CreateMachineDialog';

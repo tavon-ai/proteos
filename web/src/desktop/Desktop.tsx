@@ -11,7 +11,8 @@ import { LogsWindow } from '../windows/LogsWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
-import { SelectedMachineProvider, useSelectedMachine } from './selectedMachine';
+import { SelectedMachineProvider } from './selectedMachine';
+import { useSelectedMachine } from './selectedMachineStore';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
 import { WindowManagerProvider } from './WindowManager';
@@ -19,7 +20,8 @@ import { useWindowManager } from './windowManagerContext';
 import { openProjects } from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';
-import { WallpaperProvider, useWallpaper } from './wallpaperContext';
+import { WallpaperProvider } from './wallpaperContext';
+import { useWallpaper } from './wallpaper';
 
 // Desktop is the product shell: a project-centric, multi-window desktop. It owns
 // the live machines + event + provider subscriptions once (a single EventSource

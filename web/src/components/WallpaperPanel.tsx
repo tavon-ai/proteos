@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { BUNDLED_WALLPAPERS, useWallpaper } from '../desktop/wallpaperContext';
+import { BUNDLED_WALLPAPERS, useWallpaper } from '../desktop/wallpaper';
 
 export function WallpaperPanel() {
   const { prefs, update } = useWallpaper();
@@ -20,7 +20,7 @@ export function WallpaperPanel() {
     e.target.value = '';
   };
 
-  const handleUrlSubmit = (e: React.FormEvent) => {
+  const handleUrlSubmit = (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmed = urlInput.trim();
     if (!trimmed) return;

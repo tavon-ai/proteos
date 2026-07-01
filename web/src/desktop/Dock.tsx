@@ -1,5 +1,5 @@
 import { useWindowManager } from './windowManagerContext';
-import { useSelectedMachine } from './selectedMachine';
+import { useSelectedMachine } from './selectedMachineStore';
 
 // Dock is the bottom strip listing every open window (decision #1). It lists
 // windows from EVERY machine (not just the active one), so it doubles as a

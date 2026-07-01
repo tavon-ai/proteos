@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MachineSummary } from '../api/client';
-import { chooseDefaultMachine } from './selectedMachine';
+import { chooseDefaultMachine } from './selectedMachineStore';
 
 // Minimal machine factory — only id/state matter to chooseDefaultMachine.
 function m(id: string, state: MachineSummary['state']): MachineSummary {
