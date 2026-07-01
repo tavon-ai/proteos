@@ -4,10 +4,11 @@ import { ClaudeSubscriptionPanel } from '../components/ClaudeSubscriptionPanel';
 import { GitSshPanel } from '../components/GitSshPanel';
 import { TokensPanel } from '../components/TokensPanel';
 import { DownloadsPanel } from '../components/DownloadsPanel';
+import { WallpaperPanel } from '../components/WallpaperPanel';
 import { GitHubStatus } from '../components/GitHubStatus';
 import { reconnectRequired, useRepos } from '../api/hooks';
 
-type Tab = 'providers' | 'claude' | 'gitssh' | 'github' | 'tokens' | 'downloads';
+type Tab = 'providers' | 'claude' | 'gitssh' | 'github' | 'tokens' | 'downloads' | 'wallpaper';
 
 // SettingsWindow folds the Phase 5–7 panels into one window with tabs
 // (decision #7): the Providers tab manages each provider's write-only API key
@@ -67,6 +68,14 @@ export function SettingsWindow() {
         >
           Downloads
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'wallpaper'}
+          className={tab === 'wallpaper' ? 'settings-tab active' : 'settings-tab'}
+          onClick={() => setTab('wallpaper')}
+        >
+          Wallpaper
+        </button>
       </div>
       <div className="settings-body">
         {tab === 'providers' && <ProvidersPanel />}
@@ -75,6 +84,7 @@ export function SettingsWindow() {
         {tab === 'github' && <GitHubTab />}
         {tab === 'tokens' && <TokensPanel />}
         {tab === 'downloads' && <DownloadsPanel />}
+        {tab === 'wallpaper' && <WallpaperPanel />}
       </div>
     </div>
   );
