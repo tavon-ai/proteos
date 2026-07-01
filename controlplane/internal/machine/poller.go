@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,6 +22,12 @@ import (
 const (
 	transitionalInterval = 2 * time.Second
 	runningSweepInterval = 30 * time.Second
+
+	// BlipThreshold is the number of consecutive agent-unreachable observations
+	// required before a running machine is moved to error. A single connectivity
+	// blip (one sweep cycle ≈ 30 s) is tolerated; three consecutive misses
+	// (≈ 90 s) constitute a real outage.
+	BlipThreshold = 3
 )
 
 // Poller advances asynchronous machine operations by reconciling the
@@ -38,11 +45,18 @@ type Poller struct {
 	// to the secret injector so the provider keys are pushed on every start and
 	// resume. It must not block or fail the lifecycle (decision #7).
 	onRunning func(userID, machineID string)
+
+	// blipMu guards blipCount.
+	blipMu sync.Mutex
+	// blipCount tracks consecutive agent-unreachable observations per machine ID
+	// during the running sweep. Entries are removed when the machine is healthy
+	// or after it transitions out of running.
+	blipCount map[string]int
 }
 
 // NewPoller builds a poller. broker may be nil.
 func NewPoller(pool *pgxpool.Pool, nodes NodeClient, broker *Broker) *Poller {
-	return &Poller{pool: pool, q: store.New(pool), nodes: nodes, broker: broker}
+	return &Poller{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, blipCount: make(map[string]int)}
 }
 
 // SetOnRunning registers the post-running hook (Phase 5 secret injection). Pass
@@ -89,6 +103,12 @@ func (p *Poller) AdvanceTransitional(ctx context.Context) {
 // SweepRunning checks each running machine is still alive on its agent; a
 // machine the agent no longer reports as running has crashed and is moved to
 // error. Exported for deterministic tests.
+//
+// Transient node-agent connectivity failures are tolerated for up to
+// blipThreshold consecutive sweep cycles before the machine is moved to error,
+// so brief network blips do not falsely mark idle machines as failed. When the
+// agent is reachable but explicitly reports a non-running state (crash), the
+// machine is moved to error immediately.
 func (p *Poller) SweepRunning(ctx context.Context) {
 	machines, err := p.q.ListMachinesInStates(ctx, []string{string(StateRunning)})
 	if err != nil {
@@ -99,9 +119,23 @@ func (p *Poller) SweepRunning(ctx context.Context) {
 		id := UUIDString(m.ID)
 		st, err := p.nodes.Status(ctx, id)
 		if err != nil {
-			p.toError(ctx, m, StateRunning, "node-agent unreachable during running sweep: "+err.Error())
+			if errors.Is(err, nodeclient.ErrUnknownMachine) {
+				// Agent is reachable but has no record of this machine — real failure.
+				p.blipReset(id)
+				p.toError(ctx, m, StateRunning, "node-agent no longer tracks this machine during sweep")
+				continue
+			}
+			// Agent unreachable: could be a transient network blip. Apply grace period.
+			n := p.blipIncr(id)
+			slog.Warn("poller: node-agent unreachable during running sweep", "machine", id, "consecutive_failures", n, "threshold", BlipThreshold, "err", err)
+			if n >= BlipThreshold {
+				p.blipReset(id)
+				p.toError(ctx, m, StateRunning, "node-agent unreachable during running sweep: "+err.Error())
+			}
 			continue
 		}
+		// Agent responded: reset the blip counter.
+		p.blipReset(id)
 		if st.State != agentapi.StateRunning {
 			reason := "vm no longer running (agent reports " + st.State + ")"
 			if st.Reason != "" {
@@ -215,6 +249,21 @@ func (p *Poller) toRunning(ctx context.Context, m store.Machine, from State, st 
 	if p.onRunning != nil {
 		p.onRunning(UUIDString(m.UserID), UUIDString(m.ID))
 	}
+}
+
+// blipIncr increments and returns the consecutive-failure count for id.
+func (p *Poller) blipIncr(id string) int {
+	p.blipMu.Lock()
+	defer p.blipMu.Unlock()
+	p.blipCount[id]++
+	return p.blipCount[id]
+}
+
+// blipReset clears the consecutive-failure count for id.
+func (p *Poller) blipReset(id string) {
+	p.blipMu.Lock()
+	defer p.blipMu.Unlock()
+	delete(p.blipCount, id)
 }
 
 // toError moves a machine to the error state with a reason, recorded in both

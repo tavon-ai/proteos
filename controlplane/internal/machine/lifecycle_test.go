@@ -25,6 +25,7 @@ type fakeAgent struct {
 	mu           sync.Mutex
 	status       map[string]agentapi.MachineStatus
 	failEnsure   bool
+	failStatus   bool // makes GET /v1/machines/{id} return 500 (simulates node-agent blip)
 	ensureCalls  int
 	stopCalls    int
 	destroyCalls int
@@ -108,7 +109,12 @@ func (f *fakeAgent) handler() http.Handler {
 		id := r.PathValue("id")
 		f.mu.Lock()
 		st, ok := f.status[id]
+		fail := f.failStatus
 		f.mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(agentapi.ErrorResponse{Error: agentapi.ErrUnknownMachine})
@@ -517,5 +523,94 @@ func TestRunningSweepDetectsCrash(t *testing.T) {
 	h.poller.SweepRunning(ctx)
 	if got := h.machine(t).State; got != string(machine.StateError) {
 		t.Fatalf("after crash sweep state=%q, want error", got)
+	}
+}
+
+// TestRunningSweepToleratesTransientBlip verifies that a running machine is not
+// moved to error on a brief node-agent connectivity failure: it must survive
+// blipThreshold-1 consecutive unreachable sweeps and only error on the
+// threshold-th consecutive failure.
+func TestRunningSweepToleratesTransientBlip(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idStr := machine.UUIDString(m.ID)
+	h.agent.SetStatus(idStr, agentapi.StateRunning, "", "172.30.0.2")
+	h.poller.AdvanceTransitional(ctx)
+	if h.machine(t).State != string(machine.StateRunning) {
+		t.Fatal("expected running before sweep")
+	}
+
+	// Simulate blipThreshold-1 consecutive agent failures: machine must stay running.
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+
+	for i := 0; i < machine.BlipThreshold-1; i++ {
+		h.poller.SweepRunning(ctx)
+		if got := h.machine(t).State; got != string(machine.StateRunning) {
+			t.Fatalf("sweep %d/%d: state=%q, want running (blip should be tolerated)", i+1, machine.BlipThreshold-1, got)
+		}
+	}
+
+	// One more failure pushes past the threshold → error.
+	h.poller.SweepRunning(ctx)
+	if got := h.machine(t).State; got != string(machine.StateError) {
+		t.Fatalf("after %d consecutive blips state=%q, want error", machine.BlipThreshold, got)
+	}
+}
+
+// TestRunningSweepBlipCounterResets verifies that the blip counter is cleared
+// when the agent becomes healthy again, so a recovered blip never accumulates
+// toward the threshold across separate incidents.
+func TestRunningSweepBlipCounterResets(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idStr := machine.UUIDString(m.ID)
+	h.agent.SetStatus(idStr, agentapi.StateRunning, "", "172.30.0.2")
+	h.poller.AdvanceTransitional(ctx)
+	if h.machine(t).State != string(machine.StateRunning) {
+		t.Fatal("expected running before sweep")
+	}
+
+	// Accumulate blipThreshold-1 failures (just below the threshold).
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+	for i := 0; i < machine.BlipThreshold-1; i++ {
+		h.poller.SweepRunning(ctx)
+	}
+	if got := h.machine(t).State; got != string(machine.StateRunning) {
+		t.Fatalf("after %d blips state=%q, want running", machine.BlipThreshold-1, got)
+	}
+
+	// Agent recovers: one healthy sweep must reset the counter.
+	h.agent.mu.Lock()
+	h.agent.failStatus = false
+	h.agent.mu.Unlock()
+	h.poller.SweepRunning(ctx)
+	if got := h.machine(t).State; got != string(machine.StateRunning) {
+		t.Fatalf("after recovery sweep state=%q, want running", got)
+	}
+
+	// A new incident of blipThreshold-1 failures must again be tolerated (counter
+	// was reset, not just paused).
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+	for i := 0; i < machine.BlipThreshold-1; i++ {
+		h.poller.SweepRunning(ctx)
+		if got := h.machine(t).State; got != string(machine.StateRunning) {
+			t.Fatalf("second incident sweep %d: state=%q, want running", i+1, got)
+		}
 	}
 }
