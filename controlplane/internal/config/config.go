@@ -159,6 +159,11 @@ type Config struct {
 	// var is absent the registry is left as seeded (ProvidersEnabledSet is false).
 	ProvidersEnabled    []string
 	ProvidersEnabledSet bool
+
+	// ShutdownTimeout (PROTEOS_SHUTDOWN_TIMEOUT) is the maximum time allowed for
+	// the graceful-shutdown sequence: draining in-flight HTTP requests and waiting
+	// for SSE clients to close after receiving the shutdown notification.
+	ShutdownTimeout time.Duration
 }
 
 // Load reads configuration from the environment and validates it. The
@@ -200,9 +205,10 @@ func Load() (*Config, error) {
 		MaxMemMiB:         getenvInt("PROTEOS_MAX_MEM_MIB", 16384),
 		MaxDiskMiB:        getenvInt("PROTEOS_MAX_DISK_MIB", 51200),
 
-		MachineDomain:  os.Getenv("PROTEOS_MACHINE_DOMAIN"),
-		PreviewPortMin: getenvUint32("PROTEOS_PREVIEW_PORT_MIN", agentapi.DefaultPreviewPortMin),
-		PreviewPortMax: getenvUint32("PROTEOS_PREVIEW_PORT_MAX", agentapi.DefaultPreviewPortMax),
+		MachineDomain:   os.Getenv("PROTEOS_MACHINE_DOMAIN"),
+		PreviewPortMin:  getenvUint32("PROTEOS_PREVIEW_PORT_MIN", agentapi.DefaultPreviewPortMin),
+		PreviewPortMax:  getenvUint32("PROTEOS_PREVIEW_PORT_MAX", agentapi.DefaultPreviewPortMax),
+		ShutdownTimeout: getenvDuration("PROTEOS_SHUTDOWN_TIMEOUT", 30*time.Second),
 	}
 
 	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {
@@ -273,6 +279,15 @@ func getenvUint32(key string, def uint32) uint32 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.ParseUint(v, 10, 32); err == nil {
 			return uint32(n)
+		}
+	}
+	return def
+}
+
+func getenvDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
 		}
 	}
 	return def

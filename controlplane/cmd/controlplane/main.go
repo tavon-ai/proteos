@@ -4,12 +4,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
@@ -118,7 +121,12 @@ func run(migrate, migrateOnly bool) error {
 		}
 	}
 
-	ctx := context.Background()
+	// Cancel the root context on SIGTERM or SIGINT. This propagates to all
+	// background goroutines (poller, guestCtl) so they stop gracefully when the
+	// signal fires.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
 	pool, err := store.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -343,5 +351,44 @@ func run(migrate, migrateOnly bool) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	slog.Info("control plane listening", "addr", cfg.Addr, "base_url", cfg.BaseURL)
-	return httpServer.ListenAndServe()
+
+	// Start the HTTP server in a goroutine so we can orchestrate shutdown.
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+		close(serveErr)
+	}()
+
+	// Block until a signal fires or the server exits with a fatal error.
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+		// Signal received — begin graceful shutdown.
+	}
+
+	// Release the signal handler so a second signal kills the process immediately.
+	stop()
+
+	slog.Info("shutdown signal received", "timeout", cfg.ShutdownTimeout)
+
+	// Notify active SSE clients so they can display a reconnect banner before
+	// the connection is closed. This must happen before Shutdown() so that the
+	// SSE handlers have a chance to write their final event.
+	broker.Shutdown()
+	taskHub.Shutdown()
+
+	// Drain in-flight HTTP requests within the configured timeout. New requests
+	// are rejected immediately; existing connections are closed once idle.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http shutdown", "err", err)
+		return err
+	}
+
+	slog.Info("control plane stopped cleanly")
+	return nil
 }
