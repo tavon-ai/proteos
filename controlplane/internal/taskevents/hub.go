@@ -38,8 +38,9 @@ type Hub struct {
 	bufSize   int
 	retention time.Duration
 
-	mu    sync.Mutex
-	tasks map[string]*stream
+	mu         sync.Mutex
+	tasks      map[string]*stream
+	shutdownCh chan struct{}
 }
 
 // stream is one task's ring buffer plus its live subscribers.
@@ -62,7 +63,27 @@ func New(bufSize int, retention time.Duration) *Hub {
 	if retention <= 0 {
 		retention = DefaultRetention
 	}
-	return &Hub{bufSize: bufSize, retention: retention, tasks: map[string]*stream{}}
+	return &Hub{bufSize: bufSize, retention: retention, tasks: map[string]*stream{}, shutdownCh: make(chan struct{})}
+}
+
+// Shutdown signals all active task-event SSE subscribers that the server is
+// shutting down. The channel returned by ShutdownCh is closed; subscribers
+// should emit a final "shutdown" event and return.
+func (h *Hub) Shutdown() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	select {
+	case <-h.shutdownCh:
+		// already closed
+	default:
+		close(h.shutdownCh)
+	}
+}
+
+// ShutdownCh returns a channel that is closed when Shutdown is called. SSE
+// handlers select on this to send clients a graceful shutdown notification.
+func (h *Hub) ShutdownCh() <-chan struct{} {
+	return h.shutdownCh
 }
 
 // Publish appends one normalized event to a task's stream, assigns its Seq, and

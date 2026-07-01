@@ -13,10 +13,15 @@ import (
 // exists, so Machine carries only the pre-delete row (for the SSE user-id filter)
 // and Event is zero. Subscribers emit a `destroyed` event instead of a `machine`
 // one.
+//
+// Shutdown marks the sentinel notification sent to all SSE subscribers just
+// before the server begins draining connections. Subscribers should emit a
+// "shutdown" event and close.
 type Update struct {
-	Machine store.Machine
-	Event   store.MachineEvent
-	Deleted bool
+	Machine  store.Machine
+	Event    store.MachineEvent
+	Deleted  bool
+	Shutdown bool
 }
 
 // Broker is an in-process pub/sub fan-out for machine Updates. It is the
@@ -54,6 +59,16 @@ func (b *Broker) Subscribe() (<-chan Update, func()) {
 		}
 		b.mu.Unlock()
 	}
+}
+
+// Shutdown notifies all current SSE subscribers that the server is shutting
+// down. Each subscriber receives one Update with Shutdown set; they are
+// expected to emit a final "shutdown" SSE event and return.
+func (b *Broker) Shutdown() {
+	if b == nil {
+		return
+	}
+	b.Publish(Update{Shutdown: true})
 }
 
 // Publish fans out u to every current subscriber, dropping for any whose buffer

@@ -92,6 +92,10 @@ func (s *Server) handleTaskEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.TaskEvents.ShutdownCh():
+			_ = writeSSE(w, "shutdown", "", map[string]string{"reason": "server_shutdown"})
+			flusher.Flush()
+			return
 		case <-heartbeat.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return

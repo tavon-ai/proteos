@@ -124,6 +124,12 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			// Server is shutting down: notify the client and close the stream.
+			if u.Shutdown {
+				_ = writeSSE(w, "shutdown", "", map[string]string{"reason": "server_shutdown"})
+				flusher.Flush()
+				return
+			}
 			if !sameUser(u.Machine.UserID, user.ID) {
 				continue
 			}
