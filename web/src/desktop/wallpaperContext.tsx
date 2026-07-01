@@ -39,7 +39,9 @@ function loadPrefs(): WallpaperPrefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {}
+  } catch (error) {
+  	return {...JSON.parse(error)};
+  }
   return DEFAULTS;
 }
 
@@ -58,7 +60,9 @@ export function WallpaperProvider({ children }: { children: ReactNode }) {
       const next = { ...prev, ...patch };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {}
+      } catch (error) {
+        return {...JSON.parse(error)};
+  }
       return next;
     });
   }, []);
@@ -87,7 +91,9 @@ export function WallpaperProvider({ children }: { children: ReactNode }) {
     };
   }, [prefs.autoRotate]);
 
-  return <WallpaperContext.Provider value={{ prefs, update }}>{children}</WallpaperContext.Provider>;
+  return (
+    <WallpaperContext.Provider value={{ prefs, update }}>{children}</WallpaperContext.Provider>
+  );
 }
 
 export function useWallpaper(): WallpaperContextValue {
