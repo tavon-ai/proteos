@@ -437,6 +437,51 @@ func TestTaskWatchReconnect(t *testing.T) {
 	}
 }
 
+// TestTaskWatchOversizedFrameTerminates verifies that a data line exceeding the
+// scanner's 1 MB limit stops the stream with an error instead of triggering an
+// infinite reconnect loop (the server would replay the same oversized frame on
+// every reconnect via Last-Event-ID).
+func TestTaskWatchOversizedFrameTerminates(t *testing.T) {
+	var mu sync.Mutex
+	var conns int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/machines/m1/tasks/t1/events" {
+			writeErr(w, http.StatusNotFound, "no")
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		mu.Lock()
+		conns++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		// Normal event followed by a data line that exceeds the 1 MB scanner limit.
+		fmt.Fprintf(w, "id: 1\nevent: agent\ndata: {\"kind\":\"assistant_text\",\"text\":\"hi\"}\n\n")
+		if fl != nil {
+			fl.Flush()
+		}
+		fmt.Fprintf(w, "id: 2\nevent: agent\ndata: %s\n\n", strings.Repeat("x", 1<<20+100))
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	code, _, _ := runCLI(t, ts.URL, "tok", "task", "watch", "--machine", "m1", "t1")
+	if code == client.ExitOK {
+		t.Fatal("expected non-zero exit for oversized frame, got 0")
+	}
+	mu.Lock()
+	n := conns
+	mu.Unlock()
+	if n > 1 {
+		t.Fatalf("oversized frame triggered reconnect loop: %d connections (want 1)", n)
+	}
+}
+
 func TestUsageExit2(t *testing.T) {
 	_, url := newCP(t)
 	// Missing --machine.
