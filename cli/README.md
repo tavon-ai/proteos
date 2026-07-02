@@ -94,6 +94,9 @@ the repo isn't already in the machine's workspace.
 ```sh
 proteos machines ls                 # id, name, state, template (type)
 proteos machines get <id>           # one machine, including its template
+proteos machines create --template go --name my-box  # create a machine (async boot)
+proteos machines start <id>         # start a stopped machine
+proteos machines stop <id>          # stop (hibernate) a running machine
 proteos templates ls                # the machine types you can create (full-stack, go, …)
 ```
 

@@ -32,6 +32,9 @@ type fakeCP struct {
 	cloned          bool   // set by POST /api/git/clone (then projects show up)
 	lastCloneName   string // full_name from the last clone request
 	lastCommitMsg   string // message from the last git commit request
+
+	lastCreateName     string // name from the last POST /api/machines
+	lastCreateTemplate string // template_id from the last POST /api/machines
 }
 
 func (f *fakeCP) handler() http.Handler {
@@ -56,6 +59,40 @@ func (f *fakeCP) handler() http.Handler {
 			return
 		}
 		fmt.Fprint(w, `[{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","template_id":"go","created_at":"2026-06-20T00:00:00Z"}]`)
+	})
+	mux.HandleFunc("POST /api/machines", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		var body struct {
+			Name       string `json:"name"`
+			TemplateID string `json:"template_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.lastCreateName = body.Name
+		f.lastCreateTemplate = body.TemplateID
+		f.mu.Unlock()
+		name := body.Name
+		if name == "" {
+			name = "auto"
+		}
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"id":"m2","name":%q,"state":"provisioning","guest_ip":null,"template_id":%q,"created_at":"2026-06-21T00:00:00Z"}`, name, body.TemplateID)
+	})
+	mux.HandleFunc("POST /api/machines/{id}/start", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"id":%q,"name":"alpha","state":"running","guest_ip":null,"template_id":"go","created_at":"2026-06-20T00:00:00Z"}`, r.PathValue("id"))
+	})
+	mux.HandleFunc("POST /api/machines/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"id":%q,"name":"alpha","state":"stopped","guest_ip":null,"template_id":"go","created_at":"2026-06-20T00:00:00Z"}`, r.PathValue("id"))
 	})
 	mux.HandleFunc("GET /api/templates", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
@@ -259,6 +296,61 @@ func TestMachineNotFoundExit4(t *testing.T) {
 	code, _, _ := runCLI(t, url, "tok", "machines", "get", "nope")
 	if code != client.ExitNotFound {
 		t.Fatalf("exit = %d, want 4", code)
+	}
+}
+
+func TestMachinesCreate(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "create", "--template", "go", "--name", "my-box")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "m2") || !strings.Contains(out, "created") || !strings.Contains(out, "provisioning") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+	if cp.lastCreateTemplate != "go" || cp.lastCreateName != "my-box" {
+		t.Fatalf("server got name=%q template=%q", cp.lastCreateName, cp.lastCreateTemplate)
+	}
+}
+
+func TestMachinesCreateJSON(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "create", "--template", "go", "--json")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, `"id": "m2"`) || !strings.Contains(out, `"state": "provisioning"`) {
+		t.Fatalf("expected JSON summary:\n%s", out)
+	}
+}
+
+func TestMachinesStart(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "start", "m1")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "m1") || !strings.Contains(out, "started") || !strings.Contains(out, "running") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+}
+
+func TestMachinesStop(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "stop", "m1")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "m1") || !strings.Contains(out, "stopped") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+}
+
+func TestMachinesStartRequiresID(t *testing.T) {
+	_, url := newCP(t)
+	code, _, _ := runCLI(t, url, "tok", "machines", "start")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2", code)
 	}
 }
 
@@ -612,7 +704,7 @@ func TestHelpJSONOffline(t *testing.T) {
 		}
 		want := []string{
 			"auth login", "auth status", "auth logout",
-			"machines ls", "machines get",
+			"machines ls", "machines get", "machines create", "machines start", "machines stop",
 			"templates ls",
 			"repo ls",
 			"project ls", "project clone", "project ensure",

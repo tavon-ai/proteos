@@ -47,3 +47,37 @@ func (c *Client) GetMachine(ctx context.Context, id string) (Machine, error) {
 	err := c.Do(ctx, "GET", "/api/machines/"+id, nil, &m)
 	return m, err
 }
+
+// CreateMachineRequest is the POST /api/machines body. A zero-value resource
+// pointer (nil) falls back to the template's default server-side.
+type CreateMachineRequest struct {
+	Name       string `json:"name,omitempty"`
+	TemplateID string `json:"template_id,omitempty"`
+	Vcpus      *int   `json:"vcpus,omitempty"`
+	MemMiB     *int   `json:"mem_mib,omitempty"`
+	DiskMiB    *int   `json:"disk_mib,omitempty"`
+}
+
+// CreateMachine provisions a new machine and returns its summary. The server
+// replies 202: the machine boots asynchronously, so State is typically still a
+// provisioning state on return.
+func (c *Client) CreateMachine(ctx context.Context, req CreateMachineRequest) (Machine, error) {
+	var m Machine
+	err := c.Do(ctx, "POST", "/api/machines", req, &m)
+	return m, err
+}
+
+// StartMachine resumes a stopped machine and returns the updated summary.
+func (c *Client) StartMachine(ctx context.Context, id string) (Machine, error) {
+	var m Machine
+	err := c.Do(ctx, "POST", "/api/machines/"+id+"/start", struct{}{}, &m)
+	return m, err
+}
+
+// StopMachine stops (hibernates) a running machine and returns the updated
+// summary.
+func (c *Client) StopMachine(ctx context.Context, id string) (Machine, error) {
+	var m Machine
+	err := c.Do(ctx, "POST", "/api/machines/"+id+"/stop", struct{}{}, &m)
+	return m, err
+}
