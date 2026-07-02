@@ -68,6 +68,9 @@ proteos auth logout   # remove stored credentials
 ```
 proteos machines ls                 # list your machines
 proteos machines get <id>           # show one machine
+proteos machines create --template <id> [--name <name>]  # create a machine
+proteos machines start <id>         # start a stopped machine
+proteos machines stop <id>          # stop a running machine
 
 proteos task run --machine <id> --project <repo> [--provider claude] "<prompt>"
 proteos task ls   --machine <id>

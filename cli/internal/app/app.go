@@ -79,6 +79,9 @@ Commands:
   auth logout          Remove the stored credentials
   machines ls          List your machines (with their template/type)
   machines get <id>    Show one machine
+  machines create      Create a new machine from a template
+  machines start <id>  Start a stopped machine
+  machines stop <id>   Stop a running machine
   templates ls         List the machine templates (types) you can create
   repo ls              List the GitHub repos you can clone
   project ls           List the repos cloned in a machine's workspace

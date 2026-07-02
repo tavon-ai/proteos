@@ -146,6 +146,9 @@ func commandRegistry() []group {
 		{name: "machines", aliases: []string{"machine"}, usage: machinesGroupUsage, leaves: []leaf{
 			{name: "ls", aliases: []string{"list"}, run: machinesList},
 			{name: "get", aliases: []string{"show"}, run: machinesGet},
+			{name: "create", aliases: []string{"new"}, run: machinesCreate},
+			{name: "start", run: machinesStart},
+			{name: "stop", run: machinesStop},
 		}},
 		{name: "templates", aliases: []string{"template"}, usage: templatesGroupUsage, leaves: []leaf{
 			{name: "ls", aliases: []string{"list"}, run: templatesList},
