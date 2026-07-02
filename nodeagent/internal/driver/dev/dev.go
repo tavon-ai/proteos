@@ -51,8 +51,9 @@ type DevDriver struct {
 	// real code-server. Empty ⇒ no web listener (terminal-only dev).
 	guestWebBackend string
 
-	mu    sync.Mutex
-	procs map[string]*exec.Cmd // machineID -> running stub child
+	mu      sync.Mutex
+	procs   map[string]*exec.Cmd // machineID -> running stub child
+	booting map[string]struct{}  // machineID set for in-flight EnsureRunning calls; protected by mu
 }
 
 // New builds a DevDriver. stubPath empty ⇒ resolve `sleep` from PATH. The stub
@@ -75,6 +76,7 @@ func New(store *state.Store, bootDelay time.Duration, stubPath, guestAgentBin, g
 		guestAgentBin:   guestAgentBin,
 		guestWebBackend: guestWebBackend,
 		procs:           make(map[string]*exec.Cmd),
+		booting:         make(map[string]struct{}),
 	}
 }
 
@@ -119,6 +121,24 @@ func (d *DevDriver) envDir(machineID string) string {
 // snapshot is consumed; otherwise it cold-boots (boot=cold).
 func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string, error) {
 	handle := state.Handle(spec.MachineID)
+
+	// TOCTOU guard: between Reserve() persisting a fresh record (pid=0) and boot()
+	// recording the child pid/proc, a concurrent call sees pid=0, concludes the
+	// machine is not alive, and would kick off a second boot. Claiming the
+	// per-machine slot here makes the second caller return the handle immediately.
+	d.mu.Lock()
+	if _, ok := d.booting[spec.MachineID]; ok {
+		d.mu.Unlock()
+		return handle, nil
+	}
+	d.booting[spec.MachineID] = struct{}{}
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.booting, spec.MachineID)
+		d.mu.Unlock()
+	}()
+
 	diskID, diskMiB := "", 0
 	if len(spec.Disks) > 0 {
 		diskID, diskMiB = spec.Disks[0].ID, spec.Disks[0].SizeMiB
