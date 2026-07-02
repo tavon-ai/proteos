@@ -96,7 +96,12 @@ func (c *Client) streamOnce(ctx context.Context, machineID, taskID, lastID strin
 		req.Header.Set("Last-Event-ID", lastID)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	// SSE connections must not be subject to the client's global Timeout, which
+	// applies to the entire response-body read and would kill any stream longer
+	// than 30 s. Context cancellation on the request already owns the deadline.
+	sseHTTP := *c.HTTP
+	sseHTTP.Timeout = 0
+	resp, err := sseHTTP.Do(req)
 	if err != nil {
 		return false, lastID, err
 	}
@@ -147,6 +152,12 @@ func (c *Client) streamOnce(ctx context.Context, machineID, taskID, lastID strin
 		}
 	}
 	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			// An oversized frame can never be read on reconnect either — the server
+			// would replay the same frame with Last-Event-ID, looping forever. Treat
+			// it as a terminal stop instead of a transient reconnectable error.
+			return false, curID, &stopError{err: fmt.Errorf("sse frame too large: %w", err)}
+		}
 		return false, curID, fmt.Errorf("read stream: %w", err)
 	}
 	return false, curID, nil
