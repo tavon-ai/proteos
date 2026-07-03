@@ -18,6 +18,12 @@ SELECT * FROM users WHERE id = $1;
 -- updated row.
 UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING *;
 
+-- name: SetUserClaudeAttribution :one
+-- Update whether Claude Code attribution (the commit/PR "Generated with Claude
+-- Code" lines and Co-Authored-By trailer) is enabled for the user. Returns the
+-- updated row.
+UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING *;
+
 -- name: CreateSession :one
 INSERT INTO sessions (user_id, token_hash, expires_at)
 VALUES ($1, $2, $3)

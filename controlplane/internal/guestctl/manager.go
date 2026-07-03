@@ -203,19 +203,20 @@ func (m *Manager) connectOnce(ctx context.Context, machineID, userID string) (es
 	defer m.clearConn(machineID, c)
 
 	slog.Info("guestctl: channel up", "machine", machineID)
-	// Push git identity + helper wiring on every (re)connect, concurrently with
-	// the read loop — git.configure is a request/response, so it needs c.run to be
-	// reading. Idempotent; a configure failure does not drop the channel
-	// (credentials still work).
+	// Push git identity + helper wiring and the Claude preferences on every
+	// (re)connect, concurrently with the read loop — the configure ops are
+	// request/response, so they need c.run to be reading. Idempotent; a configure
+	// failure does not drop the channel (credentials still work).
 	go func() {
 		if cfgErr := m.configure(ctx, c, userID); cfgErr != nil {
-			slog.Warn("guestctl: git.configure failed", "machine", machineID, "err", cfgErr)
+			slog.Warn("guestctl: configure failed", "machine", machineID, "err", cfgErr)
 		}
 	}()
 	return true, c.run(ctx)
 }
 
-// configure sends git.configure with the owner's GitHub identity.
+// configure sends git.configure with the owner's GitHub identity, then
+// claude.configure with the owner's Claude Code preferences (attribution).
 func (m *Manager) configure(ctx context.Context, c *conn, userID string) error {
 	uid, err := machine.ParseUUID(userID)
 	if err != nil {
@@ -243,19 +244,28 @@ func (m *Manager) configure(ctx context.Context, c *conn, userID string) error {
 	}
 	rctx, cancel := context.WithTimeout(ctx, configTimeout)
 	defer cancel()
-	_, err = c.request(rctx, guestwire.OpGitConfigure, guestwire.GitConfigurePayload{
+	if _, err = c.request(rctx, guestwire.OpGitConfigure, guestwire.GitConfigurePayload{
 		Name:   name,
 		Email:  email,
 		Helper: guestwire.HelperBinPath,
+	}); err != nil {
+		return err
+	}
+
+	cctx, ccancel := context.WithTimeout(ctx, configTimeout)
+	defer ccancel()
+	_, err = c.request(cctx, guestwire.OpClaudeConfigure, guestwire.ClaudeConfigurePayload{
+		Attribution: u.ClaudeAttribution,
 	})
 	return err
 }
 
-// ReconfigureUser re-pushes git.configure to every running machine the user owns
-// that currently has a live control channel, so a portable git-identity change
-// takes effect without recreating the machine (Phase 4). Best-effort: machines
-// without a channel pick the new identity up on their next (re)connect. A failure
-// for one machine does not stop the others.
+// ReconfigureUser re-pushes git.configure + claude.configure to every running
+// machine the user owns that currently has a live control channel, so a portable
+// git-identity or Claude-preference change takes effect without recreating the
+// machine (Phase 4). Best-effort: machines without a channel pick the new
+// settings up on their next (re)connect. A failure for one machine does not stop
+// the others.
 func (m *Manager) ReconfigureUser(ctx context.Context, userID string) {
 	uid, err := machine.ParseUUID(userID)
 	if err != nil {

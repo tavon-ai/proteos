@@ -10,8 +10,9 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 )
 
-// GitConfigurer re-pushes git.configure to a user's running machines so a
-// portable git-identity change takes effect without recreating them (Phase 4).
+// GitConfigurer re-pushes the configure ops (git.configure + claude.configure)
+// to a user's running machines so a portable git-identity or Claude-preference
+// change takes effect without recreating them (Phase 4).
 // Satisfied by *guestctl.Manager; nil ⇒ identity changes apply only to new
 // machines (and only when the git control channel is wired at all).
 type GitConfigurer interface {

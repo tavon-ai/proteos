@@ -394,7 +394,7 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 const getPATByTokenHash = `-- name: GetPATByTokenHash :one
 SELECT
     personal_access_tokens.id, personal_access_tokens.user_id, personal_access_tokens.name, personal_access_tokens.token_hash, personal_access_tokens.prefix, personal_access_tokens.created_at, personal_access_tokens.expires_at, personal_access_tokens.last_used_at, personal_access_tokens.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution
 FROM personal_access_tokens
 JOIN users ON users.id = personal_access_tokens.user_id
 WHERE personal_access_tokens.token_hash = $1
@@ -429,6 +429,7 @@ func (q *Queries) GetPATByTokenHash(ctx context.Context, tokenHash []byte) (GetP
 		&i.User.Status,
 		&i.User.CreatedAt,
 		&i.User.DownloadAsIs,
+		&i.User.ClaudeAttribution,
 	)
 	return i, err
 }
@@ -455,7 +456,7 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 const getSessionByID = `-- name: GetSessionByID :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.id = $1
@@ -490,6 +491,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 		&i.User.Status,
 		&i.User.CreatedAt,
 		&i.User.DownloadAsIs,
+		&i.User.ClaudeAttribution,
 	)
 	return i, err
 }
@@ -497,7 +499,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -530,6 +532,7 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.Status,
 		&i.User.CreatedAt,
 		&i.User.DownloadAsIs,
+		&i.User.ClaudeAttribution,
 	)
 	return i, err
 }
@@ -553,7 +556,7 @@ func (q *Queries) GetSnapshot(ctx context.Context, machineID pgtype.UUID) (Snaps
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is FROM users WHERE id = $1
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -568,6 +571,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.Status,
 		&i.CreatedAt,
 		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
 	)
 	return i, err
 }
@@ -1363,8 +1367,37 @@ func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error 
 	return err
 }
 
+const setUserClaudeAttribution = `-- name: SetUserClaudeAttribution :one
+UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution
+`
+
+type SetUserClaudeAttributionParams struct {
+	ID                pgtype.UUID `json:"id"`
+	ClaudeAttribution bool        `json:"claude_attribution"`
+}
+
+// Update whether Claude Code attribution (the commit/PR "Generated with Claude
+// Code" lines and Co-Authored-By trailer) is enabled for the user. Returns the
+// updated row.
+func (q *Queries) SetUserClaudeAttribution(ctx context.Context, arg SetUserClaudeAttributionParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserClaudeAttribution, arg.ID, arg.ClaudeAttribution)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+	)
+	return i, err
+}
+
 const setUserDownloadAsIs = `-- name: SetUserDownloadAsIs :one
-UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is
+UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution
 `
 
 type SetUserDownloadAsIsParams struct {
@@ -1387,6 +1420,7 @@ func (q *Queries) SetUserDownloadAsIs(ctx context.Context, arg SetUserDownloadAs
 		&i.Status,
 		&i.CreatedAt,
 		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
 	)
 	return i, err
 }
@@ -1647,7 +1681,7 @@ ON CONFLICT (github_user_id) DO UPDATE
     SET login = EXCLUDED.login,
         email = EXCLUDED.email,
         avatar_url = EXCLUDED.avatar_url
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution
 `
 
 type UpsertUserParams struct {
@@ -1676,6 +1710,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.Status,
 		&i.CreatedAt,
 		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
 	)
 	return i, err
 }

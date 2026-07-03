@@ -232,6 +232,12 @@ const (
 	// agent never commits on its own — this verb only fires from an explicit,
 	// CSRF-guarded user request (the human review gate).
 	OpGitCommit = "git.commit" // CP → guest (resp: GitCommitResponse)
+
+	// claude.configure applies the user's Claude Code preferences by merging the
+	// managed keys into ~/.claude/settings.json — never a full overwrite, since
+	// users edit that file themselves. Pushed on every channel (re)connect and
+	// re-pushed on preference change, mirroring git.configure.
+	OpClaudeConfigure = "claude.configure" // CP → guest
 )
 
 // GitFileStatus is one changed path in a git.status response. Index and Worktree
@@ -564,6 +570,15 @@ type GitConfigurePayload struct {
 	Name   string `json:"name"`   // user.name (GitHub login or display name)
 	Email  string `json:"email"`  // user.email (primary/noreply)
 	Helper string `json:"helper"` // credential.helper (HelperBinPath)
+}
+
+// ClaudeConfigurePayload is the body of a claude.configure req. Attribution
+// selects whether Claude Code stamps its attribution on commits and PRs: true
+// (the Claude Code default) removes any previously managed override from
+// ~/.claude/settings.json; false blanks the attribution keys there. The guest
+// merges — it never overwrites user-authored keys in that file.
+type ClaudeConfigurePayload struct {
+	Attribution bool `json:"attribution"`
 }
 
 // GitClonePayload is the body of a git.clone req. The URL never embeds a token —

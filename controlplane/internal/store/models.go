@@ -143,14 +143,15 @@ type Snapshot struct {
 }
 
 type User struct {
-	ID           pgtype.UUID        `json:"id"`
-	GithubUserID int64              `json:"github_user_id"`
-	Login        string             `json:"login"`
-	Email        string             `json:"email"`
-	AvatarUrl    string             `json:"avatar_url"`
-	Status       string             `json:"status"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	DownloadAsIs bool               `json:"download_as_is"`
+	ID                pgtype.UUID        `json:"id"`
+	GithubUserID      int64              `json:"github_user_id"`
+	Login             string             `json:"login"`
+	Email             string             `json:"email"`
+	AvatarUrl         string             `json:"avatar_url"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	DownloadAsIs      bool               `json:"download_as_is"`
+	ClaudeAttribution bool               `json:"claude_attribution"`
 }
 
 type UserGitIdentity struct {

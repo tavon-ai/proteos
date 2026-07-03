@@ -32,9 +32,13 @@ export class ApiError extends Error {
 
 // UserPrefs are the user's account-level preferences. download_as_is selects
 // what the project Download button includes: true ⇒ the full folder as-is
-// (.git + ignored files); false (default) ⇒ a clean export.
+// (.git + ignored files); false (default) ⇒ a clean export. claude_attribution
+// selects whether Claude Code stamps its attribution on commits/PRs: true
+// (default) keeps Claude's own defaults; false blanks them on the user's
+// machines.
 export interface UserPrefs {
   download_as_is: boolean;
+  claude_attribution: boolean;
 }
 
 export interface Me {

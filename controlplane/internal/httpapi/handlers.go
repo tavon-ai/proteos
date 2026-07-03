@@ -33,7 +33,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			Email:     user.Email,
 			AvatarURL: user.AvatarUrl,
 		},
-		Prefs:    userPrefs{DownloadAsIs: user.DownloadAsIs},
+		Prefs:    prefsView(user),
 		Machines: []MachineSummary{},
 	}
 	ms, err := s.Machines.List(r.Context(), user.ID)

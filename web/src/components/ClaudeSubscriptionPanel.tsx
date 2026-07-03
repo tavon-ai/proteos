@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CLAUDE_OAUTH_KEY, type ProfileItem } from '../api/client';
-import { useProfileItems, useProfileMutations } from '../api/hooks';
+import { useMe, useProfileItems, useProfileMutations, useUpdateUserPrefs } from '../api/hooks';
 
 // ClaudeSubscriptionPanel lets a user connect their Claude Pro/Max/Team/Enterprise
 // subscription to ProteOS by pasting a `claude setup-token` token once. The token
@@ -26,7 +26,47 @@ export function ClaudeSubscriptionPanel() {
       {isError && <p className="error-banner">Could not load subscription status.</p>}
 
       {!isLoading && !isError && <ClaudeSubscriptionRow item={claude} />}
+
+      <ClaudeAttributionSection />
     </section>
+  );
+}
+
+// ClaudeAttributionSection toggles whether Claude Code stamps its attribution
+// (the "Generated with Claude Code" commit line, the Co-Authored-By trailer,
+// and the PR-body attribution) on the user's machines. The preference is
+// account-level (claude_attribution) and applies to Claude in the machine
+// terminal and to remote tasks alike; a change is pushed to running machines
+// immediately.
+function ClaudeAttributionSection() {
+  const { data, isLoading } = useMe();
+  const update = useUpdateUserPrefs();
+  const enabled = data?.prefs.claude_attribution ?? true;
+
+  return (
+    <>
+      <h2>Commit &amp; PR attribution</h2>
+      <p className="muted">
+        By default, Claude Code adds a <em>Generated with Claude Code</em> line and a{' '}
+        <code>Co-Authored-By</code> trailer to the commits and pull requests it creates. Turn this
+        off if your organization does not allow co-authored commits. The setting applies on all
+        your machines, in the terminal and for remote tasks; anything else you keep in{' '}
+        <code>~/.claude/settings.json</code> is left untouched.
+      </p>
+      <label className="download-option">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={isLoading || update.isPending}
+          onChange={(e) => update.mutate({ claude_attribution: e.target.checked })}
+        />
+        <span className="download-option-text">
+          <strong>Include Claude attribution</strong>
+          <span className="muted"> — uncheck to keep commits and PRs free of Claude trailers.</span>
+        </span>
+      </label>
+      {update.isError && <span className="error-inline">Could not save preference.</span>}
+    </>
   );
 }
 

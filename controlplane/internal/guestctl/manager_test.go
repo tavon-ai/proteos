@@ -35,6 +35,7 @@ type fakeGuest struct {
 	nextID     int64
 	waiters    map[int64]chan guestwire.ControlFrame
 	configured chan guestwire.GitConfigurePayload
+	claudeCfg  chan guestwire.ClaudeConfigurePayload
 	cloned     chan guestwire.GitClonePayload
 	canceled   chan guestwire.AgentCancelPayload
 }
@@ -43,6 +44,7 @@ func newFakeGuest() *fakeGuest {
 	return &fakeGuest{
 		waiters:    map[int64]chan guestwire.ControlFrame{},
 		configured: make(chan guestwire.GitConfigurePayload, 4),
+		claudeCfg:  make(chan guestwire.ClaudeConfigurePayload, 4),
 		cloned:     make(chan guestwire.GitClonePayload, 4),
 		canceled:   make(chan guestwire.AgentCancelPayload, 4),
 	}
@@ -88,6 +90,11 @@ func (g *fakeGuest) onReq(ctx context.Context, f guestwire.ControlFrame) {
 		var p guestwire.GitConfigurePayload
 		_ = json.Unmarshal(f.Payload, &p)
 		g.configured <- p
+		g.write(ctx, guestwire.ControlFrame{ID: f.ID, Kind: guestwire.ControlResp})
+	case guestwire.OpClaudeConfigure:
+		var p guestwire.ClaudeConfigurePayload
+		_ = json.Unmarshal(f.Payload, &p)
+		g.claudeCfg <- p
 		g.write(ctx, guestwire.ControlFrame{ID: f.ID, Kind: guestwire.ControlResp})
 	case guestwire.OpGitClone:
 		var p guestwire.GitClonePayload
@@ -246,6 +253,62 @@ func TestControlChannel_ProfileGitIdentityOverrides(t *testing.T) {
 		}
 	case <-time.After(8 * time.Second):
 		t.Fatal("git.configure was never applied")
+	}
+}
+
+// TestControlChannel_ClaudeAttributionPushed proves claude.configure follows
+// git.configure on connect (attribution defaults to enabled) and that a
+// preference flip re-pushed via ReconfigureUser reaches the guest.
+func TestControlChannel_ClaudeAttributionPushed(t *testing.T) {
+	mgr, broker, fg, mc, q, _ := setupManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	machineID := machine.UUIDString(mc.ID)
+	go func() {
+		for range 60 {
+			if mgr.HasChannel(machineID) {
+				return
+			}
+			broker.Publish(machine.Update{Machine: mc})
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case cfg := <-fg.claudeCfg:
+		if !cfg.Attribution {
+			t.Fatalf("attribution should default to enabled, got %+v", cfg)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("claude.configure was never applied")
+	}
+	waitChannel(t, mgr, machineID)
+
+	// ReconfigureUser targets machines that are running in the DB (the fixture
+	// only flips the in-memory copy the broker publishes).
+	if _, err := q.UpdateMachineState(ctx, store.UpdateMachineStateParams{
+		ID: mc.ID, FromState: "requested", ToState: string(machine.StateRunning),
+	}); err != nil {
+		t.Fatalf("mark machine running: %v", err)
+	}
+
+	// The user turns attribution off; ReconfigureUser re-pushes it live.
+	if _, err := q.SetUserClaudeAttribution(ctx, store.SetUserClaudeAttributionParams{
+		ID: mc.UserID, ClaudeAttribution: false,
+	}); err != nil {
+		t.Fatalf("set preference: %v", err)
+	}
+	mgr.ReconfigureUser(ctx, machine.UUIDString(mc.UserID))
+
+	select {
+	case cfg := <-fg.claudeCfg:
+		if cfg.Attribution {
+			t.Fatalf("re-push should carry attribution=false, got %+v", cfg)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("claude.configure was never re-pushed")
 	}
 }
 

@@ -151,6 +151,18 @@ func (m *Manager) handle(ctx context.Context, op string, payload json.RawMessage
 		slog.Info("control: gitconfig applied")
 		return nil, nil
 
+	case guestwire.OpClaudeConfigure:
+		var p guestwire.ClaudeConfigurePayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "bad payload"}
+		}
+		if err := m.applyClaudeConfig(p); err != nil {
+			slog.Error("control: claude.configure failed", "err", err)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "configure failed"}
+		}
+		slog.Info("control: claude settings applied", "attribution", p.Attribution)
+		return nil, nil
+
 	case guestwire.OpGitClone:
 		var p guestwire.GitClonePayload
 		if err := json.Unmarshal(payload, &p); err != nil {
