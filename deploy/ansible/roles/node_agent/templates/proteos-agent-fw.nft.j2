@@ -2,18 +2,21 @@
 # {{ ansible_managed }}
 # Standalone table: lock the node-agent API port to the app VM only. Its own
 # table so it coexists with the ruleset the node-agent manages for guest taps.
-# Default-accept policy here — we only DROP :{{ proteos_agent_port }} from
-# anywhere that is not the app VM (and always allow loopback).
+# Fail-closed default-drop policy; only loopback, established return traffic,
+# SSH, and the agent port from the app VM are explicitly permitted.
 
 table inet proteos_agent_fw
 delete table inet proteos_agent_fw
 
 table inet proteos_agent_fw {
   chain input {
-    type filter hook input priority -10; policy accept;
+    type filter hook input priority -10; policy drop;
 
     iif "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+    tcp dport 22 accept
     tcp dport {{ proteos_agent_port }} ip saddr {{ proteos_app_vm_ip }} accept
-    tcp dport {{ proteos_agent_port }} drop
+    tcp dport {{ proteos_agent_port }} counter drop
   }
 }

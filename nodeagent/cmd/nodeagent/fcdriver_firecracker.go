@@ -3,6 +3,9 @@
 package main
 
 import (
+	"fmt"
+	"net"
+
 	"github.com/tavon-ai/proteos/nodeagent/internal/config"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver/firecracker"
@@ -13,6 +16,10 @@ import (
 // with `-tags=firecracker`; the default build uses fcdriver_default.go which
 // returns an error for this driver.
 func newFirecrackerDriver(cfg *config.Config, store *state.Store) (driver.Driver, error) {
+	_, agentPort, err := net.SplitHostPort(cfg.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing PROTEOS_AGENT_ADDR %q: %w", cfg.Addr, err)
+	}
 	return firecracker.New(firecracker.Config{
 		FirecrackerBin: cfg.FirecrackerBin,
 		JailerBin:      cfg.JailerBin,
@@ -23,5 +30,6 @@ func newFirecrackerDriver(cfg *config.Config, store *state.Store) (driver.Driver
 		GuestVsockPort: cfg.GuestVsockPort,
 		VolumesDir:     cfg.VolumesDir,
 		CryptsetupBin:  cfg.CryptsetupBin,
+		AgentPort:      agentPort,
 	}, store), nil
 }
