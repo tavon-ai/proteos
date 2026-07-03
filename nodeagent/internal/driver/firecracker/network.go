@@ -18,7 +18,8 @@ import (
 // machine's policy without disturbing the others.
 
 const (
-	nftTable = "proteos"
+	nftTable     = "proteos"
+	nftGlobalTag = "proteos:global" // comment tag for the chain-wide allow rules
 )
 
 // run executes a command, returning its combined output on failure for context.
@@ -56,29 +57,54 @@ func egressDev() (string, error) {
 	return "", fmt.Errorf("could not determine egress interface from %q", out)
 }
 
-// ensureNftTable creates the base table + a forward chain with a NAT
-// postrouting chain once. Idempotent: `nft add` of an existing object is a
-// no-op error we tolerate by pre-deleting on first setup.
-func ensureNftTable() error {
-	// `add table` is idempotent in nftables; chains likewise.
+// ensureNftTable creates the base table and chains with a default-drop policy,
+// then installs the chain-wide allow rules (loopback, established/related
+// return traffic, SSH and the agent API port on the egress interface). These
+// global rules are idempotently replaced on every call so the chain stays
+// consistent across stop→start cycles. Per-tap rules are added by egressRules
+// and live alongside these, guarded by their own iifname match.
+func ensureNftTable(agentPort string) error {
+	// `add table` / `add chain` are idempotent; an existing object is a no-op.
 	if err := run("nft", "add", "table", "ip", nftTable); err != nil {
 		return err
 	}
-	// Input chain (default policy accept; per-tap rules drop guest→host). The
-	// forward hook never sees host-destined traffic, so guest→host services
-	// (the node-agent) can only be blocked here.
+	// Input chain: fail-closed — only explicitly allowed traffic passes.
 	if err := run("nft", "add", "chain", "ip", nftTable, "input",
-		"{ type filter hook input priority 0 ; }"); err != nil {
+		"{ type filter hook input priority 0 ; policy drop ; }"); err != nil {
 		return err
 	}
-	// Forward chain with default policy accept (per-tap rules enforce deny).
+	// Forward chain: fail-closed — per-tap rules grant the only forwards.
 	if err := run("nft", "add", "chain", "ip", nftTable, "forward",
-		"{ type filter hook forward priority 0 ; }"); err != nil {
+		"{ type filter hook forward priority 0 ; policy drop ; }"); err != nil {
 		return err
 	}
 	if err := run("nft", "add", "chain", "ip", nftTable, "postrouting",
 		"{ type nat hook postrouting priority 100 ; }"); err != nil {
 		return err
+	}
+
+	egress, err := egressDev()
+	if err != nil {
+		return err
+	}
+
+	// Replace the global allow rules idempotently: delete any prior copies
+	// (tagged proteos:global), then re-append them so they trail the existing
+	// per-tap iifname-guarded rules. SSH and the agent-port accepts are
+	// restricted to the egress interface so guests can't reach host services
+	// via the tap even when these rules sit before their tap's drop rule.
+	deleteRulesByComment(nftTable, "input", nftGlobalTag)
+	tag := `"` + nftGlobalTag + `"`
+	for _, r := range [][]string{
+		{"add", "rule", "ip", nftTable, "input", "iif", "lo", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "ct", "state", "established,related", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "ct", "state", "invalid", "counter", "drop", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "iifname", egress, "tcp", "dport", "22", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "iifname", egress, "tcp", "dport", agentPort, "counter", "accept", "comment", tag},
+	} {
+		if err := run("nft", r...); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -86,8 +112,8 @@ func ensureNftTable() error {
 // setupTap creates the tap owned by the agent, addresses it with the gateway IP,
 // brings it up, enables forwarding, and installs the default-deny egress policy
 // plus the masquerade rule for this guest.
-func setupTap(tap, gatewayCIDR, guestCIDR string) error {
-	if err := ensureNftTable(); err != nil {
+func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string) error {
+	if err := ensureNftTable(agentPort); err != nil {
 		return err
 	}
 

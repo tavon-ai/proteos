@@ -47,6 +47,12 @@ type Config struct {
 	VolumesDir string
 	// CryptsetupBin is the cryptsetup binary; empty defaults to "cryptsetup".
 	CryptsetupBin string
+
+	// AgentPort is the TCP port the node-agent HTTP API listens on (the numeric
+	// part of PROTEOS_AGENT_ADDR, e.g. "9090"). It is added to the nftables
+	// input chain's explicit allow list so the control plane can reach the
+	// agent after the chain switches to default-drop policy.
+	AgentPort string
 }
 
 // Driver implements driver.Driver against jailed Firecracker VMMs.
@@ -379,7 +385,7 @@ func (d *Driver) setupNetworking(rec state.Record) error {
 	if err != nil {
 		return err
 	}
-	return setupTap(rec.TapName, gwCIDR, guestCIDR)
+	return setupTap(rec.TapName, gwCIDR, guestCIDR, d.cfg.AgentPort)
 }
 
 // Stop shuts down a running machine asynchronously. StopModeHibernate pauses the
