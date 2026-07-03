@@ -676,7 +676,74 @@ emit_alias() {
   printf "alias %s='%s'\n" "$name" "$val"
 }
 
-# install_shell_env MNT — bake a managed shell snippet (Go on PATH + operator
+# rust_arch maps uname -m onto the rustup target triple's cpu component.
+rust_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo "x86_64" ;;
+    arm64 | aarch64) echo "aarch64" ;;
+    *) die "unsupported arch for Rust: $(uname -m)" ;;
+  esac
+}
+
+# install_rust MNT [CHANNEL] — fetch rustup-init from static.rust-lang.org,
+# verify its sha256, copy it into the image, and run it via chroot to install
+# the Rust toolchain system-wide into /usr/local/rustup (RUSTUP_HOME) and
+# /usr/local/cargo (CARGO_HOME). Symlinks rustc/cargo/rustup onto /usr/local/bin
+# so they are on PATH without requiring a profile.d entry. Needs the chroot binds
+# (rustup-init fetches the toolchain at build time). CHANNEL is "stable", "beta",
+# "nightly", or a pinned version like "1.87.0" (default: stable). Sets RUST_VERSION
+# to the concrete installed version. Sets RUSTUP_SHA256.
+install_rust() {
+  local mnt="$1" channel="${2:-stable}"
+  local arch target
+  arch="$(rust_arch)"
+  target="${arch}-unknown-linux-gnu"
+
+  local rustup_url="https://static.rust-lang.org/rustup/dist/${target}/rustup-init"
+  log "fetching rustup-init (${target})"
+  dl "$rustup_url" "$WORK/rustup-init" || die "download rustup-init"
+
+  local actual want
+  actual="$(sha256sum "$WORK/rustup-init" | awk '{print $1}')"
+  want="$(dl "${rustup_url}.sha256" 2>/dev/null | awk '{print $1}')" || true
+  if [[ -n $want ]]; then
+    [[ "$actual" == "$want" ]] || die "rustup-init sha256 mismatch: expected $want, got $actual"
+    ok "rustup-init sha256 verified ($actual)"
+  else
+    log "WARNING: could not fetch rustup-init checksum; pinning to its own sha256 ($actual)"
+  fi
+  RUSTUP_SHA256="$actual"
+
+  sudo install -D -m 0755 "$WORK/rustup-init" "$mnt/tmp/rustup-init"
+
+  log "running rustup-init in chroot (toolchain: ${channel})"
+  sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    /tmp/rustup-init -y --no-modify-path \
+      --profile minimal \
+      --default-toolchain "$channel" \
+      --default-host "$target" \
+    || die "rustup-init failed (channel: $channel)"
+
+  sudo rm -f "$mnt/tmp/rustup-init"
+
+  # Symlink the three key binaries onto /usr/local/bin so they are immediately
+  # on PATH; cargo/bin is also added via install_shell_env for any binaries the
+  # user installs later with `cargo install`.
+  sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    sh -c 'for b in rustc cargo rustup; do ln -sf "/usr/local/cargo/bin/$b" "/usr/local/bin/$b"; done'
+
+  RUST_VERSION="$(sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin \
+    rustc --version 2>/dev/null | awk '{print $2}' || true)"
+  [[ -n $RUST_VERSION ]] || die "Rust install failed: rustc not runnable in the image"
+  ok "Rust ${RUST_VERSION} installed (/usr/local/cargo/bin/{rustc,cargo,rustup})"
+}
+
+# install_shell_env MNT — bake a managed shell snippet (Go/Rust on PATH + operator
 # aliases / appended bashrc files) into /etc/profile.d AND source it from the
 # interactive bashrc of root, /etc/skel, and the provisioned run-as user.
 # profile.d covers login shells; the bashrc include covers non-login interactive
@@ -689,6 +756,10 @@ install_shell_env() {
     if [[ $GO_INSTALL -eq 1 ]]; then
       echo '# Go toolchain on PATH (baked into /usr/local/go).'
       echo 'export PATH="$PATH:/usr/local/go/bin:${GOPATH:-$HOME/go}/bin"'
+    fi
+    if [[ $RUST_INSTALL -eq 1 ]]; then
+      echo '# Rust toolchain on PATH (baked into /usr/local/cargo/bin).'
+      echo 'export PATH="$PATH:/usr/local/cargo/bin"'
     fi
     if [[ ${#ALIASES[@]} -gt 0 ]]; then
       echo '# Operator aliases (--alias).'
@@ -793,6 +864,13 @@ GH_SHA256=""
 # not a platform default); enabled with --python for the python/full templates.
 PYTHON_INSTALL=0
 PYTHON_VERSION=""
+# Rust toolchain (TAV-73): rustc + cargo via rustup, installed system-wide into
+# /usr/local/rustup (RUSTUP_HOME) and /usr/local/cargo (CARGO_HOME). Off by
+# default; enabled with --rust for the full template. --rust-version pins the
+# toolchain channel or version (default: stable). Needs the chroot binds.
+RUST_INSTALL=0
+RUST_VERSION=""
+RUSTUP_SHA256=""
 # Operator shell customisation baked into the guest's interactive shells: aliases
 # (--alias 'name=command', repeatable) and/or whole files appended to the managed
 # bashrc snippet (--bashrc-file FILE, repeatable).
@@ -825,6 +903,9 @@ while [[ $# -gt 0 ]]; do
     --no-node) NODE_INSTALL=-1; shift ;;
     --python) PYTHON_INSTALL=1; shift ;;
     --no-python) PYTHON_INSTALL=0; shift ;;
+    --rust) RUST_INSTALL=1; shift ;;
+    --no-rust) RUST_INSTALL=0; shift ;;
+    --rust-version) RUST_INSTALL=1; RUST_VERSION=$2; shift 2 ;;
     --template) TEMPLATE_ID=$2; shift 2 ;;
     --alias) ALIASES+=("$2"); shift 2 ;;
     --bashrc-file) [[ -f $2 ]] || die "--bashrc-file not found: $2"; BASHRC_FILES+=("$2"); shift 2 ;;
@@ -963,6 +1044,12 @@ if [[ $PYTHON_INSTALL -eq 1 ]]; then
   PY_NEED=$((GROW_MIB + 600))
   log "baking Python + build tools — bumping grow ${GROW_MIB}→${PY_NEED}MiB headroom"
   GROW_MIB=$PY_NEED
+fi
+# Rust toolchain (rustc + cargo + std, minimal profile) unpacks to ~400MiB.
+if [[ $RUST_INSTALL -eq 1 ]]; then
+  RUST_NEED=$((GROW_MIB + 600))
+  log "baking Rust toolchain — bumping grow ${GROW_MIB}→${RUST_NEED}MiB headroom"
+  GROW_MIB=$RUST_NEED
 fi
 if [[ $TASKFILE_INSTALL -eq 1 ]]; then
   TASK_NEED=$((GROW_MIB + 32))
@@ -1121,6 +1208,14 @@ if [[ $PYTHON_INSTALL -eq 1 ]]; then
   unbind_chroot
   FEATURES="$FEATURES,python"
 fi
+# Rust toolchain (TAV-73). rustup-init fetches the toolchain at build time →
+# needs the chroot binds + the baked resolv.conf (already written above).
+if [[ $RUST_INSTALL -eq 1 ]]; then
+  bind_chroot
+  install_rust "$MNT" "${RUST_VERSION:-stable}"
+  unbind_chroot
+  FEATURES="$FEATURES,rust"
+fi
 if [[ $GO_INSTALL -eq 1 ]]; then
   install_go "$MNT" "$GO_VERSION"
   FEATURES="$FEATURES,go"
@@ -1166,7 +1261,7 @@ fi
 # Bake the managed shell snippet (Go on PATH + operator aliases / appended bashrc
 # files) once everything is installed and the run-as user's home exists. A no-op
 # unless Go is baked or aliases/bashrc files were given.
-if [[ $GO_INSTALL -eq 1 || ${#ALIASES[@]} -gt 0 || ${#BASHRC_FILES[@]} -gt 0 ]]; then
+if [[ $GO_INSTALL -eq 1 || $RUST_INSTALL -eq 1 || ${#ALIASES[@]} -gt 0 || ${#BASHRC_FILES[@]} -gt 0 ]]; then
   install_shell_env "$MNT"
   FEATURES="$FEATURES,shellenv"
 fi
@@ -1177,6 +1272,7 @@ GO_REL="none"; [[ $GO_INSTALL -eq 1 ]] && GO_REL="$GO_VERSION"
 TASK_REL="none"; [[ $TASKFILE_INSTALL -eq 1 ]] && TASK_REL="$TASKFILE_VERSION"
 GH_REL="none"; [[ $GH_INSTALL -eq 1 ]] && GH_REL="${GH_VERSION:-unknown}"
 VIM_REL="no"; [[ $VIM_INSTALL -eq 1 ]] && VIM_REL="yes"
+RUST_REL="none"; [[ $RUST_INSTALL -eq 1 ]] && RUST_REL="${RUST_VERSION:-unknown}"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_TEMPLATE=${TEMPLATE_ID:-none}
@@ -1186,6 +1282,7 @@ PROTEOS_GIT_VERSION=${GIT_VERSION:-none}
 PROTEOS_VIM=$VIM_REL
 PROTEOS_GO_VERSION=$GO_REL
 PROTEOS_PYTHON_VERSION=${PYTHON_VERSION:-none}
+PROTEOS_RUST_VERSION=$RUST_REL
 PROTEOS_TASKFILE_VERSION=$TASK_REL
 PROTEOS_GH_VERSION=$GH_REL
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
@@ -1231,6 +1328,8 @@ features       = $FEATURES
 git_version    = ${GIT_VERSION:-none}
 vim            = $VIM_REL
 python_version = ${PYTHON_VERSION:-none}
+rust_version   = $RUST_REL
+rustup_sha256  = ${RUSTUP_SHA256:-none}
 go_version     = $GO_REL
 go_sha256      = ${GO_SHA256:-none}
 taskfile_version = $TASK_REL
