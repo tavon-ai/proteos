@@ -144,6 +144,10 @@ type harness struct {
 	userID pgtype.UUID
 }
 
+// harnessMaxPerUser pins the per-user machine cap for tests, so they don't
+// depend on the production default (which has changed before, see TAV-69).
+const harnessMaxPerUser = 3
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	pool, q := testutil.Postgres(t)
@@ -167,6 +171,7 @@ func newHarness(t *testing.T) *harness {
 	sec := secrets.NewMemStore()
 	svc := machine.NewService(pool, nc, broker, sec, host.ID, machine.Spec{
 		Vcpus: 2, MemMiB: 2048, DiskMiB: 10240, KernelRef: "k1", RootfsRef: "r1",
+		MaxPerUser: harnessMaxPerUser,
 	})
 	poller := machine.NewPoller(pool, nc, broker)
 	return &harness{q: q, svc: svc, poller: poller, agent: agent, srv: srv, sec: sec, userID: user.ID}
@@ -446,17 +451,17 @@ func TestMultipleMachines(t *testing.T) {
 }
 
 func TestMachineLimit(t *testing.T) {
-	h := newHarness(t) // default cap is 3
+	h := newHarness(t)
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < harnessMaxPerUser; i++ {
 		if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
 			t.Fatalf("create %d: %v", i+1, err)
 		}
 	}
-	// The 4th exceeds the cap.
+	// One more exceeds the cap.
 	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != machine.ErrMachineLimit {
-		t.Fatalf("4th create: got %v, want ErrMachineLimit", err)
+		t.Fatalf("create %d: got %v, want ErrMachineLimit", harnessMaxPerUser+1, err)
 	}
 }
 
