@@ -55,6 +55,19 @@ func run() error {
 		slog.Warn("reattach encountered errors", "err", err)
 	}
 
+	// Signal context governs graceful shutdown and background goroutine lifetimes.
+	// Created before the HTTP server so it can be passed to background workers.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Start background maintenance goroutines. The orphan reaper (Firecracker
+	// driver only) periodically kills leaked VMM processes and closes dangling
+	// LUKS mappers. Other driver implementations ignore this via the type assertion.
+	type orphanReaper interface{ StartOrphanReaper(context.Context) }
+	if r, ok := drv.(orphanReaper); ok {
+		r.StartOrphanReaper(ctx)
+	}
+
 	srv := httpapi.New(cfg.Token, drv).WithPreviewRange(cfg.PreviewPortMin, cfg.PreviewPortMax)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
@@ -80,8 +93,6 @@ func run() error {
 
 	// Graceful shutdown on SIGINT/SIGTERM. We deliberately leave running VMs
 	// alone — they are tracked on disk and re-attached on the next start.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
 	slog.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -26,8 +26,25 @@ import (
 )
 
 // stopGrace bounds how long a graceful SendCtrlAltDel is given before the VMM is
-// hard-killed.
+// hard-killed. Hibernate snapshotting uses hibernateTimeout instead, which scales
+// with guest RAM size.
 const stopGrace = 10 * time.Second
+
+// hibernateGraceBase is the fixed floor of the pause+snapshot deadline.
+// hibernateGracePerGiB is added per GiB of guest RAM to cover the Full snapshot
+// write time onto the encrypted volume (writing a multi-GiB RAM image to dm-crypt
+// can take tens of seconds on typical flash storage).
+const (
+	hibernateGraceBase   = 30 * time.Second
+	hibernateGracePerGiB = 20 * time.Second
+)
+
+// hibernateTimeout returns the pause+snapshot deadline for a machine with memMiB
+// of RAM, rounded up to the nearest GiB.
+func hibernateTimeout(memMiB int) time.Duration {
+	gib := (memMiB + 1023) / 1024
+	return hibernateGraceBase + time.Duration(gib)*hibernateGracePerGiB
+}
 
 // Config carries the host paths and uid range the driver needs.
 type Config struct {
@@ -426,7 +443,7 @@ func (d *Driver) finishStop(rec state.Record, hibernate bool) {
 
 	snap := state.SnapshotRecord{}
 	if hibernate {
-		ctx, cancel := context.WithTimeout(context.Background(), stopGrace)
+		ctx, cancel := context.WithTimeout(context.Background(), hibernateTimeout(rec.MemMiB))
 		memBytes, err := pauseAndSnapshot(ctx, apiClient, layout, d.uidFor(rec))
 		cancel()
 		if err != nil {

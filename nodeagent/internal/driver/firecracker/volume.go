@@ -108,6 +108,16 @@ func (d *Driver) ensureVolumeMounted(rec state.Record, key []byte, layout jailLa
 		if err := d.luksOpen(volFile, mapper, key); err != nil {
 			return false, err
 		}
+	} else if !d.mapperActive(rec.MachineID) {
+		// Device node exists but the dm target is inactive — stale node from an
+		// unclean host shutdown. Close and reopen to get a healthy mapper before
+		// mounting; skipping this would mount against a dead target and corrupt state.
+		slog.Warn("LUKS mapper exists but is inactive; closing and reopening",
+			"machine", rec.MachineID, "mapper", mapperName(rec.MachineID))
+		_ = d.cryptsetup(nil, "close", mapperName(rec.MachineID))
+		if err := d.luksOpen(volFile, mapper, key); err != nil {
+			return false, err
+		}
 	}
 	if fresh {
 		if err := run("mkfs.ext4", "-q", "-F", mapperPath(rec.MachineID)); err != nil {
@@ -194,6 +204,18 @@ func (d *Driver) luksFormat(volFile string, key []byte) error {
 
 func (d *Driver) luksOpen(volFile, mapper string, key []byte) error {
 	return d.cryptsetup(key, "open", "--type", "luks2", "--key-file=-", volFile, mapper)
+}
+
+// mapperActive reports whether the dm-crypt device for machineID is active per
+// `cryptsetup status`. fileExists alone is not sufficient: a stale device node can
+// persist after an unclean host shutdown while the underlying dm target is gone;
+// mounting against it would silently succeed against dead state.
+func (d *Driver) mapperActive(machineID string) bool {
+	out, err := runOut(d.cryptsetupBin(), "status", mapperName(machineID))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, " is active")
 }
 
 // --- small fs helpers --------------------------------------------------------
