@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -52,11 +53,14 @@ type Config struct {
 type Driver struct {
 	cfg   Config
 	store *state.Store
+
+	mu      sync.Mutex
+	booting map[string]struct{} // machineID set for in-flight EnsureRunning calls; protected by mu
 }
 
 // New constructs the Firecracker driver.
 func New(cfg Config, store *state.Store) *Driver {
-	return &Driver{cfg: cfg, store: store}
+	return &Driver{cfg: cfg, store: store, booting: make(map[string]struct{})}
 }
 
 var _ driver.Driver = (*Driver)(nil)
@@ -66,6 +70,24 @@ var _ driver.Driver = (*Driver)(nil)
 // already booting/running with a live VMM returns its handle unchanged.
 func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string, error) {
 	handle := state.Handle(spec.MachineID)
+
+	// TOCTOU guard: between Reserve() persisting a fresh record (pid=0) and the
+	// async boot goroutine recording the VMM pid, a concurrent call sees pid=0,
+	// concludes the machine is not alive, and would kick off a second boot.
+	// Claiming the per-machine slot here makes the second caller return immediately.
+	d.mu.Lock()
+	if _, ok := d.booting[spec.MachineID]; ok {
+		d.mu.Unlock()
+		return handle, nil
+	}
+	d.booting[spec.MachineID] = struct{}{}
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.booting, spec.MachineID)
+		d.mu.Unlock()
+	}()
+
 	diskID, diskMiB := "", 0
 	if len(spec.Disks) > 0 {
 		diskID, diskMiB = spec.Disks[0].ID, spec.Disks[0].SizeMiB

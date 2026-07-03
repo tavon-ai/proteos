@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,6 +174,49 @@ func TestPersistDirSurvivesHibernate(t *testing.T) {
 	if _, err := os.Stat(proof); err != nil {
 		t.Fatalf("persist proof gone after resume: %v", err)
 	}
+}
+
+// TestConcurrentEnsureRunningBootsOnce verifies that N concurrent EnsureRunning
+// calls for the same machine result in exactly one boot: all calls return the
+// same handle without error, and the machine reaches StateRunning (not StateError
+// which would indicate a double-boot tearing down the first process).
+func TestConcurrentEnsureRunningBootsOnce(t *testing.T) {
+	d, _ := newDriver(t, "")
+	ctx := context.Background()
+	id := "dddddddd-0000-0000-0000-000000000004"
+	t.Cleanup(func() { _ = d.Destroy(ctx, id) })
+
+	const N = 20
+	handles := make([]string, N)
+	errs := make([]error, N)
+	var wg sync.WaitGroup
+	// Use a gate to maximise goroutine overlap at the start of EnsureRunning.
+	gate := make(chan struct{})
+	for i := range N {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-gate
+			handles[i], errs[i] = d.EnsureRunning(ctx, spec(id))
+		}(i)
+	}
+	close(gate)
+	wg.Wait()
+
+	for i := range N {
+		if errs[i] != nil {
+			t.Errorf("call %d: unexpected error: %v", i, errs[i])
+		}
+	}
+	h0 := handles[0]
+	for i, h := range handles {
+		if h != h0 {
+			t.Errorf("call %d: got handle %q, want %q", i, h, h0)
+		}
+	}
+
+	// The machine must reach running, proving only one boot succeeded.
+	waitState(t, d, id, api.StateRunning)
 }
 
 func writeFakeGuestAgent(t *testing.T) string {
