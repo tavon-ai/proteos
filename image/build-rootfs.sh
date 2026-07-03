@@ -62,11 +62,13 @@
 # the chroot and is idempotent (skipped if the base already ships git). Pass
 # --no-git to skip (air-gapped builds, or a base that already includes git).
 #
-# Guest dev tooling: vim, the Go toolchain, and the Taskfile (`task`) CLI are
-# baked into the guest by default (--no-vim / --no-go / --no-taskfile opt out).
-# vim goes in extract-only via apt (like git); Go is unpacked into /usr/local/go
-# and put on PATH; Taskfile installs `task` onto /usr/local/bin. Pin versions with
-# --go-version X.Y.Z / --taskfile-version vX.Y.Z.
+# Guest dev tooling: vim, the Go toolchain, the Taskfile (`task`) CLI, and the
+# GitHub CLI (`gh`) are baked into the guest by default (--no-vim / --no-go /
+# --no-taskfile / --no-gh opt out). vim goes in extract-only via apt (like git);
+# Go is unpacked into /usr/local/go and put on PATH; Taskfile and gh install their
+# single binary onto /usr/local/bin (gh lets coding agents open PRs from inside
+# the guest, TAV-71). Pin versions with --go-version X.Y.Z / --taskfile-version
+# vX.Y.Z / --gh-version X.Y.Z.
 #
 # Machine-template language layers (Slice 4): a template selects which language
 # toolchains the image carries on top of the common platform layer.
@@ -610,6 +612,60 @@ install_taskfile() {
   ok "Taskfile ${version} installed (/usr/local/bin/task)"
 }
 
+# install_gh MNT VERSION [SHA256] — fetch the GitHub CLI (`gh`) release tarball
+# from GitHub, verify its sha256 against the published gh_<ver>_checksums.txt, and
+# install the `gh` binary onto /usr/local/bin. Coding agents use it to open PRs
+# straight from inside the guest instead of leaving branches unpushed (auth is the
+# runtime-injected GitHub token — nothing secret is baked). Self-contained static
+# binary, so — like Go/Taskfile — it needs no chroot or apt. An empty VERSION
+# resolves the latest GitHub release. Sets GH_VERSION/GH_SHA256.
+install_gh() {
+  local mnt="$1" version="$2" want_sha="$3"
+  local arch tarball url
+  arch="$(go_arch)"   # gh uses the same amd64/arm64 release tags as Go
+
+  if [[ -z $version ]]; then
+    log "resolving latest gh (GitHub CLI) release"
+    local tag
+    tag="$(dl https://api.github.com/repos/cli/cli/releases/latest \
+      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]+"' \
+      | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || die "resolve gh latest"
+    [[ -n $tag ]] || die "could not resolve latest gh release"
+    version="${tag#v}"
+    ok "latest gh is $version"
+  fi
+  version="${version#v}"   # accept a pin given with or without the leading v
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "bad gh version: $version"
+
+  tarball="gh_${version}_linux_${arch}.tar.gz"
+  url="https://github.com/cli/cli/releases/download/v${version}/${tarball}"
+  log "fetching gh ${version} (${arch})"
+  dl "$url" "$WORK/$tarball" || die "download gh $version"
+  local actual
+  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
+  if [[ -z $want_sha ]]; then
+    want_sha="$(dl "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_checksums.txt" 2>/dev/null \
+      | grep " ${tarball}\$" | awk '{print $1}')" || true
+  fi
+  if [[ -n $want_sha ]]; then
+    [[ "$actual" == "$want_sha" ]] || die "gh sha256 mismatch: expected $want_sha, got $actual"
+    ok "gh tarball sha256 verified ($actual)"
+  else
+    log "WARNING: could not fetch gh checksums; pinning to the tarball's own sha256 ($actual)"
+  fi
+  GH_SHA256="$actual"
+  # The tarball unpacks to gh_<ver>_linux_<arch>/{bin/gh,share/man,...}; --strip the
+  # top-level dir into a temp tree, then install just the binary onto PATH.
+  local tmp="$WORK/gh"
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  tar -xzf "$WORK/$tarball" -C "$tmp" --strip-components=1
+  [[ -f "$tmp/bin/gh" ]] || die "gh tarball did not contain bin/gh"
+  sudo install -D -m 0755 "$tmp/bin/gh" "$mnt/usr/local/bin/gh"
+  GH_VERSION="$version"
+  ok "gh ${version} installed (/usr/local/bin/gh)"
+}
+
 # emit_alias NAME=VALUE — print a shell `alias NAME='VALUE'` line, single-quoting
 # the value (embedded single-quotes escaped) so spaces/metachars survive.
 emit_alias() {
@@ -725,6 +781,13 @@ GO_SHA256=""
 TASKFILE_INSTALL=1
 TASKFILE_VERSION="v3.40.0"
 TASK_SHA256=""
+# GitHub CLI (`gh`): lets the guest's coding agents open PRs directly instead of
+# leaving branches unpushed (TAV-71). On by default (self-contained static binary
+# from GitHub releases); --no-gh opts out. Empty version ⇒ latest release;
+# --gh-version pins one, --gh-sha256 verifies the tarball.
+GH_INSTALL=1
+GH_VERSION=""
+GH_SHA256=""
 # Python language layer (Slice 4): python3 + pip + venv + headers + the C/C++
 # build toolchain (build-essential). Off by default (it is a per-template layer,
 # not a platform default); enabled with --python for the python/full templates.
@@ -754,6 +817,10 @@ while [[ $# -gt 0 ]]; do
     --taskfile) TASKFILE_INSTALL=1; shift ;;
     --no-taskfile) TASKFILE_INSTALL=0; shift ;;
     --taskfile-version) TASKFILE_INSTALL=1; TASKFILE_VERSION=$2; shift 2 ;;
+    --gh) GH_INSTALL=1; shift ;;
+    --no-gh) GH_INSTALL=0; shift ;;
+    --gh-version) GH_INSTALL=1; GH_VERSION=$2; shift 2 ;;
+    --gh-sha256) GH_SHA256=$2; shift 2 ;;
     --node) NODE_INSTALL=1; shift ;;
     --no-node) NODE_INSTALL=-1; shift ;;
     --python) PYTHON_INSTALL=1; shift ;;
@@ -1062,6 +1129,12 @@ if [[ $TASKFILE_INSTALL -eq 1 ]]; then
   install_taskfile "$MNT" "$TASKFILE_VERSION"
   FEATURES="$FEATURES,taskfile"
 fi
+# GitHub CLI (TAV-71). Self-contained static binary fetched from GitHub releases
+# and dropped onto /usr/local/bin — no chroot/apt, same as Go/Taskfile.
+if [[ $GH_INSTALL -eq 1 ]]; then
+  install_gh "$MNT" "$GH_VERSION" "$GH_SHA256"
+  FEATURES="$FEATURES,gh"
+fi
 
 if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
@@ -1102,6 +1175,7 @@ fi
 BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 GO_REL="none"; [[ $GO_INSTALL -eq 1 ]] && GO_REL="$GO_VERSION"
 TASK_REL="none"; [[ $TASKFILE_INSTALL -eq 1 ]] && TASK_REL="$TASKFILE_VERSION"
+GH_REL="none"; [[ $GH_INSTALL -eq 1 ]] && GH_REL="${GH_VERSION:-unknown}"
 VIM_REL="no"; [[ $VIM_INSTALL -eq 1 ]] && VIM_REL="yes"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
@@ -1113,6 +1187,7 @@ PROTEOS_VIM=$VIM_REL
 PROTEOS_GO_VERSION=$GO_REL
 PROTEOS_PYTHON_VERSION=${PYTHON_VERSION:-none}
 PROTEOS_TASKFILE_VERSION=$TASK_REL
+PROTEOS_GH_VERSION=$GH_REL
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
 PROTEOS_CODESERVER_VERSION=${CS_VERSION:-none}
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
@@ -1160,6 +1235,8 @@ go_version     = $GO_REL
 go_sha256      = ${GO_SHA256:-none}
 taskfile_version = $TASK_REL
 taskfile_sha256  = ${TASK_SHA256:-none}
+gh_version     = $GH_REL
+gh_sha256      = ${GH_SHA256:-none}
 codeserver_version = ${CS_VERSION:-none}
 codeserver_sha256  = ${CS_SHA256:-none}
 claude_version = ${CLAUDE_VERSION:-none}

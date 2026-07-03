@@ -61,11 +61,61 @@ proteos_rootfs_size: "1G"
 # the control plane; defaults must sit within its caps (PROTEOS_MAX_VCPUS etc.).
 # Baking the full set is slow (~10–20 min each); trim this list while iterating.
 proteos_templates:
-  - { id: base, label: "Base", description: "Platform baseline — editor, shell, git.", go: false, node: false, python: false, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
-  - { id: go, label: "Go development", description: "Go toolchain + Taskfile.", go: true, node: false, python: false, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
-  - { id: node, label: "Node.js development", description: "Node LTS runtime + npm provider CLIs.", go: false, node: true, python: false, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
-  - { id: python, label: "Python development", description: "Python 3 + pip + venv + build tools.", go: false, node: false, python: true, vcpus: 2, mem_mib: 2048, disk_mib: 10240 }
-  - { id: full, label: "Full stack (Go + Node + Python)", description: "Go, Node, and Python with build essentials.", go: true, node: true, python: true, vcpus: 4, mem_mib: 4096, disk_mib: 20480 }
+  - {
+      id: base,
+      label: "Base",
+      description: "Platform baseline — editor, shell, git.",
+      go: false,
+      node: false,
+      python: false,
+      vcpus: 2,
+      mem_mib: 2048,
+      disk_mib: 10240,
+    }
+  - {
+      id: go,
+      label: "Go development",
+      description: "Go toolchain + Taskfile.",
+      go: true,
+      node: false,
+      python: false,
+      vcpus: 2,
+      mem_mib: 2048,
+      disk_mib: 10240,
+    }
+  - {
+      id: node,
+      label: "Node.js development",
+      description: "Node LTS runtime + npm provider CLIs.",
+      go: false,
+      node: true,
+      python: false,
+      vcpus: 2,
+      mem_mib: 2048,
+      disk_mib: 10240,
+    }
+  - {
+      id: python,
+      label: "Python development",
+      description: "Python 3 + pip + venv + build tools.",
+      go: false,
+      node: false,
+      python: true,
+      vcpus: 2,
+      mem_mib: 2048,
+      disk_mib: 10240,
+    }
+  - {
+      id: full,
+      label: "Full stack (Go + Node + Python)",
+      description: "Go, Node, and Python with build essentials.",
+      go: true,
+      node: true,
+      python: true,
+      vcpus: 4,
+      mem_mib: 4096,
+      disk_mib: 20480,
+    }
 
 # The template whose image backs the single-image fallbacks: the node-agent env's
 # PROTEOS_ROOTFS_REF and the loop-mount acceptance gates + smoke boot (which boot
@@ -183,11 +233,21 @@ proteos_guest_go_install: true
 proteos_guest_go_version: "" # empty ⇒ build-rootfs.sh default (mirrors the host Go pin)
 proteos_guest_taskfile_install: true
 proteos_guest_taskfile_version: "" # empty ⇒ build-rootfs.sh default
+# GitHub CLI (`gh`), baked onto /usr/local/bin so the guest's coding agents can
+# open PRs directly instead of leaving branches unpushed (TAV-71). Auth is the
+# runtime-injected GitHub token — nothing secret is baked. On by default; empty
+# version ⇒ latest GitHub release. Bumping needs a FORCED rebuild, same as the
+# other guest tooling (the bake is guarded on source changes, not on these vars).
+proteos_guest_gh_install: true
+proteos_guest_gh_version: "" # empty ⇒ latest GitHub release; set to pin (e.g. 2.62.0)
+proteos_guest_gh_sha256: "" # optional sha256 pin for the release tarball
 proteos_guest_aliases:
   c: "claude --dangerously-skip-permissions"
   gs: "git status"
   gc: "git commit -a -s -m"
   ga: "git add ."
+  "..": "cd .."
+  gcm: "git checkout main"
 
 # name ⇒ command map; baked into the guest .bashrc
 
@@ -250,7 +310,7 @@ proteos_agent_port: 9090
 # Supply a key from https://login.tailscale.com/admin/settings/keys (reusable or
 # ephemeral) via ansible-vault or --extra-vars — NEVER commit a real key.
 # ============================================================================
-proteos_tailscale_enabled: false
+proteos_tailscale_enabled: true
 proteos_tailscale_authkey: "" # tskey-... ; required when enabled (vault/--extra-vars)
 proteos_tailscale_hostname: "" # empty ⇒ inventory_hostname
 proteos_tailscale_ssh: false # add --ssh to `tailscale up` (Tailscale SSH)

@@ -221,6 +221,7 @@
       {% if not (proteos_codeserver_install | bool) %} --no-codeserver{% else %}{% if proteos_codeserver_version | length > 0 %} --codeserver-version {{ proteos_codeserver_version }}{% endif %}{% if proteos_codeserver_sha256 | length > 0 %} --codeserver-sha256 {{ proteos_codeserver_sha256 }}{% endif %}{% endif %}
       {% if not (proteos_guest_vim_install | bool) %} --no-vim{% endif %}
       {% if not (proteos_guest_taskfile_install | bool) %} --no-taskfile{% else %}{% if proteos_guest_taskfile_version | length > 0 %} --taskfile-version {{ proteos_guest_taskfile_version }}{% endif %}{% endif %}
+      {% if not (proteos_guest_gh_install | bool) %} --no-gh{% else %}{% if proteos_guest_gh_version | length > 0 %} --gh-version {{ proteos_guest_gh_version }}{% endif %}{% if proteos_guest_gh_sha256 | length > 0 %} --gh-sha256 {{ proteos_guest_gh_sha256 }}{% endif %}{% endif %}
       {% for k, v in proteos_guest_aliases.items() %} --alias '{{ k }}={{ v }}'{% endfor %}
   environment:
     PATH: "{{ proteos_go_root }}/bin:{{ ansible_env.PATH }}"
