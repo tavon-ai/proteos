@@ -29,9 +29,20 @@ func setupAppRole(t *testing.T, client *bao.Client, roleName string) (roleID, se
 		}
 	}
 
+	// Create a policy that mirrors the production cp-base policy: grants the
+	// AppRole token write+read+delete access to the machines KV path.
+	policyName := "cp-test-" + roleName
+	policy := `
+path "secret/data/machines/*"     { capabilities = ["create", "update", "read", "delete"] }
+path "secret/metadata/machines/*" { capabilities = ["read", "delete", "list"] }
+`
+	if err := client.Sys().PutPolicyWithContext(ctx, policyName, policy); err != nil {
+		t.Fatalf("create policy %s: %v", policyName, err)
+	}
+
 	// Create the role the control plane will authenticate as.
 	if _, err := client.Logical().WriteWithContext(ctx, "auth/approle/role/"+roleName, map[string]any{
-		"token_policies": []string{"default"},
+		"token_policies": []string{policyName},
 		"token_ttl":      "60s",
 		"token_max_ttl":  "120s",
 	}); err != nil {
