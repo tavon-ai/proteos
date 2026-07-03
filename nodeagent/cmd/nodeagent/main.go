@@ -60,6 +60,7 @@ func run() error {
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    8 << 10, // 8 KiB; default is 1 MiB, which allows oversized header attacks
 	}
 
 	tlsEnabled := cfg.TLSCert != "" && cfg.TLSKey != ""

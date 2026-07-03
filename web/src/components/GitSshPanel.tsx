@@ -166,8 +166,6 @@ function SshKeySection() {
         </span>
       </div>
 
-      {isLoading && <p className="muted">Loading…</p>}
-
       {present && publicKey && (
         <>
           <p className="muted">
@@ -194,19 +192,31 @@ function SshKeySection() {
         </>
       )}
 
-      {!present && !isLoading && (
+      {/* Show the empty state whenever there's no key — even while loading, so the
+          section never appears blank. The button is disabled until loading completes. */}
+      {!present && (
         <>
           <p className="muted">
             Generate an SSH key that follows you onto every machine. The private key is stored
             encrypted and injected at runtime; you add the public key to GitHub.
           </p>
           <div className="provider-row-actions">
-            <button className="btn" onClick={onGenerate} disabled={generate.isPending}>
+            <button className="btn" onClick={onGenerate} disabled={isLoading || generate.isPending}>
               {generate.isPending ? 'Generating…' : 'Generate SSH key'}
             </button>
           </div>
         </>
       )}
+
+      {/* Fallback: key is marked present but no public key came back (edge case). */}
+      {present && !publicKey && !isLoading && (
+        <div className="provider-row-actions">
+          <button className="btn-ghost" onClick={onGenerate} disabled={generate.isPending}>
+            {generate.isPending ? 'Regenerating…' : 'Regenerate key'}
+          </button>
+        </div>
+      )}
+
       {generate.isError && <span className="error-inline">Could not generate key.</span>}
     </div>
   );

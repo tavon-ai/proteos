@@ -15,6 +15,7 @@ function m(id: string, state: MachineSummary['state']): MachineSummary {
     resource_spec: { vcpus: 1, mem_mib: 1 },
     last_error: null,
     created_at: '',
+    last_active_at: null,
     boot: null,
     disk_id: null,
     disk_mib: null,

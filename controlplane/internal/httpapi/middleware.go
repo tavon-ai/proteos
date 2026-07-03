@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -155,6 +156,20 @@ func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// recoverer catches panics in handlers, logs them with a stack trace, and
+// returns 500 so the server stays up rather than crashing on an unhandled panic.
+func recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("panic in http handler", "recover", rec, "stack", string(debug.Stack()))
+				writeError(w, http.StatusInternalServerError, "internal")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // requestLogger logs method, path, status, and duration. It deliberately never
