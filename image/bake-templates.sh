@@ -12,11 +12,11 @@
 #
 # The platform layer (guest agent, git, vim, taskfile, dev user, code-server, and
 # — when forwarded — claude/providers) is build-rootfs.sh's defaults and is
-# identical across templates; this script only varies the Go/Node/Python language
-# layers:
+# identical across templates; this script only varies the Go/Node/Python/Rust
+# language layers:
 #   base   = platform only (Go off)        go     = + Go
 #   node   = + Node                        python = + Python (pip/venv/build tools)
-#   full   = + Go + Node + Python
+#   full   = + Go + Node + Python + Rust
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,7 +59,7 @@ lang_flags() {
     go) echo "--go" ;;
     node) echo "--no-go --node" ;;
     python) echo "--no-go --python" ;;
-    full) echo "--go --node --python" ;;
+    full) echo "--go --node --python --rust" ;;
     *) die "unknown template id: $1 (known: base go node python full)" ;;
   esac
 }
