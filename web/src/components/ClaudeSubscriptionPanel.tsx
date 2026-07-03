@@ -49,8 +49,8 @@ function ClaudeAttributionSection() {
       <p className="muted">
         By default, Claude Code adds a <em>Generated with Claude Code</em> line and a{' '}
         <code>Co-Authored-By</code> trailer to the commits and pull requests it creates. Turn this
-        off if your organization does not allow co-authored commits. The setting applies on all
-        your machines, in the terminal and for remote tasks; anything else you keep in{' '}
+        off if your organization does not allow co-authored commits. The setting applies on all your
+        machines, in the terminal and for remote tasks; anything else you keep in{' '}
         <code>~/.claude/settings.json</code> is left untouched.
       </p>
       <label className="download-option">
