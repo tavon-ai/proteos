@@ -123,6 +123,8 @@ services:
       PROTEOS_MAX_VCPUS: ${PROTEOS_MAX_VCPUS:-8}
       PROTEOS_MAX_MEM_MIB: ${PROTEOS_MAX_MEM_MIB:-16384}
       PROTEOS_MAX_DISK_MIB: ${PROTEOS_MAX_DISK_MIB:-51200}
+      # Minimum microVMs available per user for concurrent task dispatch (TAV-69).
+      PROTEOS_MAX_MACHINES_PER_USER: ${PROTEOS_MAX_MACHINES_PER_USER:-5}
 
       # Phase 8: per-machine code-server editor subdomains. Set to the parent
       # domain you point a wildcard DNS record + TLS cert at (e.g.

@@ -30,7 +30,7 @@ var (
 
 // defaultMaxPerUser caps how many machines a user may own when Spec.MaxPerUser
 // is unset (≤0). The cap protects the single fc-node host's RAM and guest-IP pool.
-const defaultMaxPerUser = 3
+const defaultMaxPerUser = 5
 
 // NodeClient is the subset of the node-agent client the lifecycle needs. Kept
 // as an interface so the service and poller are testable against a fake agent.
