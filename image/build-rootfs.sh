@@ -743,6 +743,66 @@ install_rust() {
   ok "Rust ${RUST_VERSION} installed (/usr/local/cargo/bin/{rustc,cargo,rustup})"
 }
 
+# bun_arch maps uname -m onto the Bun release asset arch component.
+bun_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo "x64" ;;
+    arm64 | aarch64) echo "aarch64" ;;
+    *) die "unsupported arch for Bun: $(uname -m)" ;;
+  esac
+}
+
+# install_bun MNT [VERSION] — download the standalone Bun binary from GitHub
+# releases, verify its sha256, and install to /usr/local/bin/bun. Bun is a
+# self-contained ELF; no chroot binds or package manager needed. VERSION is a
+# tag like "bun-v1.x.y" or a plain semver "1.x.y" (default: latest). Sets
+# BUN_VERSION and BUN_SHA256.
+install_bun() {
+  local mnt="$1" version="${2:-}"
+  local arch
+  arch="$(bun_arch)"
+  command -v unzip >/dev/null 2>&1 || die "unzip required for Bun installation (apt install unzip)"
+
+  if [[ -z $version ]]; then
+    log "resolving latest Bun release"
+    version="$(dl "https://api.github.com/repos/oven-sh/bun/releases/latest" \
+      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')" \
+      || die "could not resolve latest Bun release"
+    [[ -n $version ]] || die "empty Bun tag from GitHub API"
+    log "resolved latest Bun: $version"
+  fi
+  [[ $version == bun-v* ]] || version="bun-v${version#v}"
+
+  local asset="bun-linux-${arch}"
+  local zip_url="https://github.com/oven-sh/bun/releases/download/${version}/${asset}.zip"
+
+  log "fetching Bun ${version} (${arch})"
+  dl "$zip_url" "$WORK/bun.zip" || die "download bun.zip"
+
+  local actual want
+  actual="$(sha256sum "$WORK/bun.zip" | awk '{print $1}')"
+  want="$(dl "${zip_url}.sha256" 2>/dev/null | awk '{print $1}')" || true
+  if [[ -n $want ]]; then
+    [[ "$actual" == "$want" ]] || die "bun.zip sha256 mismatch: expected $want, got $actual"
+    ok "bun.zip sha256 verified ($actual)"
+  else
+    log "WARNING: could not fetch Bun checksum; pinning to its own sha256 ($actual)"
+  fi
+  BUN_SHA256="$actual"
+
+  mkdir -p "$WORK/bun-unzip"
+  unzip -q "$WORK/bun.zip" -d "$WORK/bun-unzip"
+  local bun_bin="$WORK/bun-unzip/${asset}/bun"
+  [[ -f $bun_bin ]] || die "bun binary not found in zip at ${asset}/bun"
+  sudo install -D -m 0755 "$bun_bin" "$mnt/usr/local/bin/bun"
+
+  BUN_VERSION="$(sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    bun --version 2>/dev/null | head -1 | tr -d '[:space:]')" || true
+  [[ -n $BUN_VERSION ]] || die "Bun install failed: bun --version failed in image"
+  ok "Bun ${BUN_VERSION} installed (/usr/local/bin/bun)"
+}
+
 # install_shell_env MNT — bake a managed shell snippet (Go/Rust on PATH + operator
 # aliases / appended bashrc files) into /etc/profile.d AND source it from the
 # interactive bashrc of root, /etc/skel, and the provisioned run-as user.
@@ -871,6 +931,11 @@ PYTHON_VERSION=""
 RUST_INSTALL=0
 RUST_VERSION=""
 RUSTUP_SHA256=""
+# Bun runtime (TAV-66): standalone JS/TS runtime installed to /usr/local/bin/bun.
+# Off by default; enabled with --bun for the full template.
+BUN_INSTALL=0
+BUN_VERSION=""
+BUN_SHA256=""
 # Operator shell customisation baked into the guest's interactive shells: aliases
 # (--alias 'name=command', repeatable) and/or whole files appended to the managed
 # bashrc snippet (--bashrc-file FILE, repeatable).
@@ -906,6 +971,10 @@ while [[ $# -gt 0 ]]; do
     --rust) RUST_INSTALL=1; shift ;;
     --no-rust) RUST_INSTALL=0; shift ;;
     --rust-version) RUST_INSTALL=1; RUST_VERSION=$2; shift 2 ;;
+    --bun) BUN_INSTALL=1; shift ;;
+    --no-bun) BUN_INSTALL=0; shift ;;
+    --bun-version) BUN_INSTALL=1; BUN_VERSION=$2; shift 2 ;;
+    --bun-sha256) BUN_SHA256=$2; shift 2 ;;
     --template) TEMPLATE_ID=$2; shift 2 ;;
     --alias) ALIASES+=("$2"); shift 2 ;;
     --bashrc-file) [[ -f $2 ]] || die "--bashrc-file not found: $2"; BASHRC_FILES+=("$2"); shift 2 ;;
@@ -1050,6 +1119,12 @@ if [[ $RUST_INSTALL -eq 1 ]]; then
   RUST_NEED=$((GROW_MIB + 600))
   log "baking Rust toolchain — bumping grow ${GROW_MIB}→${RUST_NEED}MiB headroom"
   GROW_MIB=$RUST_NEED
+fi
+# Bun runtime (standalone binary, ~100MiB extracted).
+if [[ $BUN_INSTALL -eq 1 ]]; then
+  BUN_NEED=$((GROW_MIB + 200))
+  log "baking Bun — bumping grow ${GROW_MIB}→${BUN_NEED}MiB headroom"
+  GROW_MIB=$BUN_NEED
 fi
 if [[ $TASKFILE_INSTALL -eq 1 ]]; then
   TASK_NEED=$((GROW_MIB + 32))
@@ -1216,6 +1291,11 @@ if [[ $RUST_INSTALL -eq 1 ]]; then
   unbind_chroot
   FEATURES="$FEATURES,rust"
 fi
+# Bun runtime (TAV-66). Standalone ELF — no chroot binds or apt needed.
+if [[ $BUN_INSTALL -eq 1 ]]; then
+  install_bun "$MNT" "${BUN_VERSION:-}"
+  FEATURES="$FEATURES,bun"
+fi
 if [[ $GO_INSTALL -eq 1 ]]; then
   install_go "$MNT" "$GO_VERSION"
   FEATURES="$FEATURES,go"
@@ -1273,6 +1353,7 @@ TASK_REL="none"; [[ $TASKFILE_INSTALL -eq 1 ]] && TASK_REL="$TASKFILE_VERSION"
 GH_REL="none"; [[ $GH_INSTALL -eq 1 ]] && GH_REL="${GH_VERSION:-unknown}"
 VIM_REL="no"; [[ $VIM_INSTALL -eq 1 ]] && VIM_REL="yes"
 RUST_REL="none"; [[ $RUST_INSTALL -eq 1 ]] && RUST_REL="${RUST_VERSION:-unknown}"
+BUN_REL="none"; [[ $BUN_INSTALL -eq 1 ]] && BUN_REL="${BUN_VERSION:-unknown}"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_TEMPLATE=${TEMPLATE_ID:-none}
@@ -1283,6 +1364,7 @@ PROTEOS_VIM=$VIM_REL
 PROTEOS_GO_VERSION=$GO_REL
 PROTEOS_PYTHON_VERSION=${PYTHON_VERSION:-none}
 PROTEOS_RUST_VERSION=$RUST_REL
+PROTEOS_BUN_VERSION=$BUN_REL
 PROTEOS_TASKFILE_VERSION=$TASK_REL
 PROTEOS_GH_VERSION=$GH_REL
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
@@ -1330,6 +1412,8 @@ vim            = $VIM_REL
 python_version = ${PYTHON_VERSION:-none}
 rust_version   = $RUST_REL
 rustup_sha256  = ${RUSTUP_SHA256:-none}
+bun_version    = ${BUN_VERSION:-none}
+bun_sha256     = ${BUN_SHA256:-none}
 go_version     = $GO_REL
 go_sha256      = ${GO_SHA256:-none}
 taskfile_version = $TASK_REL
