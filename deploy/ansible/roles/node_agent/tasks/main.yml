@@ -215,6 +215,8 @@
       {{ '--go' if item.go else '--no-go' }}{% if item.go and proteos_guest_go_version | length > 0 %} --go-version {{ proteos_guest_go_version }}{% endif %}
       {{ '--node' if item.node else '--no-node' }}
       {{ '--python' if item.python else '--no-python' }}
+      {{ '--rust' if item.rust | default(false) else '--no-rust' }}
+      {{ '--bun' if item.bun | default(false) else '--no-bun' }}
       {% if proteos_claude_install == 'bootstrap' %} --claude-bootstrap{% if proteos_claude_version | length > 0 %} --claude-version {{ proteos_claude_version }}{% endif %}{% elif proteos_claude_install == 'binary' %} --claude-binary {{ proteos_claude_staged }} --claude-version {{ proteos_claude_version }}{% if proteos_claude_sha256 | length > 0 %} --claude-sha256 {{ proteos_claude_sha256 }}{% endif %}{% endif %}
       {% if item.node %}{% if proteos_gemini_install == 'latest' %} --gemini{% if proteos_gemini_version | length > 0 %} --gemini-version {{ proteos_gemini_version }}{% endif %}{% endif %}{% if proteos_codex_install == 'latest' %} --codex{% if proteos_codex_version | length > 0 %} --codex-version {{ proteos_codex_version }}{% endif %}{% endif %}{% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}{% if proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}{% endif %}
       {% if not (proteos_git_install | bool) %} --no-git{% endif %}

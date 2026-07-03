@@ -107,11 +107,13 @@ proteos_templates:
     }
   - {
       id: full,
-      label: "Full stack (Go + Node + Python)",
-      description: "Go, Node, and Python with build essentials.",
+      label: "Full stack (Go + Node + Python + Rust + Bun)",
+      description: "Go, Node, Python, Rust, and Bun with build essentials.",
       go: true,
       node: true,
       python: true,
+      rust: true,
+      bun: true,
       vcpus: 4,
       mem_mib: 4096,
       disk_mib: 20480,

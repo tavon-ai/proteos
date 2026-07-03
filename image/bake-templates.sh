@@ -16,7 +16,7 @@
 # language layers:
 #   base   = platform only (Go off)        go     = + Go
 #   node   = + Node                        python = + Python (pip/venv/build tools)
-#   full   = + Go + Node + Python + Rust
+#   full   = + Go + Node + Python + Rust + Bun
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,7 +59,7 @@ lang_flags() {
     go) echo "--go" ;;
     node) echo "--no-go --node" ;;
     python) echo "--no-go --python" ;;
-    full) echo "--go --node --python --rust" ;;
+    full) echo "--go --node --python --rust --bun" ;;
     *) die "unknown template id: $1 (known: base go node python full)" ;;
   esac
 }
