@@ -730,7 +730,8 @@ export const api = {
   getPR: (repo: string, number: number) => request<PRDetail>(prPath(repo, number)),
   getPRFiles: (repo: string, number: number) =>
     request<PRFilesResponse>(`${prPath(repo, number)}/files`),
-  getPRChecks: (repo: string, number: number) => request<PRChecks>(`${prPath(repo, number)}/checks`),
+  getPRChecks: (repo: string, number: number) =>
+    request<PRChecks>(`${prPath(repo, number)}/checks`),
   // Merge the PR — the review surface's one primary action. 422 not_mergeable
   // (draft/conflicts/branch protection); 409 head_changed / reconnect_github;
   // 403 merge_forbidden — all ApiError.

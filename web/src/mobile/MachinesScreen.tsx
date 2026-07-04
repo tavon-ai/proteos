@@ -106,7 +106,12 @@ function MachineCard({
       {busy ? (
         <span className="m-spinner" role="status" aria-label={stateLabel(machine.state)} />
       ) : machine.state === 'running' ? (
-        <button type="button" className="m-ctl m-ctl-stop" aria-label="Stop machine" onClick={onStop}>
+        <button
+          type="button"
+          className="m-ctl m-ctl-stop"
+          aria-label="Stop machine"
+          onClick={onStop}
+        >
           <StopIcon size={16} />
         </button>
       ) : (

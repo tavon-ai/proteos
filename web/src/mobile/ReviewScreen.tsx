@@ -74,9 +74,7 @@ export function ReviewScreen({
           <BackButton onBack={onBack} />
           {machine && (
             <span className="m-machine-chip">
-              <span
-                className={`m-chip-dot${machine.state === 'running' ? ' is-running' : ''}`}
-              />
+              <span className={`m-chip-dot${machine.state === 'running' ? ' is-running' : ''}`} />
               {machine.name}
             </span>
           )}
@@ -136,12 +134,7 @@ export function ReviewScreen({
         {current && <DiffView patch={current.patch} />}
       </div>
 
-      <MergeBar
-        detail={detail}
-        repo={repo}
-        number={number}
-        onComment={() => setCommenting(true)}
-      />
+      <MergeBar detail={detail} repo={repo} number={number} onComment={() => setCommenting(true)} />
       {commenting && (
         <CommentSheet repo={repo} number={number} onClose={() => setCommenting(false)} />
       )}
@@ -159,8 +152,7 @@ function BackButton({ onBack }: { onBack: () => void }) {
 
 // StateChip is the OPEN PR / DRAFT / MERGED / CLOSED pill.
 function StateChip({ state }: { state: PRState }) {
-  const label =
-    state === 'open' ? 'OPEN PR' : state === 'draft' ? 'DRAFT' : state.toUpperCase();
+  const label = state === 'open' ? 'OPEN PR' : state === 'draft' ? 'DRAFT' : state.toUpperCase();
   return (
     <span className={`m-state-chip m-state-${state}`}>
       <BranchIcon size={12} />
@@ -248,14 +240,11 @@ function MergeBar({
 
   return (
     <div className="m-action-bar-wrap">
-      {merge.error != null && <div className="m-error m-merge-error">{mergeErrorMessage(merge.error)}</div>}
+      {merge.error != null && (
+        <div className="m-error m-merge-error">{mergeErrorMessage(merge.error)}</div>
+      )}
       <div className="m-action-bar">
-        <button
-          type="button"
-          className="m-comment-btn"
-          aria-label="Comment"
-          onClick={onComment}
-        >
+        <button type="button" className="m-comment-btn" aria-label="Comment" onClick={onComment}>
           <ChatIcon size={20} />
         </button>
         <button
