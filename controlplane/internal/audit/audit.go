@@ -42,6 +42,10 @@ const (
 	ActionGitCommit   = "git.commit" // a user committed changes in a project
 	ActionGitPush     = "git.push"   // a user pushed a branch to origin (also the SSE event type)
 	ActionGitPRCreate = "git.pr"     // a user opened a pull request (also the SSE event type)
+
+	// PR review mutations. Target is the repo full name (owner/repo).
+	ActionGitPRMerge   = "git.pr.merge"   // a user merged a pull request
+	ActionGitPRComment = "git.pr.comment" // a user commented on a pull request
 )
 
 // Actor prefixes identify who performed the action.

@@ -197,6 +197,19 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/git/clone", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitClone))))
 	}
 
+	// PR review (mobile review loop): read a pull request's summary, files, and
+	// checks, and merge or comment on it. All CP→GitHub calls against the user's
+	// own token — deliberately machine-independent, so a PR stays reviewable
+	// while its machine is stopped. Reads are auth-only; merge and comment
+	// mutate, so they also require the CSRF header.
+	if s.GitHub != nil && s.Tokens != nil {
+		mux.Handle("GET /api/git/repos/{owner}/{repo}/pulls/{number}", s.requireAuth(http.HandlerFunc(s.handleGetPRDetail)))
+		mux.Handle("GET /api/git/repos/{owner}/{repo}/pulls/{number}/files", s.requireAuth(http.HandlerFunc(s.handleListPRFiles)))
+		mux.Handle("GET /api/git/repos/{owner}/{repo}/pulls/{number}/checks", s.requireAuth(http.HandlerFunc(s.handleListPRChecks)))
+		mux.Handle("POST /api/git/repos/{owner}/{repo}/pulls/{number}/merge", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleMergePR))))
+		mux.Handle("POST /api/git/repos/{owner}/{repo}/pulls/{number}/comments", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCommentPR))))
+	}
+
 	// Projects + desktop layout (Phase 9). Projects is a read over the control
 	// channel; the desktop layout is a read/write of machine SQLite (PUT mutates
 	// so it also requires the CSRF header). Enabled only when the control channel
