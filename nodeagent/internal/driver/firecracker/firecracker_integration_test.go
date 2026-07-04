@@ -4,6 +4,7 @@ package firecracker_test
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -80,6 +81,12 @@ func testDriver(t *testing.T) (d *firecracker.Driver, volumesDir, chrootBaseDir 
 		JailUIDCount:   1000,
 		VolumesDir:     volumesDir,
 		CryptsetupBin:  envOr("PROTEOS_CRYPTSETUP_BIN", "cryptsetup"),
+		// The fail-closed input chain allow-lists the agent API port
+		// (ensureNftTable). These tests replace the REAL host's proteos:global
+		// rules, so this must be the port the deployed agent actually listens
+		// on — a made-up port would firewall the control plane out of the
+		// node-agent until its next restart re-ran ensureNftTable.
+		AgentPort: agentPortFromEnv(),
 	}, store)
 	return d, volumesDir, chrootBaseDir
 }
@@ -280,6 +287,16 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// agentPortFromEnv mirrors newFirecrackerDriver's production wiring: the agent
+// API port is the port part of PROTEOS_AGENT_ADDR, defaulting to the config
+// default (":9090", which is also what the ansible deploy uses).
+func agentPortFromEnv() string {
+	if _, port, err := net.SplitHostPort(os.Getenv("PROTEOS_AGENT_ADDR")); err == nil && port != "" {
+		return port
+	}
+	return "9090"
 }
 
 func mustSymlink(t *testing.T, oldname, newname string) {

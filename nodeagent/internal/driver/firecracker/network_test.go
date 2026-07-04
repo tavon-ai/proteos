@@ -95,3 +95,18 @@ func TestEgressCommentMatchesTeardownTag(t *testing.T) {
 			stored, commentTag(tap))
 	}
 }
+
+// An empty agent port must be rejected before any nft invocation: it would
+// render `tcp dport ` (an nft syntax error) and, if skipped instead, the
+// fail-closed input chain would firewall the control plane out of the agent
+// API. Regression test for the integration suite booting with a zero-value
+// Config.AgentPort.
+func TestEnsureNftTableRejectsEmptyAgentPort(t *testing.T) {
+	err := ensureNftTable("")
+	if err == nil {
+		t.Fatal("ensureNftTable(\"\") succeeded; want an explicit error")
+	}
+	if !strings.Contains(err.Error(), "AgentPort") {
+		t.Fatalf("error %q does not point at Config.AgentPort", err)
+	}
+}

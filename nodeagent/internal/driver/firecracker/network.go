@@ -64,6 +64,12 @@ func egressDev() (string, error) {
 // consistent across stop→start cycles. Per-tap rules are added by egressRules
 // and live alongside these, guarded by their own iifname match.
 func ensureNftTable(agentPort string) error {
+	// The input chain is fail-closed: an empty port would render `tcp dport `
+	// (an nft syntax error), and silently skipping the rule would firewall the
+	// control plane out of the agent API. Refuse loudly instead.
+	if agentPort == "" {
+		return fmt.Errorf("nftables: agent API port is empty (Config.AgentPort) — the fail-closed input chain needs it allow-listed")
+	}
 	// `add table` / `add chain` are idempotent; an existing object is a no-op.
 	if err := run("nft", "add", "table", "ip", nftTable); err != nil {
 		return err
