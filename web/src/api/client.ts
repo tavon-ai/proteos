@@ -344,6 +344,76 @@ export interface PRCreated {
   number: number;
 }
 
+// PR review (mobile review loop): summary/files/checks/merge/comment for a PR,
+// keyed by repo full-name + number. All CP→GitHub calls — machine-independent,
+// so a PR stays reviewable while its machine is stopped.
+
+// PRState is the review-surface state the OPEN/DRAFT/MERGED/CLOSED chip renders.
+export type PRState = 'open' | 'draft' | 'merged' | 'closed';
+
+// PRDetail is GET /api/git/repos/{owner}/{repo}/pulls/{number}.
+export interface PRDetail {
+  number: number;
+  state: PRState;
+  title: string;
+  body?: string;
+  html_url: string;
+  head: string;
+  base: string;
+  head_sha: string;
+  author: { login: string; avatar_url: string };
+  additions: number;
+  deletions: number;
+  changed_files: number;
+}
+
+// PRFileStatus is the single-letter file status the review list renders.
+export type PRFileStatus = 'A' | 'M' | 'D' | 'R';
+
+// PRFile is one row of GET .../pulls/{number}/files. patch is absent for binary
+// or oversized files (GitHub omits it).
+export interface PRFile {
+  path: string;
+  prev_path?: string;
+  status: PRFileStatus;
+  additions: number;
+  deletions: number;
+  patch?: string;
+}
+
+export interface PRFilesResponse {
+  files: PRFile[];
+}
+
+// PRChecks is GET .../pulls/{number}/checks: the head commit's check runs plus
+// the counts the stat strip renders.
+export interface PRChecks {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  runs: { name: string; status: string; conclusion?: string }[];
+}
+
+// PRMergeResult is the 200 body of POST .../pulls/{number}/merge.
+export interface PRMergeResult {
+  merged: boolean;
+  sha: string;
+}
+
+// PRCommentResult is the 200 body of POST .../pulls/{number}/comments.
+export interface PRCommentResult {
+  id: number;
+  html_url: string;
+}
+
+// prPath builds the /api/git/repos/{owner}/{repo}/pulls/{number} prefix from a
+// repo full-name ("owner/name"), encoding each path segment.
+function prPath(repo: string, number: number): string {
+  const [owner, name] = repo.split('/');
+  return `/api/git/repos/${encodeURIComponent(owner ?? '')}/${encodeURIComponent(name ?? '')}/pulls/${number}`;
+}
+
 // AgentTask is one row of the headless task lane (AT1/AT2). status moves
 // queued → running → done | failed | canceled; terminal states are immutable.
 // The result fields populate once the run ends. usage carries the agent's
@@ -652,6 +722,31 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project, title, body, head }),
+    }),
+
+  // PR review reads. 404 no_pr (unknown repo/PR or no access — uniform); 400
+  // bad_full_name / bad_number; 409 reconnect_github; 502 github_unavailable —
+  // all ApiError. repo is the "owner/name" full-name from the deep link.
+  getPR: (repo: string, number: number) => request<PRDetail>(prPath(repo, number)),
+  getPRFiles: (repo: string, number: number) =>
+    request<PRFilesResponse>(`${prPath(repo, number)}/files`),
+  getPRChecks: (repo: string, number: number) =>
+    request<PRChecks>(`${prPath(repo, number)}/checks`),
+  // Merge the PR — the review surface's one primary action. 422 not_mergeable
+  // (draft/conflicts/branch protection); 409 head_changed / reconnect_github;
+  // 403 merge_forbidden — all ApiError.
+  mergePR: (repo: string, number: number, method: 'merge' | 'squash' | 'rebase' = 'merge') =>
+    request<PRMergeResult>(`${prPath(repo, number)}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method }),
+    }),
+  // Post a plain PR comment (the mobile comment sheet). 400 empty_comment.
+  commentPR: (repo: string, number: number, body: string) =>
+    request<PRCommentResult>(`${prPath(repo, number)}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
     }),
 
   // Headless agent tasks (AT1/AT2). createTask dispatches a run and returns 202 +

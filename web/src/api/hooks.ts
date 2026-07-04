@@ -445,6 +445,67 @@ export function useGitPR(machineId: string | null, project: string) {
   });
 }
 
+// PR review (mobile review loop): summary/files/checks keyed by repo full-name
+// + number. 404/409/502 are ApiError — not retried, surfaced to the screen.
+const prKey = (repo: string, number: number) => ['pr', repo, number] as const;
+
+export function usePR(repo: string, number: number, enabled = true) {
+  return useQuery({
+    queryKey: prKey(repo, number),
+    queryFn: () => api.getPR(repo, number),
+    enabled: enabled && !!repo && number > 0,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+export function usePRFiles(repo: string, number: number, enabled = true) {
+  return useQuery({
+    queryKey: [...prKey(repo, number), 'files'] as const,
+    queryFn: () => api.getPRFiles(repo, number),
+    enabled: enabled && !!repo && number > 0,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+export function usePRChecks(repo: string, number: number, enabled = true) {
+  return useQuery({
+    queryKey: [...prKey(repo, number), 'checks'] as const,
+    queryFn: () => api.getPRChecks(repo, number),
+    enabled: enabled && !!repo && number > 0,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useMergePR merges the PR. On success it invalidates the PR summary so the
+// status chip flips to MERGED from the server's answer, not a local guess.
+export function useMergePR(repo: string, number: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (method: 'merge' | 'squash' | 'rebase' = 'merge') =>
+      api.mergePR(repo, number, method),
+    onSuccess: () => qc.invalidateQueries({ queryKey: prKey(repo, number) }),
+  });
+}
+
+// useCommentPR posts a plain PR comment (the mobile comment sheet).
+export function useCommentPR(repo: string, number: number) {
+  return useMutation({
+    mutationFn: (body: string) => api.commentPR(repo, number, body),
+  });
+}
+
 // tasksKey is the query cache key for a machine's agent tasks (keyed by machine
 // so switching machines refetches the right set).
 const tasksKey = (machineId: string | null) => ['tasks', machineId] as const;
