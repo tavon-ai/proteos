@@ -66,6 +66,17 @@ e2e harness asserts exactly this Basic-auth shape.
 **[verify live]** A `git push` with `x-access-token:<token>` Basic auth to a
 granted private repo succeeds.
 
+The GitHub CLI rides the same flow: `gh` ignores git's `credential.helper` and
+wants `GH_TOKEN`, so `/usr/local/bin/gh` in the guest is a wrapper
+(`image/gh-wrapper.sh`) that pipes `host=github.com` into
+`guestagent git-credential get`, exports the returned password as `GH_TOKEN`,
+and execs the real binary (`/usr/local/libexec/proteos/gh`). A fresh token per
+invocation, nothing on disk — so coding agents can `gh pr create` with the
+user's OAuth grant.
+
+**[verify live]** In a guest with GitHub connected, `gh auth status` reports
+logged-in via `GH_TOKEN` and `gh pr create` succeeds on a granted repo.
+
 ## 4. Listing installed-and-accessible repos (user-to-server, paginated)
 
 With a GitHub App, the **user chooses** which repos the App may access, so the

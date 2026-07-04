@@ -205,6 +205,14 @@
     (proteos_guest_taskfile_install | bool)
     or (proteos_templates | selectattr('go') | list | length > 0)
 
+- name: Guest dev tooling — ensure Bun bake prerequisite is present (zip extraction)
+  ansible.builtin.apt:
+    name: [unzip]
+    state: present
+    update_cache: true
+  # install_bun unzips the release asset on the host before copying into the image.
+  when: proteos_templates | selectattr('bun', 'defined') | selectattr('bun') | list | length > 0
+
 - name: Bake one rootfs image per machine template (guest agent + platform + language layer)
   ansible.builtin.command:
     cmd: >-

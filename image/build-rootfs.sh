@@ -614,11 +614,14 @@ install_taskfile() {
 
 # install_gh MNT VERSION [SHA256] — fetch the GitHub CLI (`gh`) release tarball
 # from GitHub, verify its sha256 against the published gh_<ver>_checksums.txt, and
-# install the `gh` binary onto /usr/local/bin. Coding agents use it to open PRs
-# straight from inside the guest instead of leaving branches unpushed (auth is the
-# runtime-injected GitHub token — nothing secret is baked). Self-contained static
-# binary, so — like Go/Taskfile — it needs no chroot or apt. An empty VERSION
-# resolves the latest GitHub release. Sets GH_VERSION/GH_SHA256.
+# install it. Coding agents use it to open PRs straight from inside the guest
+# instead of leaving branches unpushed. gh does not use git's credential.helper,
+# so the real binary goes to /usr/local/libexec/proteos/gh and /usr/local/bin/gh
+# is a wrapper (gh-wrapper.sh) that mints a fresh token per invocation via
+# `guestagent git-credential` and execs the real gh with GH_TOKEN set — nothing
+# secret is baked and no token ever lands on disk. Self-contained static binary,
+# so — like Go/Taskfile — it needs no chroot or apt. An empty VERSION resolves
+# the latest GitHub release. Sets GH_VERSION/GH_SHA256.
 install_gh() {
   local mnt="$1" version="$2" want_sha="$3"
   local arch tarball url
@@ -661,9 +664,10 @@ install_gh() {
   mkdir -p "$tmp"
   tar -xzf "$WORK/$tarball" -C "$tmp" --strip-components=1
   [[ -f "$tmp/bin/gh" ]] || die "gh tarball did not contain bin/gh"
-  sudo install -D -m 0755 "$tmp/bin/gh" "$mnt/usr/local/bin/gh"
+  sudo install -D -m 0755 "$tmp/bin/gh" "$mnt/usr/local/libexec/proteos/gh"
+  sudo install -D -m 0755 "$GH_WRAPPER_SRC" "$mnt/usr/local/bin/gh"
   GH_VERSION="$version"
-  ok "gh ${version} installed (/usr/local/bin/gh)"
+  ok "gh ${version} installed (/usr/local/libexec/proteos/gh + auth wrapper at /usr/local/bin/gh)"
 }
 
 # emit_alias NAME=VALUE — print a shell `alias NAME='VALUE'` line, single-quoting
@@ -714,6 +718,16 @@ install_rust() {
   fi
   RUSTUP_SHA256="$actual"
 
+  # The Firecracker CI base squashfs ships leftover rustup state at
+  # /usr/local/rustup; rustup-init honors its settings.toml and skips a clean
+  # toolchain install. Wipe it so we always install from scratch. test -L too:
+  # a symlink here resolves against the HOST root, so -e alone can miss it.
+  if sudo test -e "$mnt/usr/local/rustup" || sudo test -L "$mnt/usr/local/rustup" \
+    || sudo test -e "$mnt/usr/local/cargo" || sudo test -L "$mnt/usr/local/cargo"; then
+    log "removing pre-existing rustup/cargo state from the base image"
+    sudo rm -rf "$mnt/usr/local/rustup" "$mnt/usr/local/cargo"
+  fi
+
   sudo install -D -m 0755 "$WORK/rustup-init" "$mnt/tmp/rustup-init"
 
   log "running rustup-init in chroot (toolchain: ${channel})"
@@ -730,15 +744,21 @@ install_rust() {
   sudo rm -f "$mnt/tmp/rustup-init"
 
   # Symlink the three key binaries onto /usr/local/bin so they are immediately
-  # on PATH; cargo/bin is also added via install_shell_env for any binaries the
-  # user installs later with `cargo install`.
+  # on PATH; install_shell_env exports RUSTUP_HOME (proxies need it to resolve
+  # the system-wide toolchain) and puts ~/.cargo/bin on PATH for binaries the
+  # user installs later with `cargo install` (per-user CARGO_HOME default).
   sudo chroot "$mnt" /usr/bin/env \
     PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     sh -c 'for b in rustc cargo rustup; do ln -sf "/usr/local/cargo/bin/$b" "/usr/local/bin/$b"; done'
 
+  # rustc/cargo are rustup proxies: they resolve the real toolchain via
+  # RUSTUP_HOME (default ~/.rustup), so the system-wide home must be exported
+  # here — and at runtime via install_shell_env — or the proxy exits nonzero.
   RUST_VERSION="$(sudo chroot "$mnt" /usr/bin/env \
     PATH=/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin \
-    rustc --version 2>/dev/null | awk '{print $2}' || true)"
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    rustc --version | awk '{print $2}' || true)"
   [[ -n $RUST_VERSION ]] || die "Rust install failed: rustc not runnable in the image"
   ok "Rust ${RUST_VERSION} installed (/usr/local/cargo/bin/{rustc,cargo,rustup})"
 }
@@ -818,8 +838,12 @@ install_shell_env() {
       echo 'export PATH="$PATH:/usr/local/go/bin:${GOPATH:-$HOME/go}/bin"'
     fi
     if [[ $RUST_INSTALL -eq 1 ]]; then
-      echo '# Rust toolchain on PATH (baked into /usr/local/cargo/bin).'
-      echo 'export PATH="$PATH:/usr/local/cargo/bin"'
+      echo '# Rust toolchain on PATH (baked into /usr/local/cargo/bin). rustc/cargo'
+      echo '# are rustup proxies and need RUSTUP_HOME to find the system-wide toolchain.'
+      echo '# CARGO_HOME stays at its per-user ~/.cargo default so `cargo install`'
+      echo '# works without root; ~/.cargo/bin is on PATH for those binaries.'
+      echo 'export RUSTUP_HOME=/usr/local/rustup'
+      echo 'export PATH="$PATH:/usr/local/cargo/bin:$HOME/.cargo/bin"'
     fi
     if [[ ${#ALIASES[@]} -gt 0 ]]; then
       echo '# Operator aliases (--alias).'
@@ -1024,6 +1048,8 @@ UNIT_SRC="$SCRIPT_DIR/proteos-guestagent.service"
 [[ -f $UNIT_SRC ]] || die "missing unit file: $UNIT_SRC"
 PROFILE_SRC="$SCRIPT_DIR/profile.d-proteos-providers.sh"
 [[ -f $PROFILE_SRC ]] || die "missing profile.d snippet: $PROFILE_SRC"
+GH_WRAPPER_SRC="$SCRIPT_DIR/gh-wrapper.sh"
+[[ $GH_INSTALL -eq 0 || -f $GH_WRAPPER_SRC ]] || die "missing gh wrapper: $GH_WRAPPER_SRC"
 CLAUDE_SETTINGS_SRC="$SCRIPT_DIR/claude-managed-settings.json"
 [[ -f $CLAUDE_SETTINGS_SRC ]] || die "missing claude managed settings: $CLAUDE_SETTINGS_SRC"
 

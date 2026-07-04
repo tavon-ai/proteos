@@ -100,6 +100,28 @@ else
   fail "guestagent binary missing or not an executable ELF"
 fi
 
+# --- gh wrapper mints GH_TOKEN via the credential helper ----------------------
+# gh does not use git's credential.helper, so /usr/local/bin/gh must be the
+# wrapper that fetches a fresh token from `guestagent git-credential` and execs
+# the real binary at /usr/local/libexec/proteos/gh. gh is optional (--no-gh).
+GH_BIN="$MNT/usr/local/bin/gh"
+GH_REAL="$MNT/usr/local/libexec/proteos/gh"
+if [[ -e $GH_BIN || -e $GH_REAL ]]; then
+  if [[ -x $GH_BIN ]] && head -1 "$GH_BIN" | grep -q '^#!' \
+    && grep -q 'guestagent git-credential' "$GH_BIN"; then
+    pass "gh wrapper in place (/usr/local/bin/gh mints GH_TOKEN via guestagent git-credential)"
+  else
+    fail "/usr/local/bin/gh is not the auth wrapper (gh will run unauthenticated)"
+  fi
+  if [[ -x $GH_REAL ]] && file "$GH_REAL" | grep -q ELF; then
+    pass "real gh binary installed (/usr/local/libexec/proteos/gh, ELF, executable)"
+  else
+    fail "real gh binary missing at /usr/local/libexec/proteos/gh (wrapper has nothing to exec)"
+  fi
+else
+  skip "gh not baked (--no-gh)"
+fi
+
 # --- no secret / gitconfig baked ---------------------------------------------
 # Identity is pushed at runtime (git.configure); tokens are fetched on demand and
 # never written to disk. The image must therefore carry no gitconfig and no
