@@ -43,6 +43,7 @@ export function MachineDetails({
     ['Guest IP', machine.guest_ip ?? '—'],
     ['Boot', machine.boot ?? '—'],
     ['Created', formatDate(machine.created_at)],
+    ['Last active', machine.last_active_at ? formatDate(machine.last_active_at) : '—'],
   ];
 
   return (

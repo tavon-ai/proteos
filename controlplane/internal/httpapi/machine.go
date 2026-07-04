@@ -27,6 +27,7 @@ type MachineSummary struct {
 	ResourceSpec json.RawMessage `json:"resource_spec"`
 	LastError    *string         `json:"last_error"`
 	CreatedAt    string          `json:"created_at"`
+	LastActiveAt *string         `json:"last_active_at"` // null when machine has never been active
 
 	// Phase 4: persistent disk + hibernate/resume.
 	Boot     *string          `json:"boot"`     // "cold" | "resumed" | null
@@ -62,6 +63,10 @@ func toSummary(m store.Machine, disk *store.Disk, snap *store.Snapshot) MachineS
 	}
 	if m.CreatedAt.Valid {
 		s.CreatedAt = m.CreatedAt.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+	}
+	if m.LastActiveAt.Valid {
+		t := m.LastActiveAt.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+		s.LastActiveAt = &t
 	}
 	if disk != nil {
 		id := machine.UUIDString(disk.ID)

@@ -122,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc(guestwire.RouteControl, s.control.HandleControl)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})

@@ -276,8 +276,8 @@ func (s *Server) Handler() http.Handler {
 		root = s.hostRouter(mux)
 	}
 
-	// Wrap everything in request logging.
-	return requestLogger(root)
+	// Wrap everything in request logging and panic recovery.
+	return requestLogger(recoverer(root))
 }
 
 // hostRouter dispatches a request to the machine-web handler when its Host is a

@@ -84,6 +84,7 @@ export interface MachineSummary {
   resource_spec: { vcpus: number; mem_mib: number; disk_mib?: number };
   last_error: string | null;
   created_at: string;
+  last_active_at: string | null;
 
   // Phase 4: persistent disk + hibernate/resume.
   boot: 'cold' | 'resumed' | null;

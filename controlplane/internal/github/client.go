@@ -239,24 +239,45 @@ func (c *Client) ListUserRepos(ctx context.Context, accessToken string) ([]Repo,
 }
 
 // getJSON performs an authenticated GET and decodes a JSON body into v.
+// Transient errors (network failures, 5xx responses) are retried up to 3 times
+// with linear backoff so intermittent GitHub API hiccups don't surface as errors.
 func (c *Client) getJSON(ctx context.Context, accessToken, path string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBaseURL+path, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
+		resp, err := c.http.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return fmt.Errorf("status %d", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		return json.Unmarshal(body, v)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	return json.Unmarshal(body, v)
+	return lastErr
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }

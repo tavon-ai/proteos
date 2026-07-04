@@ -232,6 +232,18 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 		return store.Machine{}, fmt.Errorf("create machine: %w", err)
 	}
 
+	// Compensate: if any subsequent setup step fails, delete the orphaned machine
+	// row so the user doesn't end up with a permanently-broken machine that can
+	// neither be started nor destroyed (disk/key were never provisioned).
+	compensate := true
+	defer func() {
+		if compensate {
+			if delErr := s.q.DeleteMachine(ctx, m.ID); delErr != nil {
+				slog.Warn("create: compensate machine row", "machine", UUIDString(m.ID), "err", delErr)
+			}
+		}
+	}()
+
 	// Phase 4: allocate the persistent disk (1:1) and attach it to the machine,
 	// then mint the machine's LUKS volume key into the secret store. The key is
 	// delivered to the agent on every ensure and never persisted in Postgres.
@@ -252,6 +264,7 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 		return store.Machine{}, err
 	}
 
+	compensate = false
 	return s.ensureOnAgent(ctx, m, kernelRef, rootfsRef)
 }
 
