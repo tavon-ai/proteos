@@ -29,6 +29,47 @@ describe('desktopReducer', () => {
     expect(s.windows[1].geometry.y).toBeGreaterThan(s.windows[0].geometry.y);
   });
 
+  it('cascades from the 24px surface margin in +28 steps', () => {
+    let s = desktopReducer(initialDesktop, {
+      type: 'setSurface',
+      surface: { width: 1200, height: 800 },
+    });
+    s = open(s, { id: 'a' });
+    s = open(s, { id: 'b' });
+    expect(s.windows[0].geometry.x).toBe(24);
+    expect(s.windows[0].geometry.y).toBe(24);
+    expect(s.windows[1].geometry.x).toBe(52);
+    expect(s.windows[1].geometry.y).toBe(52);
+  });
+
+  it('clamps a window larger than the surface to fit inside the margins', () => {
+    let s = desktopReducer(initialDesktop, {
+      type: 'setSurface',
+      surface: { width: 500, height: 400 },
+    });
+    s = desktopReducer(s, {
+      type: 'open',
+      spec: { id: 'e', kind: 'editor', title: 'E' }, // default 1000×680
+    });
+    expect(s.windows[0].geometry).toEqual({ x: 24, y: 24, width: 452, height: 352 });
+  });
+
+  it('wraps an axis back to the margin instead of crossing within 24px of an edge', () => {
+    // Surface fits the 480-wide placeholder with zero horizontal slack and four
+    // 28px steps of vertical slack: x stays pinned at 24, y wraps after 5 opens.
+    let s = desktopReducer(initialDesktop, {
+      type: 'setSurface',
+      surface: { width: 528, height: 500 },
+    });
+    for (let i = 0; i < 6; i++) s = open(s, { id: `w${i}` });
+    expect(s.windows.map((w) => w.geometry.x)).toEqual([24, 24, 24, 24, 24, 24]);
+    expect(s.windows.map((w) => w.geometry.y)).toEqual([24, 52, 80, 108, 136, 24]);
+    // Every window sits fully inside the surface with the 24px margin.
+    for (const w of s.windows) {
+      expect(w.geometry.y + w.geometry.height).toBeLessThanOrEqual(500 - 24);
+    }
+  });
+
   it('focus raises z-order without reordering the windows array', () => {
     let s = initialDesktop;
     s = open(s, { id: 'a' });

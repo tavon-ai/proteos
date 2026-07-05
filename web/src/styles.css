@@ -1057,34 +1057,62 @@ body {
 }
 
 /* === Machine switcher (multi-machine) ================================= */
-.machine-switcher {
+/* Machine pill: the consolidated machine control in the context bar. Its
+   background/border follow the machine state (running green, stopped grey,
+   error red, transitional blue); lifecycle actions live in its menu. */
+.machine-pill-wrap {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
 }
-.machine-switcher-toggle {
+.machine-pill {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  background: var(--border);
-  color: var(--text);
-  border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 0.25rem 0.55rem;
+  gap: 8px;
+  white-space: nowrap;
   cursor: pointer;
-  font-size: 0.85rem;
+  font: inherit;
+  color: var(--text);
+  background: rgba(139, 148, 158, 0.12);
+  border: 1px solid rgba(139, 148, 158, 0.4);
 }
-.machine-switcher-toggle:hover {
-  border-color: var(--muted);
+.machine-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
 }
-.machine-switcher-name {
+.machine-pill-name {
+  font-size: 13px;
   font-weight: 600;
 }
-.machine-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
+.machine-pill-running {
+  background: rgba(63, 185, 80, 0.12);
+  border-color: rgba(63, 185, 80, 0.4);
+}
+.machine-pill-running .machine-pill-dot {
+  background: #3fb950;
+  box-shadow: 0 0 8px #3fb950;
+}
+.machine-pill-error {
+  background: rgba(248, 81, 73, 0.12);
+  border-color: rgba(248, 81, 73, 0.4);
+}
+.machine-pill-error .machine-pill-dot {
+  background: var(--error);
+  box-shadow: 0 0 8px var(--error);
+}
+.machine-pill-busy {
+  background: rgba(47, 129, 247, 0.12);
+  border-color: rgba(47, 129, 247, 0.4);
+}
+.machine-pill-busy .machine-pill-dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
 .machine-menu {
   position: absolute;
@@ -1139,6 +1167,12 @@ body {
 }
 .machine-menu-error {
   color: var(--error);
+}
+.machine-menu-danger {
+  color: var(--error);
+}
+.machine-menu-danger:hover {
+  background: rgba(248, 81, 73, 0.15);
 }
 
 /* === Machine templates: modal, create form, details ==================== */
@@ -1341,55 +1375,337 @@ body {
   position: fixed;
   inset: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   background:
     radial-gradient(1200px 600px at 70% -10%, rgba(47, 129, 247, 0.12), transparent), var(--bg);
   overflow: hidden;
 }
+/* The column to the right of the rail: context bar / surface / dock. */
+.desktop-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 
-/* Taskbar -------------------------------------------------------------- */
-.taskbar {
+/* Left rail ------------------------------------------------------------ */
+.rail {
+  position: relative;
+  width: 76px;
+  flex: 0 0 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 0;
+  background: rgba(13, 17, 23, 0.86);
+  backdrop-filter: blur(10px);
+  border-right: 1px solid var(--border);
+  z-index: 20;
+}
+.rail-brand {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: linear-gradient(150deg, #2f81f7, #0e7490);
+  display: grid;
+  place-items: center;
+  margin-bottom: 10px;
+}
+.rail-item {
+  position: relative;
+  width: 60px;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.12s;
+}
+.rail-item:hover:not(.rail-item-active):not(.rail-item-disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+.rail-item-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.rail-item-settings {
+  height: 52px;
+}
+.rail-label {
+  font-size: 10.5px;
+  font-weight: 600;
+}
+/* Active section: tinted with the section's dock-kind color + a 3px accent
+   bar at the item's left edge. */
+.rail-item-active {
+  color: var(--text);
+}
+.rail-accent {
+  position: absolute;
+  left: -3px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 3px;
+}
+.rail-projects.rail-item-active {
+  background: rgba(219, 97, 162, 0.14);
+}
+.rail-projects .rail-accent {
+  background: #db61a2;
+}
+.rail-terminal.rail-item-active {
+  background: rgba(63, 185, 80, 0.14);
+}
+.rail-terminal .rail-accent {
+  background: #3fb950;
+}
+.rail-agents.rail-item-active {
+  background: rgba(210, 153, 34, 0.14);
+}
+.rail-agents .rail-accent {
+  background: #d29922;
+}
+.rail-activity.rail-item-active {
+  background: rgba(139, 148, 158, 0.14);
+}
+.rail-activity .rail-accent {
+  background: #8b949e;
+}
+.rail-settings.rail-item-active {
+  background: rgba(163, 113, 247, 0.14);
+}
+.rail-settings .rail-accent {
+  background: #a371f7;
+}
+.rail-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.rail-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  overflow: hidden;
+  background: linear-gradient(140deg, #db61a2, #a371f7);
+  cursor: pointer;
+}
+.rail-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+.rail-account-menu {
+  position: absolute;
+  left: 82px;
+  bottom: 12px;
+  z-index: 51;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.3rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.rail-account-user {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* Context bar ----------------------------------------------------------- */
+.context-bar {
   flex: 0 0 44px;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0 0.75rem;
-  background: rgba(22, 27, 34, 0.92);
+  gap: 12px;
+  padding: 0 14px;
+  background: rgba(13, 17, 23, 0.7);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(6px);
-  z-index: 100000;
+  z-index: 15;
 }
-.taskbar-left,
-.taskbar-right {
+.breadcrumb {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 7px;
+  font-size: 13px;
+  min-width: 0;
 }
-.taskbar-apps {
+.breadcrumb-repo {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: #c9d1d9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.breadcrumb-sep {
+  color: #4a525c;
+}
+.breadcrumb-branch {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  color: var(--muted);
+  background: #21262d;
+  border-radius: 5px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.search-btn {
+  margin-left: auto;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--muted);
   display: flex;
-  gap: 0.25rem;
-  margin: 0 auto;
-}
-.taskbar-app {
-  background: transparent;
-  color: var(--text);
-  border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 0.35rem 0.8rem;
-  font-size: 0.85rem;
+  align-items: center;
+  gap: 9px;
   cursor: pointer;
+  font: inherit;
+  flex: 0 0 auto;
 }
-.taskbar-app:hover {
-  background: var(--panel);
-  border-color: var(--border);
+.search-btn:hover {
+  color: var(--text);
+  border-color: #3d4450;
+}
+.search-btn-label {
+  font-size: 12.5px;
+}
+.search-btn-kbd {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  color: #6b7480;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 .clock {
   color: var(--muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
+  font-size: 13px;
+  flex: 0 0 auto;
 }
-.user-login {
-  font-size: 0.85rem;
+
+/* Command palette (⌘K) --------------------------------------------------- */
+.palette-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 999999;
+  background: rgba(4, 7, 11, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 70px;
+}
+.palette {
+  width: 560px;
+  max-width: calc(100% - 48px);
+  max-height: 420px;
+  background: var(--panel);
+  border: 1px solid #3d4450;
+  border-radius: 14px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.palette-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.palette-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+.palette-esc {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: #6b7480;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.palette-list {
+  padding: 8px;
+  overflow: auto;
+}
+.palette-section {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7480;
+  padding: 8px 10px 4px;
+}
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.palette-item-active {
+  background: rgba(47, 129, 247, 0.1);
+}
+.palette-item-label {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-item-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: #6b7480;
+  flex: 0 0 auto;
+}
+.palette-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.palette-empty {
+  padding: 12px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 /* Window surface ------------------------------------------------------- */
@@ -1397,6 +1713,9 @@ body {
   position: relative;
   flex: 1 1 auto;
   overflow: hidden;
+  /* Own stacking context: window zIndex grows unbounded and must never beat
+     the rail (z 20), context bar (z 15), or dock. */
+  z-index: 0;
 }
 
 .window-frame {
@@ -1476,7 +1795,9 @@ body {
   background: rgba(22, 27, 34, 0.92);
   border-top: 1px solid var(--border);
   overflow-x: auto;
-  z-index: 100000;
+  /* Above the window surface (its own stacking context at z 0), below the
+     rail (20) so rail popovers can extend over the dock. */
+  z-index: 10;
 }
 .dock-item {
   display: inline-flex;

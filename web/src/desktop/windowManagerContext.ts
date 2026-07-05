@@ -17,6 +17,8 @@ export interface WindowManagerContext {
   minimize: (id: string) => void;
   toggleMaximize: (id: string, viewport?: { width: number; height: number }) => void;
   restore: (id: string) => void;
+  /** Report the measured window-surface size so new windows cascade inside it. */
+  setSurface: (surface: { width: number; height: number }) => void;
   hydrate: (windows: PersistedWindow[]) => void;
   /** Restore one machine's windows without disturbing other machines'. */
   hydrateMachine: (machineId: string, windows: PersistedWindow[]) => void;

@@ -47,6 +47,23 @@ export function openHomeTerminal(wm: WindowManagerContext, machineId: string): v
   });
 }
 
+// openHomeAgent launches a coding-agent terminal in the user's home directory
+// (the left rail's Agents item / the ⌘K palette). Like openHomeTerminal it is
+// not project-scoped, so it works with no repos cloned. The provider is fixed
+// to Claude — the default coding agent; a per-project, provider-picking
+// openAgent (below) stays for a future launcher flow.
+export function openHomeAgent(wm: WindowManagerContext, machineId: string): void {
+  const session = freshSession();
+  wm.open({
+    id: session,
+    kind: 'agent',
+    title: 'Claude — home',
+    machineId,
+    session,
+    provider: 'claude',
+  });
+}
+
 // export function openAgent(
 //   wm: WindowManagerContext,
 //   machineId: string,
