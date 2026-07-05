@@ -232,10 +232,22 @@ proteos_firecracker_bin: "/usr/local/bin/firecracker"
 proteos_jailer_bin: "/usr/local/bin/jailer"
 proteos_cryptsetup_bin: "/usr/sbin/cryptsetup"
 
-# Optional TLS for the agent channel. Set both to serve HTTPS (Phase 4). The
-# control plane pins this cert via PROTEOS_NODE_CA_FILE. Leave empty for plain.
+# TLS for the agent channel — REQUIRED on a non-loopback listener (TAV-27: the
+# channel carries per-machine LUKS volume keys). Leave cert/key empty (default)
+# and the play generates a self-signed pair on the host under
+# proteos_agent_tls_dir (SANs: tailnet IP, inventory address, hostname), then
+# fetches the cert to artifacts/node-<host>-agent-ca.pem so the app stack can
+# pin it via PROTEOS_NODE_CA_FILE. Set both to bring your own cert instead.
 proteos_agent_tls_cert: ""
 proteos_agent_tls_key: ""
+proteos_agent_tls_dir: "/etc/proteos/tls"
+
+# Interfaces allowed to reach SSH + the agent API through the node-agent's
+# fail-closed nftables input chain (PROTEOS_AGENT_MGMT_IFACES; the token
+# "egress" resolves to the default-route interface). MUST include the interface
+# the control plane's requests arrive on — tailscale0 in production; an
+# egress-only list firewalls the control plane out (the July 2026 outage).
+proteos_agent_mgmt_ifaces: "egress,tailscale0"
 
 # Acceptance gate: before a node is allowed to serve, run the firecracker KVM
 # integration suite (encrypted hibernate/resume + boot/stop/egress/vsock) against

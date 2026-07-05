@@ -59,16 +59,27 @@ func egressDev() (string, error) {
 
 // ensureNftTable creates the base table and chains with a default-drop policy,
 // then installs the chain-wide allow rules (loopback, established/related
-// return traffic, SSH and the agent API port on the egress interface). These
-// global rules are idempotently replaced on every call so the chain stays
+// return traffic, SSH and the agent API port on each management interface).
+// These global rules are idempotently replaced on every call so the chain stays
 // consistent across stop→start cycles. Per-tap rules are added by egressRules
 // and live alongside these, guarded by their own iifname match.
-func ensureNftTable(agentPort string) error {
+//
+// mgmtIfaces lists the interfaces the control plane and operators arrive on;
+// the token "egress" resolves to the default-route interface. The production
+// control plane reaches the agent over tailscale (NPMplus today, tailnet-direct
+// after TAV-27), so an egress-only allow list firewalls it out — that outage is
+// why the list is explicit rather than derived.
+func ensureNftTable(agentPort string, mgmtIfaces []string) error {
 	// The input chain is fail-closed: an empty port would render `tcp dport `
 	// (an nft syntax error), and silently skipping the rule would firewall the
 	// control plane out of the agent API. Refuse loudly instead.
 	if agentPort == "" {
 		return fmt.Errorf("nftables: agent API port is empty (Config.AgentPort) — the fail-closed input chain needs it allow-listed")
+	}
+	// Same fail-closed reasoning for the interface list: an empty list would
+	// install a chain nobody can traverse.
+	if len(mgmtIfaces) == 0 {
+		return fmt.Errorf("nftables: management interface list is empty (Config.MgmtIfaces) — the fail-closed input chain needs at least one allowed interface")
 	}
 	// `add table` / `add chain` are idempotent; an existing object is a no-op.
 	if err := run("nft", "add", "table", "ip", nftTable); err != nil {
@@ -89,7 +100,7 @@ func ensureNftTable(agentPort string) error {
 		return err
 	}
 
-	egress, err := egressDev()
+	ifaces, err := resolveMgmtIfaces(mgmtIfaces)
 	if err != nil {
 		return err
 	}
@@ -97,17 +108,11 @@ func ensureNftTable(agentPort string) error {
 	// Replace the global allow rules idempotently: delete any prior copies
 	// (tagged proteos:global), then re-append them so they trail the existing
 	// per-tap iifname-guarded rules. SSH and the agent-port accepts are
-	// restricted to the egress interface so guests can't reach host services
-	// via the tap even when these rules sit before their tap's drop rule.
+	// restricted to the management interfaces so guests can't reach host
+	// services via the tap even when these rules sit before their tap's drop
+	// rule (tap devices must never be listed as management interfaces).
 	deleteRulesByComment(nftTable, "input", nftGlobalTag)
-	tag := `"` + nftGlobalTag + `"`
-	for _, r := range [][]string{
-		{"add", "rule", "ip", nftTable, "input", "iif", "lo", "counter", "accept", "comment", tag},
-		{"add", "rule", "ip", nftTable, "input", "ct", "state", "established,related", "counter", "accept", "comment", tag},
-		{"add", "rule", "ip", nftTable, "input", "ct", "state", "invalid", "counter", "drop", "comment", tag},
-		{"add", "rule", "ip", nftTable, "input", "iifname", egress, "tcp", "dport", "22", "counter", "accept", "comment", tag},
-		{"add", "rule", "ip", nftTable, "input", "iifname", egress, "tcp", "dport", agentPort, "counter", "accept", "comment", tag},
-	} {
+	for _, r := range mgmtInputRules(agentPort, ifaces) {
 		if err := run("nft", r...); err != nil {
 			return err
 		}
@@ -115,11 +120,53 @@ func ensureNftTable(agentPort string) error {
 	return nil
 }
 
+// resolveMgmtIfaces maps the configured management interface names to concrete
+// device names: the token "egress" becomes the default-route interface, other
+// names pass through as-is (a name with no matching device is harmless — its
+// iifname rule just never matches). Duplicates are dropped, order preserved.
+func resolveMgmtIfaces(names []string) ([]string, error) {
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n == "egress" {
+			dev, err := egressDev()
+			if err != nil {
+				return nil, err
+			}
+			n = dev
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// mgmtInputRules builds the chain-wide input allow rules (tagged
+// proteos:global): loopback, conntrack return traffic, and SSH + the agent API
+// port on each management interface. Pure (no I/O) so it can be unit tested.
+func mgmtInputRules(agentPort string, ifaces []string) [][]string {
+	tag := `"` + nftGlobalTag + `"`
+	rules := [][]string{
+		{"add", "rule", "ip", nftTable, "input", "iif", "lo", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "ct", "state", "established,related", "counter", "accept", "comment", tag},
+		{"add", "rule", "ip", nftTable, "input", "ct", "state", "invalid", "counter", "drop", "comment", tag},
+	}
+	for _, ifc := range ifaces {
+		rules = append(rules,
+			[]string{"add", "rule", "ip", nftTable, "input", "iifname", ifc, "tcp", "dport", "22", "counter", "accept", "comment", tag},
+			[]string{"add", "rule", "ip", nftTable, "input", "iifname", ifc, "tcp", "dport", agentPort, "counter", "accept", "comment", tag},
+		)
+	}
+	return rules
+}
+
 // setupTap creates the tap owned by the agent, addresses it with the gateway IP,
 // brings it up, enables forwarding, and installs the default-deny egress policy
 // plus the masquerade rule for this guest.
-func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string) error {
-	if err := ensureNftTable(agentPort); err != nil {
+func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string, mgmtIfaces []string) error {
+	if err := ensureNftTable(agentPort, mgmtIfaces); err != nil {
 		return err
 	}
 

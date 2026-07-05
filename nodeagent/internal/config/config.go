@@ -5,9 +5,11 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
@@ -24,10 +26,17 @@ type Config struct {
 	Token string
 
 	// TLSCert / TLSKey, when both set, make the agent serve HTTPS instead of
-	// plain HTTP (Phase 4 decision #3: the channel now carries volume keys). Dev
-	// stacks (loopback/Mac) leave them empty and stay on plain HTTP.
+	// plain HTTP. The channel carries per-machine LUKS volume keys and the
+	// bearer token, so TLS is mandatory (TAV-27): startup fails without certs
+	// unless InsecureHTTP explicitly opts out.
 	TLSCert string
 	TLSKey  string
+
+	// InsecureHTTP (PROTEOS_AGENT_INSECURE_HTTP=1) permits serving plain HTTP
+	// on a non-loopback Addr. Dev-only escape hatch; never set in production —
+	// volume keys would transit cleartext. A loopback Addr is always allowed
+	// without certs (that traffic never leaves the host).
+	InsecureHTTP bool
 
 	// DataDir is where per-machine state.json files and the IP allocator table
 	// are persisted, so the agent re-attaches across restarts.
@@ -105,6 +114,15 @@ type Config struct {
 	// CryptsetupBin is the absolute path to cryptsetup, used to format/open/close
 	// the machine volume. Unused by the dev driver.
 	CryptsetupBin string
+
+	// MgmtIfaces (PROTEOS_AGENT_MGMT_IFACES, comma-separated) are the host
+	// interfaces allowed to reach SSH and the agent API through the firecracker
+	// driver's fail-closed nftables input chain. The token "egress" resolves to
+	// the default-route interface. Defaults to "egress,tailscale0": the
+	// production control plane arrives over tailscale, so an egress-only list
+	// firewalls it out (the July 2026 machine-create outage). Unused by the dev
+	// driver.
+	MgmtIfaces []string
 }
 
 // Load reads and validates configuration from the environment.
@@ -114,6 +132,7 @@ func Load() (*Config, error) {
 		Token:              os.Getenv("PROTEOS_AGENT_TOKEN"),
 		TLSCert:            os.Getenv("PROTEOS_AGENT_TLS_CERT"),
 		TLSKey:             os.Getenv("PROTEOS_AGENT_TLS_KEY"),
+		InsecureHTTP:       getenvBool("PROTEOS_AGENT_INSECURE_HTTP"),
 		DataDir:            getenv("PROTEOS_AGENT_DATA_DIR", ".data/agent"),
 		Driver:             getenv("PROTEOS_AGENT_DRIVER", "dev"),
 		StubPath:           os.Getenv("PROTEOS_DEV_STUB"),
@@ -134,6 +153,9 @@ func Load() (*Config, error) {
 
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return nil, fmt.Errorf("PROTEOS_AGENT_TLS_CERT and PROTEOS_AGENT_TLS_KEY must be set together")
+	}
+	if c.TLSCert == "" && !c.InsecureHTTP && !isLoopbackAddr(c.Addr) {
+		return nil, fmt.Errorf("TLS is required on non-loopback PROTEOS_AGENT_ADDR %q (the agent API carries volume keys): set PROTEOS_AGENT_TLS_CERT/_KEY, or PROTEOS_AGENT_INSECURE_HTTP=1 for dev-only plain HTTP", c.Addr)
 	}
 
 	subnetStr := getenv("PROTEOS_AGENT_SUBNET", "172.30.0.0/24")
@@ -157,7 +179,38 @@ func Load() (*Config, error) {
 	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {
 		return nil, fmt.Errorf("PROTEOS_PREVIEW_PORT_MIN/MAX invalid range: %d..%d", c.PreviewPortMin, c.PreviewPortMax)
 	}
+
+	c.MgmtIfaces = splitCSV(getenv("PROTEOS_AGENT_MGMT_IFACES", "egress,tailscale0"))
+	if len(c.MgmtIfaces) == 0 {
+		return nil, fmt.Errorf("PROTEOS_AGENT_MGMT_IFACES resolves to no interfaces — the fail-closed nftables input chain would firewall the control plane out")
+	}
 	return c, nil
+}
+
+// isLoopbackAddr reports whether a listen address binds only loopback
+// (localhost or a 127.x/::1 address). An empty host (":9090") binds every
+// interface and is NOT loopback.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// splitCSV splits a comma-separated value into trimmed, non-empty entries.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getenv(key, def string) string {
@@ -165,6 +218,14 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func getenvBool(key string) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 func getenvInt(key string, def int) int {

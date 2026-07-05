@@ -31,5 +31,6 @@ func newFirecrackerDriver(cfg *config.Config, store *state.Store) (driver.Driver
 		VolumesDir:     cfg.VolumesDir,
 		CryptsetupBin:  cfg.CryptsetupBin,
 		AgentPort:      agentPort,
+		MgmtIfaces:     cfg.MgmtIfaces,
 	}, store), nil
 }

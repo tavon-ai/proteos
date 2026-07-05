@@ -135,7 +135,15 @@ $EDITOR .env
 
 Set, at minimum:
 - `WEB_PORT` + `PROTEOS_BASE_URL` — the browser origin (e.g. `http://10.0.0.5:8080`).
-- `PROTEOS_NODE_AGENT_URL` — `http://<KVM_HOST_IP>:9090`.
+- `PROTEOS_NODE_AGENT_URL` — `https://<node tailnet IP>:9090` (TAV-27; copy it
+  from the ansible artifact `deploy/ansible/artifacts/node-<host>.env`). The
+  control plane refuses plain http to a non-loopback host. **Never** publish
+  the agent behind a public proxy vhost — the CP dials it direct over the
+  tailnet.
+- `PROTEOS_NODE_CA_FILE` — pin the agent's self-signed cert: copy
+  `deploy/ansible/artifacts/node-<host>-agent-ca.pem` over
+  `deploy/app-stack/node-agent-ca.pem` and set
+  `PROTEOS_NODE_CA_FILE=/etc/proteos/node-agent-ca.pem`.
 - `PROTEOS_AGENT_TOKEN` — **the same token** you set in Part A3.
 - `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `PROTEOS_STATE_KEY` (`openssl rand -hex 32`).
 - Keep `PROTEOS_KERNEL_REF` / `PROTEOS_ROOTFS_REF` matching the staged filenames.
@@ -172,9 +180,20 @@ poller. Confirm it reached the agent:
 
 ```bash
 docker compose exec controlplane /usr/local/bin/controlplane --help >/dev/null 2>&1 || true
-# from the app VM:
-curl -s http://<KVM_HOST_IP>:9090/healthz   # reachable across the LAN?
+# from the app VM (the CP pins the cert; curl needs --cacert or -k to check):
+curl -sk https://<node tailnet IP>:9090/healthz   # reachable over the tailnet?
 ```
+
+> **TAV-27 migration (existing stacks).** If your `.env` still points
+> `PROTEOS_NODE_AGENT_URL` at a public proxy vhost (e.g.
+> `https://fc-node.example.com`): re-run the node_agent play (it now generates
+> the agent cert and renders `PROTEOS_AGENT_TLS_CERT/_KEY` +
+> `PROTEOS_AGENT_MGMT_IFACES`), switch `.env` to the tailnet URL + CA pin as
+> above, `docker compose up -d`, then **delete the public proxy host and its
+> DNS record** — the agent must not be internet-reachable. Also remove any
+> temporary `proteos:hotfix` nft rules on the node
+> (`nft -a list chain ip proteos input`, then `nft delete rule ip proteos input handle <n>`);
+> the agent now installs the tailscale0 accepts itself.
 
 ### B4. Sign in
 
