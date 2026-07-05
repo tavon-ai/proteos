@@ -64,6 +64,10 @@ export interface DesktopState {
   windows: WindowState[];
   topZ: number;
   cascade: number;
+  // The window-surface size (the area between rail, context bar, and dock).
+  // Fed by the shell via 'setSurface' so cascade placement can clamp windows
+  // fully inside the surface. Undefined until the shell measures it.
+  surface?: { width: number; height: number };
 }
 
 export const initialDesktop: DesktopState = { windows: [], topZ: 0, cascade: 0 };
@@ -84,7 +88,10 @@ const DEFAULT_SIZE: Record<WindowKind, { width: number; height: number }> = {
 };
 
 const CASCADE_STEP = 28;
-const CASCADE_ORIGIN = { x: 80, y: 72 };
+// Every window spawns at least this far from every surface edge (the design's
+// consistent 24px margin), cascading +28/+28 per open.
+const SURFACE_MARGIN = 24;
+// Fallback wrap when the surface has not been measured yet.
 const CASCADE_WRAP = 8;
 
 // OpenSpec describes a window to open. An optional dedupeKey collapses repeat
@@ -114,6 +121,7 @@ export type DesktopAction =
   | { type: 'minimize'; id: string }
   | { type: 'toggleMaximize'; id: string; viewport?: { width: number; height: number } }
   | { type: 'restore'; id: string }
+  | { type: 'setSurface'; surface: { width: number; height: number } }
   | { type: 'hydrate'; windows: PersistedWindow[] }
   | { type: 'hydrateMachine'; machineId: string; windows: PersistedWindow[] };
 
@@ -123,12 +131,42 @@ function withTop(state: DesktopState): { z: number; topZ: number } {
   return { z, topZ: z };
 }
 
-// cascadePlacement returns the next cascade offset and the advanced counter.
-function cascadePlacement(cascade: number): { x: number; y: number; next: number } {
-  const i = cascade % CASCADE_WRAP;
+// cascadeGeometry places the next window: base at the 24px surface margin,
+// +28/+28 per subsequent open. With a measured surface it clamps the size so
+// the window plus margins fits, and wraps each axis independently back to the
+// margin when the next step would push the window within 24px of an edge — so
+// a spawned window is never flush to an edge or fully off-surface.
+function cascadeGeometry(
+  cascade: number,
+  size: { width: number; height: number },
+  surface?: { width: number; height: number },
+): { x: number; y: number; width: number; height: number; next: number } {
+  if (!surface) {
+    const i = cascade % CASCADE_WRAP;
+    return {
+      x: SURFACE_MARGIN + i * CASCADE_STEP,
+      y: SURFACE_MARGIN + i * CASCADE_STEP,
+      width: size.width,
+      height: size.height,
+      next: cascade + 1,
+    };
+  }
+  const width = Math.max(1, Math.min(size.width, surface.width - 2 * SURFACE_MARGIN));
+  const height = Math.max(1, Math.min(size.height, surface.height - 2 * SURFACE_MARGIN));
+  // Steps that fit before x + width would cross surface.width - 24 (≥ 1).
+  const stepsX = Math.max(
+    1,
+    Math.floor((surface.width - SURFACE_MARGIN - width - SURFACE_MARGIN) / CASCADE_STEP) + 1,
+  );
+  const stepsY = Math.max(
+    1,
+    Math.floor((surface.height - SURFACE_MARGIN - height - SURFACE_MARGIN) / CASCADE_STEP) + 1,
+  );
   return {
-    x: CASCADE_ORIGIN.x + i * CASCADE_STEP,
-    y: CASCADE_ORIGIN.y + i * CASCADE_STEP,
+    x: SURFACE_MARGIN + (cascade % stepsX) * CASCADE_STEP,
+    y: SURFACE_MARGIN + (cascade % stepsY) * CASCADE_STEP,
+    width,
+    height,
     next: cascade + 1,
   };
 }
@@ -172,13 +210,13 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         return desktopReducer(state, { type: 'focus', id: existing.id });
       }
       const size = DEFAULT_SIZE[action.spec.kind];
-      const place = cascadePlacement(state.cascade);
+      const place = cascadeGeometry(state.cascade, size, state.surface);
       const { z, topZ } = withTop(state);
       const geometry: Geometry = {
         x: action.spec.geometry?.x ?? place.x,
         y: action.spec.geometry?.y ?? place.y,
-        width: action.spec.geometry?.width ?? size.width,
-        height: action.spec.geometry?.height ?? size.height,
+        width: action.spec.geometry?.width ?? place.width,
+        height: action.spec.geometry?.height ?? place.height,
       };
       const win: WindowState = {
         id: action.spec.id,
@@ -195,7 +233,7 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         zIndex: z,
         mode: 'normal',
       };
-      return { windows: [...state.windows, win], topZ, cascade: place.next };
+      return { ...state, windows: [...state.windows, win], topZ, cascade: place.next };
     }
 
     case 'close':
@@ -287,6 +325,16 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
       };
     }
 
+    case 'setSurface':
+      // Same size ⇒ same state reference (the shell reports on every resize).
+      if (
+        state.surface?.width === action.surface.width &&
+        state.surface?.height === action.surface.height
+      ) {
+        return state;
+      }
+      return { ...state, surface: action.surface };
+
     case 'hydrate':
       return hydrate(state, action.windows);
 
@@ -296,6 +344,23 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
     default:
       return state;
   }
+}
+
+// focusedWindow returns the top-most visible window for the active machine:
+// non-minimized, and either global (no machineId) or belonging to selectedId.
+// The rail derives its active section from this window's kind, and the context
+// bar its repo/branch breadcrumb. Undefined when nothing relevant is focused.
+export function focusedWindow(
+  windows: WindowState[],
+  selectedId: string | null,
+): WindowState | undefined {
+  let top: WindowState | undefined;
+  for (const w of windows) {
+    if (w.mode === 'minimized') continue;
+    if (w.machineId && w.machineId !== selectedId) continue;
+    if (!top || w.zIndex > top.zIndex) top = w;
+  }
+  return top;
 }
 
 // --- Layout (de)serialization (Phase 9 decision #6) --------------------------
@@ -388,7 +453,7 @@ function hydrate(current: DesktopState, windows: PersistedWindow[]): DesktopStat
   // Re-number kept transients beneath the restored stack.
   const keptRenum = kept.map((w, i) => ({ ...w, zIndex: i + 1 }));
   const all = [...keptRenum, ...restored];
-  return { windows: all, topZ: all.length, cascade: all.length };
+  return { windows: all, topZ: all.length, cascade: all.length, surface: current.surface };
 }
 
 // hydrateMachine restores one machine's persisted windows WITHOUT disturbing any
@@ -418,7 +483,7 @@ function hydrateMachine(
     mode: w.mode === 'minimized' ? 'minimized' : 'normal',
   }));
   const all = [...others, ...restored].map((w, i) => ({ ...w, zIndex: i + 1 }));
-  return { windows: all, topZ: all.length, cascade: all.length };
+  return { windows: all, topZ: all.length, cascade: all.length, surface: current.surface };
 }
 
 // parseLayout safely parses a stored layout JSON string, returning null on any

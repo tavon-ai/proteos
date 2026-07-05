@@ -13,7 +13,11 @@ import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
 import { SelectedMachineProvider } from './selectedMachine';
 import { useSelectedMachine } from './selectedMachineStore';
-import { Taskbar } from './Taskbar';
+import { LeftRail } from './LeftRail';
+import { ContextBar } from './ContextBar';
+import { CommandPalette } from './CommandPalette';
+import { OpenAppDialog } from './OpenAppDialog';
+import { openPreview } from './openers';
 import { Window } from './Window';
 import { WindowManagerProvider } from './WindowManager';
 import { useWindowManager } from './windowManagerContext';
@@ -73,10 +77,24 @@ function DesktopShell({
   const wm = useWindowManager();
   const navigate = useNavigate();
   const logout = useLogout();
-  const viewport = useViewport();
+  const { surfaceRef, viewport } = useSurfaceSize(wm);
   const { prefs: wallpaper } = useWallpaper();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [appDialog, setAppDialog] = useState(false);
 
   const selected = machines.find((m) => m.id === selectedId) ?? null;
+
+  // ⌘K / Ctrl+K toggles the command palette from anywhere on the desktop.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Restore each machine's layout the first time it becomes the active running
   // machine (does not disturb other machines' live windows).
@@ -112,26 +130,54 @@ function DesktopShell({
 
   return (
     <div className="desktop" style={wallpaperStyle}>
-      <Taskbar me={me} onLogout={onLogout} loggingOut={logout.isPending} />
+      <LeftRail me={me} onLogout={onLogout} loggingOut={logout.isPending} />
 
-      <div className="desktop-surface">
-        {wm.windows.map((win) => {
-          // A window is shown when it belongs to the active machine (or is a
-          // global window with no machine). Hidden windows stay MOUNTED so their
-          // terminals keep their live PTYs and scrollback across switches.
-          const visible = !win.machineId || win.machineId === selectedId;
-          const winMachine = win.machineId
-            ? (machines.find((m) => m.id === win.machineId) ?? null)
-            : selected;
-          return (
-            <Window key={win.id} win={win} viewport={viewport} hidden={!visible}>
-              <WindowBody win={win} machineState={winMachine?.state ?? 'stopped'} events={events} />
-            </Window>
-          );
-        })}
+      <div className="desktop-main">
+        <ContextBar onOpenPalette={() => setPaletteOpen(true)} />
+
+        <div className="desktop-surface" ref={surfaceRef}>
+          {wm.windows.map((win) => {
+            // A window is shown when it belongs to the active machine (or is a
+            // global window with no machine). Hidden windows stay MOUNTED so their
+            // terminals keep their live PTYs and scrollback across switches.
+            const visible = !win.machineId || win.machineId === selectedId;
+            const winMachine = win.machineId
+              ? (machines.find((m) => m.id === win.machineId) ?? null)
+              : selected;
+            return (
+              <Window key={win.id} win={win} viewport={viewport} hidden={!visible}>
+                <WindowBody
+                  win={win}
+                  machineState={winMachine?.state ?? 'stopped'}
+                  events={events}
+                />
+              </Window>
+            );
+          })}
+
+          {paletteOpen && (
+            <CommandPalette
+              onClose={() => setPaletteOpen(false)}
+              onOpenApp={() => {
+                setPaletteOpen(false);
+                setAppDialog(true);
+              }}
+            />
+          )}
+        </div>
+
+        <Dock />
       </div>
 
-      <Dock />
+      {appDialog && selectedId && (
+        <OpenAppDialog
+          onClose={() => setAppDialog(false)}
+          onOpen={(port) => {
+            openPreview(wm, selectedId, port);
+            setAppDialog(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -239,18 +285,41 @@ function Placeholder({ win }: { win: WindowState }) {
   );
 }
 
-// useViewport tracks the desktop surface size for maximize. We use the window
-// size minus the taskbar; the exact pixels matter little since maximize fills
-// the surface via CSS bounds anyway.
-function useViewport(): { width: number; height: number } {
-  const [vp, setVp] = useState(() => ({
-    width: window.innerWidth,
+// useSurfaceSize measures the window surface itself (the area inside rail,
+// context bar, and dock) rather than deriving it from window.innerWidth math,
+// so maximize fills exactly the surface — never the rail/bars — and the dock
+// appearing or disappearing is accounted for automatically. The size is also
+// reported to the window manager so new windows cascade clamped inside it.
+function useSurfaceSize(wm: ReturnType<typeof useWindowManager>): {
+  surfaceRef: React.RefObject<HTMLDivElement | null>;
+  viewport: { width: number; height: number };
+} {
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  // A sane pre-measure fallback: window minus rail (76) and context bar (44).
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth - 76,
     height: window.innerHeight - 44,
   }));
+
   useEffect(() => {
-    const onResize = () => setVp({ width: window.innerWidth, height: window.innerHeight - 44 });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    const el = surfaceRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setViewport({ width: Math.round(r.width), height: Math.round(r.height) });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
-  return vp;
+
+  // Feed placement: the reducer no-ops when the size is unchanged, and wm's
+  // identity changes on every window mutation, so depend on the size only.
+  useEffect(() => {
+    wm.setSurface(viewport);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewport.width, viewport.height]);
+
+  return { surfaceRef, viewport };
 }

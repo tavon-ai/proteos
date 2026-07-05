@@ -68,10 +68,14 @@ function WindowImpl({ win, children, viewport, hidden }: WindowProps) {
             wm.toggleMaximize(win.id, viewport);
           }}
         >
+          <span className={`dock-kind dock-kind-${win.kind}`} aria-hidden />
           <span className="window-title" title={win.title}>
             {win.title}
           </span>
-          <div className="window-controls">
+          {/* Keep react-draggable from starting a drag on the buttons: a drag
+              begun on a control swallows its click, so minimize/maximize/close
+              would silently no-op. */}
+          <div className="window-controls" onMouseDown={(e) => e.stopPropagation()}>
             <button
               className="window-btn"
               title="Minimize"

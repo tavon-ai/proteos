@@ -69,6 +69,8 @@ export function WindowManagerProvider({
         dispatch({ type: 'restore', id });
         notify();
       },
+      // Placement input only — not a structural change, so no notify/save.
+      setSurface: (surface) => dispatch({ type: 'setSurface', surface }),
       hydrate: (windows) => dispatch({ type: 'hydrate', windows }),
       hydrateMachine: (machineId, windows) =>
         dispatch({ type: 'hydrateMachine', machineId, windows }),
