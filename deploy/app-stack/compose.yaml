@@ -96,7 +96,14 @@ services:
       PROTEOS_OPENBAO_SECRET_ID_FILE: /run/secrets/openbao-secret-id
 
       # Native node-agent on the KVM host. Token must match the agent's.
-      PROTEOS_NODE_AGENT_URL: ${PROTEOS_NODE_AGENT_URL:?set to http://KVM_HOST_IP:9090}
+      # TAV-27: https direct over the tailnet (see artifacts/node-<host>.env from
+      # the ansible run) with the agent's cert pinned below — never a public
+      # proxy vhost; plain http is allowed only for loopback dev stacks.
+      PROTEOS_NODE_AGENT_URL: ${PROTEOS_NODE_AGENT_URL:?set to https://NODE_TAILNET_IP:9090}
+      # Pin of the agent's self-signed cert (in-container path; the ansible run
+      # fetched it to artifacts/node-<host>-agent-ca.pem — copy it over the
+      # placeholder ./node-agent-ca.pem mounted below). Empty ⇒ system roots.
+      PROTEOS_NODE_CA_FILE: ${PROTEOS_NODE_CA_FILE:-}
       PROTEOS_AGENT_TOKEN: ${PROTEOS_AGENT_TOKEN:?shared bearer token (must match the node-agent)}
       PROTEOS_HOST_NAME: ${PROTEOS_HOST_NAME:-proxmox-fc-1}
 
@@ -163,6 +170,11 @@ services:
       # PROTEOS_TEMPLATES_FILE=/etc/proteos/templates.json to activate it. Until
       # then PROTEOS_TEMPLATES_FILE is empty and this file is not read.
       - ./proteos-templates.json:/etc/proteos/templates.json:ro
+      # Node-agent TLS pin (TAV-27). The committed placeholder is empty;
+      # replace it with the fetched node-<host>-agent-ca.pem and set
+      # PROTEOS_NODE_CA_FILE=/etc/proteos/node-agent-ca.pem to activate. Until
+      # then PROTEOS_NODE_CA_FILE is empty and this file is not read.
+      - ./node-agent-ca.pem:/etc/proteos/node-agent-ca.pem:ro
     # If you instead co-locate this stack on the SAME host as the node-agent,
     # set PROTEOS_NODE_AGENT_URL=http://host.docker.internal:9090 and uncomment:
     # extra_hosts:

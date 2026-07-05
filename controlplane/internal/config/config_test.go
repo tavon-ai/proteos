@@ -16,7 +16,7 @@ func clearEnv(t *testing.T) {
 		"PROTEOS_GIT_HOST", "PROTEOS_SECRETS_BACKEND", "PROTEOS_SECRETS_FILE",
 		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_PREFIX", "PROTEOS_OPENBAO_ROLE_ID",
 		"PROTEOS_OPENBAO_SECRET_ID_FILE", "ALLOWED_GITHUB_LOGINS", "PROTEOS_COOKIE_SECURE",
-		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN",
+		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN", "PROTEOS_NODE_AGENT_INSECURE_HTTP",
 		"PROTEOS_NODE_CA_FILE", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
 		"PROTEOS_MACHINE_DISK_MIB", "PROTEOS_KERNEL_REF", "PROTEOS_ROOTFS_REF",
 		"PROTEOS_MACHINE_DOMAIN", "PROTEOS_STATE_KEY",
@@ -150,6 +150,42 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if len(c.AllowedGitHubLogins) != 2 || c.AllowedGitHubLogins[0] != "alice" || c.AllowedGitHubLogins[1] != "bob" {
 		t.Errorf("AllowedGitHubLogins = %v, want [alice bob] (trimmed, empties dropped)", c.AllowedGitHubLogins)
+	}
+}
+
+// TAV-27: the node-agent channel carries volume keys, so a plain-HTTP URL to a
+// non-loopback host must be rejected unless dev explicitly opts out. Loopback
+// stays allowed with no flag (dev stacks; the traffic never leaves the host).
+func TestLoadNodeAgentURLRequiresHTTPS(t *testing.T) {
+	cases := []struct {
+		name     string
+		url      string
+		insecure string
+		wantErr  bool
+	}{
+		{"loopback http default ok", "", "", false},
+		{"localhost http ok", "http://localhost:9090", "", false},
+		{"https ok", "https://100.72.173.19:9090", "", false},
+		{"non-loopback http rejected", "http://192.168.2.84:9090", "", true},
+		{"non-loopback http with opt-out ok", "http://192.168.2.84:9090", "1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			if tc.url != "" {
+				t.Setenv("PROTEOS_NODE_AGENT_URL", tc.url)
+			}
+			if tc.insecure != "" {
+				t.Setenv("PROTEOS_NODE_AGENT_INSECURE_HTTP", tc.insecure)
+			}
+			_, err := Load()
+			if tc.wantErr && err == nil {
+				t.Fatalf("Load(%q) succeeded; want https-required error", tc.url)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Load(%q): %v", tc.url, err)
+			}
+		})
 	}
 }
 

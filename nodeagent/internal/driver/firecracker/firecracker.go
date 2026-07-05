@@ -70,6 +70,13 @@ type Config struct {
 	// input chain's explicit allow list so the control plane can reach the
 	// agent after the chain switches to default-drop policy.
 	AgentPort string
+
+	// MgmtIfaces are the host interfaces allowed to reach SSH and the agent API
+	// through the fail-closed nftables input chain (PROTEOS_AGENT_MGMT_IFACES).
+	// The token "egress" resolves to the default-route interface. Must include
+	// the interface the control plane's requests arrive on (tailscale0 in
+	// production). Never list tap devices here.
+	MgmtIfaces []string
 }
 
 // Driver implements driver.Driver against jailed Firecracker VMMs.
@@ -402,7 +409,7 @@ func (d *Driver) setupNetworking(rec state.Record) error {
 	if err != nil {
 		return err
 	}
-	return setupTap(rec.TapName, gwCIDR, guestCIDR, d.cfg.AgentPort)
+	return setupTap(rec.TapName, gwCIDR, guestCIDR, d.cfg.AgentPort, d.cfg.MgmtIfaces)
 }
 
 // Stop shuts down a running machine asynchronously. StopModeHibernate pauses the

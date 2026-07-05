@@ -414,6 +414,74 @@
       changed_when: false
 
 # ----------------------------------------------------------------------------
+# TAV-27: TLS on the agent channel is mandatory (it carries per-machine LUKS
+# volume keys) — the agent refuses to start plaintext on a non-loopback
+# listener. When no cert is supplied, generate a self-signed pair on the host
+# and fetch the cert to the controller so the app stack pins it
+# (PROTEOS_NODE_CA_FILE). SANs cover the tailnet IP (the production dial path),
+# the inventory address, and the hostname.
+# ----------------------------------------------------------------------------
+- name: Resolve effective agent TLS cert/key paths
+  ansible.builtin.set_fact:
+    proteos_agent_tls_cert_effective: >-
+      {{ proteos_agent_tls_cert if proteos_agent_tls_cert | length > 0
+         else proteos_agent_tls_dir ~ '/agent.crt' }}
+    proteos_agent_tls_key_effective: >-
+      {{ proteos_agent_tls_key if proteos_agent_tls_key | length > 0
+         else proteos_agent_tls_dir ~ '/agent.key' }}
+
+- name: Generate a self-signed agent TLS cert
+  when: proteos_agent_tls_cert | length == 0
+  block:
+    - name: Ensure the agent TLS dir exists
+      ansible.builtin.file:
+        path: "{{ proteos_agent_tls_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Generate the agent TLS private key
+      community.crypto.openssl_privatekey:
+        path: "{{ proteos_agent_tls_key_effective }}"
+        type: ECC
+        curve: secp256r1
+        owner: root
+        group: root
+        mode: "0600"
+      notify: restart node-agent
+
+    - name: Generate the agent TLS CSR (SANs = every address the CP may dial)
+      community.crypto.openssl_csr:
+        path: "{{ proteos_agent_tls_dir }}/agent.csr"
+        privatekey_path: "{{ proteos_agent_tls_key_effective }}"
+        common_name: "{{ inventory_hostname }}"
+        subject_alt_name: >-
+          {{ (['DNS:' ~ inventory_hostname, 'IP:127.0.0.1']
+              + (['IP:' ~ proteos_tailscale_ip] if proteos_tailscale_ip is defined else [])
+              + (['IP:' ~ ansible_host] if ansible_host is match('^\d+\.\d+\.\d+\.\d+$') else ['DNS:' ~ ansible_host])) }}
+        mode: "0644"
+
+    - name: Self-sign the agent TLS cert
+      community.crypto.x509_certificate:
+        path: "{{ proteos_agent_tls_cert_effective }}"
+        csr_path: "{{ proteos_agent_tls_dir }}/agent.csr"
+        privatekey_path: "{{ proteos_agent_tls_key_effective }}"
+        provider: selfsigned
+        selfsigned_not_after: "+3650d"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart node-agent
+
+- name: Fetch the agent cert to the controller (app stack's PROTEOS_NODE_CA_FILE)
+  tags: [outputs]
+  ansible.builtin.fetch:
+    src: "{{ proteos_agent_tls_cert_effective }}"
+    dest: "{{ proteos_templates_fetch_dir }}/node-{{ inventory_hostname }}-agent-ca.pem"
+    flat: true
+
+# ----------------------------------------------------------------------------
 # Config + systemd unit.
 # ----------------------------------------------------------------------------
 - name: Render node-agent env file

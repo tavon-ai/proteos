@@ -5,6 +5,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -91,6 +93,14 @@ type Config struct {
 	// control plane verifies the agent against it instead of the system trust
 	// store (Phase 4 decision #3). Empty ⇒ plain HTTP / system roots (dev).
 	NodeCAFile string
+
+	// NodeAgentInsecureHTTP (PROTEOS_NODE_AGENT_INSECURE_HTTP=1) permits a
+	// plain-HTTP NodeAgentURL to a non-loopback host. Dev-only escape hatch
+	// (TAV-27): the channel carries per-machine LUKS volume keys and the
+	// bearer token, so production must dial https with NodeCAFile pinning the
+	// agent's cert. Loopback URLs are always allowed — that traffic never
+	// leaves the host.
+	NodeAgentInsecureHTTP bool
 
 	// MachineVcpus / MachineMemMiB / MachineDiskMiB are the resource spec stamped
 	// on every new machine row at create time. DiskMiB is the persistent disk
@@ -189,13 +199,15 @@ func Load() (*Config, error) {
 		SessionTTL:          30 * 24 * time.Hour,
 		CookieSecure:        getenv("PROTEOS_COOKIE_SECURE", "true") == "true",
 
-		HostName:       getenv("PROTEOS_HOST_NAME", "local"),
-		NodeAgentURL:   getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
-		AgentToken:     os.Getenv("PROTEOS_AGENT_TOKEN"),
-		NodeCAFile:     os.Getenv("PROTEOS_NODE_CA_FILE"),
-		MachineVcpus:   getenvInt("PROTEOS_MACHINE_VCPUS", 2),
-		MachineMemMiB:  getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
-		MachineDiskMiB: getenvInt("PROTEOS_MACHINE_DISK_MIB", 10240),
+		HostName:     getenv("PROTEOS_HOST_NAME", "local"),
+		NodeAgentURL: getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
+		AgentToken:   os.Getenv("PROTEOS_AGENT_TOKEN"),
+		NodeCAFile:   os.Getenv("PROTEOS_NODE_CA_FILE"),
+
+		NodeAgentInsecureHTTP: os.Getenv("PROTEOS_NODE_AGENT_INSECURE_HTTP") == "1",
+		MachineVcpus:          getenvInt("PROTEOS_MACHINE_VCPUS", 2),
+		MachineMemMiB:         getenvInt("PROTEOS_MACHINE_MEM_MIB", 2048),
+		MachineDiskMiB:        getenvInt("PROTEOS_MACHINE_DISK_MIB", 10240),
 
 		MachineMaxPerUser: getenvInt("PROTEOS_MAX_MACHINES_PER_USER", 5),
 		KernelRef:         getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
@@ -213,6 +225,13 @@ func Load() (*Config, error) {
 
 	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {
 		return nil, fmt.Errorf("PROTEOS_PREVIEW_PORT_MIN/MAX invalid range: %d..%d", c.PreviewPortMin, c.PreviewPortMax)
+	}
+
+	// TAV-27: the agent channel carries volume keys — refuse a plaintext URL
+	// unless it stays on this host (loopback dev stacks) or dev explicitly
+	// opts out.
+	if !strings.HasPrefix(c.NodeAgentURL, "https://") && !c.NodeAgentInsecureHTTP && !isLoopbackURL(c.NodeAgentURL) {
+		return nil, fmt.Errorf("PROTEOS_NODE_AGENT_URL %q is plain HTTP to a non-loopback host (the channel carries volume keys): use https with PROTEOS_NODE_CA_FILE, or set PROTEOS_NODE_AGENT_INSECURE_HTTP=1 for dev-only plain HTTP", c.NodeAgentURL)
 	}
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {
@@ -291,6 +310,22 @@ func getenvDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// isLoopbackURL reports whether the URL's host is loopback (localhost or a
+// 127.x/::1 address). Plain HTTP to loopback never leaves the host, so the
+// TAV-27 https requirement exempts it (dev stacks).
+func isLoopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func splitList(s string) []string {

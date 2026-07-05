@@ -120,7 +120,8 @@ Run **just the Tailscale step** on an already-provisioned node with
 | `proteos_src_git_repo` | `""` | set to clone from git instead of rsync-ing this checkout |
 | `proteos_restrict_agent_port` | `false` | set with `proteos_app_vm_ip` to lock `:9090` to the app VM |
 | `proteos_run_acceptance_test` | `true` | run the KVM integration suite as a green-light gate before the service starts; auto-skips a node already serving machines |
-| `proteos_agent_tls_cert`/`_key` | `""` | set both to serve the agent channel over TLS |
+| `proteos_agent_tls_cert`/`_key` | `""` | bring-your-own agent TLS cert; empty ⇒ the play self-signs one under `proteos_agent_tls_dir` and fetches it to `artifacts/node-<host>-agent-ca.pem` (TLS is mandatory — TAV-27) |
+| `proteos_agent_mgmt_ifaces` | `"egress,tailscale0"` | interfaces allowed through the agent's fail-closed input chain; must include the CP's arrival path |
 | `proteos_tailscale_enabled` | `false` | join the host to a tailnet; requires `proteos_tailscale_authkey` |
 | `proteos_tailscale_authkey` | `""` | tailnet auth key (`tskey-...`); supply via vault/`--extra-vars` |
 

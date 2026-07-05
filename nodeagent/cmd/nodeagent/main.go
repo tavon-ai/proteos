@@ -81,10 +81,11 @@ func run() error {
 		slog.Info("node-agent listening", "addr", cfg.Addr, "driver", cfg.Driver, "data_dir", cfg.DataDir, "tls", tlsEnabled)
 		var err error
 		if tlsEnabled {
-			// Decision #3: the channel now carries volume keys, so it is TLS once
-			// certs are provisioned. The control plane pins this cert/CA.
+			// TAV-27: the channel carries volume keys, so TLS is mandatory
+			// (config.Load enforces it). The control plane pins this cert/CA.
 			err = httpServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
 		} else {
+			slog.Warn("serving PLAIN HTTP (PROTEOS_AGENT_INSECURE_HTTP): volume keys and the bearer token transit cleartext — dev only")
 			err = httpServer.ListenAndServe()
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
