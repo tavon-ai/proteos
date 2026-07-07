@@ -608,11 +608,23 @@ export function reconnectRequired(error: unknown): boolean {
 // and keeps a rolling event log for display. The browser EventSource reconnects
 // on its own; it replays Last-Event-ID automatically, and our server backfills
 // the missed rows.
-export function useMachineEvents(): MachineEvent[] {
+//
+// onAuthLost is called when the stream closes and a /api/me probe confirms the
+// session has expired — callers should redirect to /login.
+export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
   const qc = useQueryClient();
   const [events, setEvents] = useState<MachineEvent[]>([]);
   // Guard against duplicate ids across reconnect replays.
   const seen = useRef<Set<number>>(new Set());
+  // Stable ref so the effect closure always calls the current callback without
+  // needing onAuthLost in its dependency array (which would recreate the
+  // EventSource on every render of the caller).
+  const onAuthLostRef = useRef(onAuthLost);
+  useEffect(() => {
+    onAuthLostRef.current = onAuthLost;
+  }, [onAuthLost]);
+  // Timestamp of the last /api/me probe to avoid hammering it on a flapping stream.
+  const lastAuthProbe = useRef(0);
 
   useEffect(() => {
     const es = new EventSource(machineEventsUrl, { withCredentials: true });
@@ -648,10 +660,25 @@ export function useMachineEvents(): MachineEvent[] {
       log.debug('machine destroyed', { id: data.machine_id });
     });
 
-    // EventSource auto-reconnects on error; surface it so a flapping stream is
-    // visible (readyState 2 = closed, e.g. auth lost).
+    // EventSource auto-reconnects on transient errors. readyState CLOSED (2)
+    // means the browser has given up — the most common cause mid-session is an
+    // expired cookie. Probe /api/me to confirm; redirect to login on 401.
     es.addEventListener('error', () => {
       log.warn('stream error', { readyState: es.readyState });
+      if (es.readyState === EventSource.CLOSED) {
+        const now = Date.now();
+        if (now - lastAuthProbe.current > 15_000) {
+          lastAuthProbe.current = now;
+          fetch('/api/me', {
+            credentials: 'include',
+            headers: { 'X-Requested-By': 'proteos-client' },
+          })
+            .then((r) => {
+              if (r.status === 401) onAuthLostRef.current?.();
+            })
+            .catch(() => {}); // network errors are not auth loss
+        }
+      }
     });
 
     return () => es.close();
