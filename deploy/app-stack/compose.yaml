@@ -33,9 +33,9 @@ services:
       - 5432:5432
 
   # OpenBao: the production secrets backend (Phase 5). Single node, file storage,
-  # persistent volume. It boots SEALED — after `docker compose up` you must run
-  # deploy/app-stack/openbao-init.sh once (init + unseal + policies) and unseal
-  # again after every restart. HA + auto-unseal are Phase 12. See RUNBOOK Part D.
+  # persistent volume. It boots SEALED; the bao-unsealer sidecar below unseals it
+  # automatically on every start/restart using the key written by openbao-init.sh.
+  # HA is Phase 12. See RUNBOOK Part D.
   openbao:
     image: openbao/openbao:2.5.1
     cap_add:
@@ -49,12 +49,42 @@ services:
     volumes:
       - baodata:/openbao/data
       - baologs:/openbao/logs
+    healthcheck:
+      # Healthy when the HTTP server is up (sealed or unsealed).
+      # Exit 0 = unsealed/active, exit 2 = sealed — both mean the server is running.
+      test:
+        - "CMD-SHELL"
+        - "bao status >/dev/null 2>&1; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ]"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     # Published so the operator can run `bao` / openbao-init.sh against it.
     # Restrict this port to the operator at the firewall — it is NOT
     # browser-facing and must stay unreachable from VMs (Phase 2 egress
     # default-deny already covers the VM side).
     ports:
       - "8200:8200"
+    restart: unless-stopped
+
+  # Auto-unsealer sidecar: polls openbao every 10 s and calls `bao operator
+  # unseal` whenever it finds it sealed.  The key file is written by
+  # openbao-init.sh; before that the sidecar waits silently.  On a restart or
+  # host reboot openbao is unsealed within ~10 s without operator action.
+  # See RUNBOOK Part D4.
+  bao-unsealer:
+    image: openbao/openbao:2.5.1
+    entrypoint: ["/bin/sh", "/bao-unsealer.sh"]
+    environment:
+      BAO_ADDR: http://openbao:8200
+    volumes:
+      - ./bao-unsealer.sh:/bao-unsealer.sh:ro
+      # Unseal key written by openbao-init.sh (gitignored).  Create an empty
+      # placeholder before the first `docker compose up`:
+      #   touch deploy/app-stack/bao-unseal-key
+      - ./bao-unseal-key:/run/secrets/bao-unseal-key:ro
+    depends_on:
+      - openbao
     restart: unless-stopped
 
   controlplane:
