@@ -22,11 +22,13 @@ import (
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver/dev"
 	"github.com/tavon-ai/proteos/nodeagent/internal/httpapi"
+	"github.com/tavon-ai/proteos/nodeagent/internal/metrics"
 	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	metrics.Register()
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -60,12 +62,17 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Start background maintenance goroutines. The orphan reaper (Firecracker
-	// driver only) periodically kills leaked VMM processes and closes dangling
-	// LUKS mappers. Other driver implementations ignore this via the type assertion.
+	// Start background maintenance goroutines. The orphan reaper and metrics loop
+	// (Firecracker driver only) periodically kill leaked VMM processes, close
+	// dangling LUKS mappers, and refresh the VMsByState gauge. Other driver
+	// implementations ignore these via type assertions.
 	type orphanReaper interface{ StartOrphanReaper(context.Context) }
 	if r, ok := drv.(orphanReaper); ok {
 		r.StartOrphanReaper(ctx)
+	}
+	type metricsStarter interface{ StartMetricsLoop(context.Context) }
+	if ms, ok := drv.(metricsStarter); ok {
+		ms.StartMetricsLoop(ctx)
 	}
 
 	srv := httpapi.New(cfg.Token, drv).WithPreviewRange(cfg.PreviewPortMin, cfg.PreviewPortMax)

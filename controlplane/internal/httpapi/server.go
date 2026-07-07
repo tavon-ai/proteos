@@ -6,6 +6,7 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
 	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
@@ -114,6 +115,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	// Prometheus metrics — unauthenticated; restrict at the network layer.
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	// Auth flow (public).
 	if s.Auth != nil {

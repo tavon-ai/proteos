@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/tavon-ai/proteos/controlplane/internal/metrics"
 	"github.com/tavon-ai/proteos/controlplane/internal/session"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
@@ -172,19 +174,22 @@ func recoverer(next http.Handler) http.Handler {
 	})
 }
 
-// requestLogger logs method, path, status, and duration. It deliberately never
-// logs cookies, the Authorization header, or query strings that may carry the
-// OAuth code/state.
+// requestLogger logs method, path, status, and duration, and records HTTP
+// metrics for Prometheus. It deliberately never logs cookies, the Authorization
+// header, or query strings that may carry the OAuth code/state.
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
+		dur := time.Since(start)
 		slog.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
-			"dur_ms", time.Since(start).Milliseconds(),
+			"dur_ms", dur.Milliseconds(),
 		)
+		metrics.HTTPRequestsTotal.WithLabelValues(r.Method, strconv.Itoa(rec.status)).Inc()
+		metrics.HTTPRequestDuration.WithLabelValues(r.Method).Observe(dur.Seconds())
 	})
 }

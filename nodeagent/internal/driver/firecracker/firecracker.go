@@ -22,6 +22,7 @@ import (
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/tavon-ai/proteos/nodeagent/internal/metrics"
 	"github.com/tavon-ai/proteos/nodeagent/internal/state"
 )
 
@@ -84,13 +85,73 @@ type Driver struct {
 	cfg   Config
 	store *state.Store
 
-	mu      sync.Mutex
-	booting map[string]struct{} // machineID set for in-flight EnsureRunning calls; protected by mu
+	mu        sync.Mutex
+	booting   map[string]struct{}         // machineID set for in-flight EnsureRunning calls
+	logCancel map[string]context.CancelFunc // per-VM log reader goroutine cancel functions
 }
 
 // New constructs the Firecracker driver.
 func New(cfg Config, store *state.Store) *Driver {
-	return &Driver{cfg: cfg, store: store, booting: make(map[string]struct{})}
+	return &Driver{
+		cfg:       cfg,
+		store:     store,
+		booting:   make(map[string]struct{}),
+		logCancel: make(map[string]context.CancelFunc),
+	}
+}
+
+// setLogCancel stores the cancel function for machineID's log reader goroutine,
+// cancelling any previous one first.
+func (d *Driver) setLogCancel(machineID string, cancel context.CancelFunc) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if old, ok := d.logCancel[machineID]; ok {
+		old()
+	}
+	d.logCancel[machineID] = cancel
+}
+
+// cancelLog cancels and removes the log reader goroutine for machineID.
+func (d *Driver) cancelLog(machineID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if cancel, ok := d.logCancel[machineID]; ok {
+		cancel()
+		delete(d.logCancel, machineID)
+	}
+}
+
+// StartMetricsLoop starts a background goroutine that periodically refreshes
+// the VMsByState gauge from the persisted state store.
+func (d *Driver) StartMetricsLoop(ctx context.Context) {
+	go func() {
+		d.refreshVMStateMetric()
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				d.refreshVMStateMetric()
+			}
+		}
+	}()
+}
+
+func (d *Driver) refreshVMStateMetric() {
+	recs, err := d.store.List()
+	if err != nil {
+		return
+	}
+	counts := make(map[string]float64)
+	for _, r := range recs {
+		counts[r.State]++
+	}
+	metrics.VMsByState.Reset()
+	for st, n := range counts {
+		metrics.VMsByState.WithLabelValues(st).Set(n)
+	}
 }
 
 var _ driver.Driver = (*Driver)(nil)
@@ -176,15 +237,33 @@ func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string,
 
 // boot performs the full async boot (cold or resume) for one reserved machine.
 func (d *Driver) boot(rec state.Record, key []byte) {
+	op := "cold_boot"
+	if rec.Snapshot.Present {
+		op = "resume"
+	}
+	start := time.Now()
+
 	if err := d.bootOnce(rec, key); err != nil {
 		slog.Error("firecracker boot failed", "machine", rec.MachineID, "err", err)
+		metrics.VMOperationsTotal.WithLabelValues(op, "error").Inc()
+		metrics.VMOperationDuration.WithLabelValues(op).Observe(time.Since(start).Seconds())
 		_, _, _ = d.store.Update(rec.MachineID, func(r *state.Record) {
 			r.State = api.StateError
 			r.Reason = err.Error()
 		})
 		// Best-effort cleanup of partial host state so a retry starts clean.
 		d.cleanupHost(rec)
+		return
 	}
+
+	metrics.VMOperationsTotal.WithLabelValues(op, "ok").Inc()
+	metrics.VMOperationDuration.WithLabelValues(op).Observe(time.Since(start).Seconds())
+
+	// VM is running — attach a log reader for the lifetime of this VMM instance.
+	layout := jailLayout{chrootBaseDir: d.cfg.ChrootBaseDir, id: rec.MachineID}
+	logCtx, logCancel := context.WithCancel(context.Background())
+	d.setLogCancel(rec.MachineID, logCancel)
+	startLogReader(logCtx, layout, rec.MachineID)
 }
 
 // bootOnce decides between resuming from a snapshot and a cold boot, and applies
@@ -259,6 +338,12 @@ func (d *Driver) coldBoot(rec state.Record, key []byte, layout jailLayout, fallb
 		return fmt.Errorf("chown jail: %w", err)
 	}
 
+	// Log FIFO: created after chownRecursive so it can be chowned separately.
+	// Best-effort — a missing FIFO disables log capture but does not fail the boot.
+	if err := createLogFIFO(layout, uid); err != nil {
+		slog.Warn("fc log fifo setup failed", "machine", rec.MachineID, "err", err)
+	}
+
 	// 4. host networking.
 	if err := d.setupNetworking(rec); err != nil {
 		return err
@@ -306,6 +391,15 @@ func (d *Driver) coldBoot(rec state.Record, key []byte, layout jailLayout, fallb
 	if err := apiClient.put(ctx, "/vsock", vsockDevice{GuestCID: guestCID, UDSPath: vsockUDSName}); err != nil {
 		return err
 	}
+	// Enable Firecracker's structured logger (best-effort: a config failure does
+	// not abort the boot; log capture simply won't function for this instance).
+	if err := apiClient.put(ctx, "/logger", loggerConfig{
+		LogPath:   logFIFOJailPath,
+		Level:     "Warn",
+		ShowLevel: true,
+	}); err != nil {
+		slog.Warn("fc logger config failed", "machine", rec.MachineID, "err", err)
+	}
 	if err := apiClient.put(ctx, "/actions", action{ActionType: "InstanceStart"}); err != nil {
 		return err
 	}
@@ -346,6 +440,11 @@ func (d *Driver) resume(rec state.Record, key []byte, layout jailLayout) error {
 		return fmt.Errorf("chown jail: %w", err)
 	}
 
+	// Log FIFO for this resume instance (best-effort).
+	if err := createLogFIFO(layout, uid); err != nil {
+		slog.Warn("fc log fifo setup failed", "machine", rec.MachineID, "err", err)
+	}
+
 	// 3. recreate the tap with the SAME name the snapshot's NIC references.
 	if err := d.setupNetworking(rec); err != nil {
 		return err
@@ -373,6 +472,15 @@ func (d *Driver) resume(rec state.Record, key []byte, layout jailLayout) error {
 
 	if err := loadSnapshot(ctx, apiClient); err != nil {
 		return err
+	}
+
+	// Configure Firecracker logger (best-effort — same as cold boot path).
+	if err := apiClient.put(ctx, "/logger", loggerConfig{
+		LogPath:   logFIFOJailPath,
+		Level:     "Warn",
+		ShowLevel: true,
+	}); err != nil {
+		slog.Warn("fc logger config failed (resume)", "machine", rec.MachineID, "err", err)
 	}
 
 	// 6. resume hygiene (decision #9): clock + entropy. Best-effort — a restored
@@ -445,6 +553,15 @@ func (d *Driver) Stop(ctx context.Context, machineID string, mode driver.StopMod
 // metadata. On poweroff (or a hibernate that failed to snapshot) it does a cold
 // SendCtrlAltDel + kill and clears any snapshot. The volume is always closed.
 func (d *Driver) finishStop(rec state.Record, hibernate bool) {
+	op := "poweroff"
+	if hibernate {
+		op = "hibernate"
+	}
+	start := time.Now()
+	defer func() {
+		d.cancelLog(rec.MachineID)
+		metrics.VMOperationDuration.WithLabelValues(op).Observe(time.Since(start).Seconds())
+	}()
 	layout := jailLayout{chrootBaseDir: d.cfg.ChrootBaseDir, id: rec.MachineID}
 	apiClient := newFCAPI(layout.socket())
 
@@ -498,6 +615,12 @@ func (d *Driver) finishStop(rec state.Record, hibernate bool) {
 	// sealed inside the encrypted container.
 	d.closeVolume(rec.MachineID, layout)
 
+	result := "ok"
+	if hibernate && !snap.Present {
+		result = "snapshot_failed" // fell back to cold poweroff
+	}
+	metrics.VMOperationsTotal.WithLabelValues(op, result).Inc()
+
 	_, _, _ = d.store.Update(rec.MachineID, func(r *state.Record) {
 		r.State = api.StateStopped
 		r.Pid = 0
@@ -520,8 +643,13 @@ func (d *Driver) Status(ctx context.Context, machineID string) (driver.Status, e
 // Destroy stops the VMM and removes the tap, egress rules, jail, the encrypted
 // volume (disk + snapshot), and state.
 func (d *Driver) Destroy(ctx context.Context, machineID string) error {
+	start := time.Now()
+	d.cancelLog(machineID)
+
 	rec, ok, err := d.store.Load(machineID)
 	if err != nil {
+		metrics.VMOperationsTotal.WithLabelValues("destroy", "error").Inc()
+		metrics.VMOperationDuration.WithLabelValues("destroy").Observe(time.Since(start).Seconds())
 		return err
 	}
 	if ok {
@@ -532,7 +660,14 @@ func (d *Driver) Destroy(ctx context.Context, machineID string) error {
 		d.cleanupHost(rec)
 		d.destroyVolume(rec.MachineID, layout) // also removes the .luks container
 	}
-	return d.store.Delete(machineID)
+	err = d.store.Delete(machineID)
+	result := "ok"
+	if err != nil {
+		result = "error"
+	}
+	metrics.VMOperationsTotal.WithLabelValues("destroy", result).Inc()
+	metrics.VMOperationDuration.WithLabelValues("destroy").Observe(time.Since(start).Seconds())
+	return err
 }
 
 // cleanupHost closes the volume (umount /state + luksClose) and removes the tap +

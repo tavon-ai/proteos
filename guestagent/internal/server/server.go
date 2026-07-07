@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 	"github.com/tavon-ai/proteos/guestagent/internal/term"
@@ -110,7 +111,7 @@ func New(mgr *term.Manager, persist Persister, sec SecretStore, control Controll
 
 // Handler builds the HTTP handler. /terminal serves sessions; /resume + /info
 // are the Phase 4 control surface; /secrets is the Phase 5 injection surface;
-// /healthz is a trivial liveness probe.
+// /healthz is a trivial liveness probe; /metrics exposes Prometheus metrics.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /terminal", s.handleTerminal)
@@ -126,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.Handle("GET /metrics", promhttp.Handler())
 	return mux
 }
 

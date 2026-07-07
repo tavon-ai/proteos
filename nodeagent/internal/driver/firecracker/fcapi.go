@@ -128,3 +128,11 @@ type vsockDevice struct {
 	GuestCID int    `json:"guest_cid"`
 	UDSPath  string `json:"uds_path"`
 }
+
+// loggerConfig enables Firecracker's structured JSON logger, directing output
+// to a named pipe at LogPath (relative to the jail chroot).
+type loggerConfig struct {
+	LogPath   string `json:"log_path"`
+	Level     string `json:"level"`
+	ShowLevel bool   `json:"show_level"`
+}
