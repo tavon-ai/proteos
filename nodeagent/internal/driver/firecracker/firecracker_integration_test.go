@@ -87,6 +87,10 @@ func testDriver(t *testing.T) (d *firecracker.Driver, volumesDir, chrootBaseDir 
 		// on — a made-up port would firewall the control plane out of the
 		// node-agent until its next restart re-ran ensureNftTable.
 		AgentPort: agentPortFromEnv(),
+		// Same reasoning as AgentPort: these tests replace the real host's
+		// proteos:global rules, so the allowed interfaces must match the
+		// deployed agent's config or the control plane gets firewalled out.
+		MgmtIfaces: mgmtIfacesFromEnv(),
 	}, store)
 	return d, volumesDir, chrootBaseDir
 }
@@ -297,6 +301,19 @@ func agentPortFromEnv() string {
 		return port
 	}
 	return "9090"
+}
+
+// mgmtIfacesFromEnv mirrors config.Load's production wiring: the management
+// interface allow-list comes from PROTEOS_AGENT_MGMT_IFACES (comma-separated),
+// defaulting to "egress,tailscale0" — which is also the ansible default.
+func mgmtIfacesFromEnv() []string {
+	var out []string
+	for _, part := range strings.Split(envOr("PROTEOS_AGENT_MGMT_IFACES", "egress,tailscale0"), ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func mustSymlink(t *testing.T, oldname, newname string) {

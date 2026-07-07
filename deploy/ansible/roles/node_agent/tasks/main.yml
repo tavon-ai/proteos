@@ -411,6 +411,9 @@
         PROTEOS_FIRECRACKER_BIN: "{{ proteos_firecracker_bin }}"
         PROTEOS_JAILER_BIN: "{{ proteos_jailer_bin }}"
         PROTEOS_CRYPTSETUP_BIN: "{{ proteos_cryptsetup_bin }}"
+        # The suite replaces the real host's proteos:global nftables rules, so
+        # its allowed-interface list must match the deployed agent's (TAV-27).
+        PROTEOS_AGENT_MGMT_IFACES: "{{ proteos_agent_mgmt_ifaces }}"
       changed_when: false
 
 # ----------------------------------------------------------------------------
