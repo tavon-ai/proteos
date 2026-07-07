@@ -620,7 +620,9 @@ export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
   // needing onAuthLost in its dependency array (which would recreate the
   // EventSource on every render of the caller).
   const onAuthLostRef = useRef(onAuthLost);
-  useEffect(() => { onAuthLostRef.current = onAuthLost; }, [onAuthLost]);
+  useEffect(() => {
+    onAuthLostRef.current = onAuthLost;
+  }, [onAuthLost]);
   // Timestamp of the last /api/me probe to avoid hammering it on a flapping stream.
   const lastAuthProbe = useRef(0);
 
@@ -671,7 +673,9 @@ export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
             credentials: 'include',
             headers: { 'X-Requested-By': 'proteos-client' },
           })
-            .then((r) => { if (r.status === 401) onAuthLostRef.current?.(); })
+            .then((r) => {
+              if (r.status === 401) onAuthLostRef.current?.();
+            })
             .catch(() => {}); // network errors are not auth loss
         }
       }
