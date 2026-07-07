@@ -1,0 +1,38 @@
+# Prometheus scrape configuration for ProteOS daemons.
+# Merge this into your prometheus.yml scrape_configs section, or reference it
+# via the file_sd_configs / scrape_config_files mechanism.
+#
+# The control plane and node-agent expose /metrics on their main API ports.
+# Adjust the targets to match your deployment addresses.
+
+scrape_configs:
+  - job_name: proteos-controlplane
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    scheme: https
+    tls_config:
+      # Pin the control plane's TLS certificate if self-signed.
+      # ca_file: /etc/prometheus/certs/proteos-cp-ca.pem
+      insecure_skip_verify: false
+    static_configs:
+      - targets:
+          - "controlplane.internal:8080"
+        labels:
+          env: production
+          component: controlplane
+
+  - job_name: proteos-nodeagent
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    scheme: https
+    tls_config:
+      # The node-agent uses a pinned certificate; supply the CA used to sign it.
+      # ca_file: /etc/prometheus/certs/proteos-node-ca.pem
+      insecure_skip_verify: false
+    static_configs:
+      - targets:
+          - "node1.internal:9090"
+        labels:
+          env: production
+          component: nodeagent
+          host: node1

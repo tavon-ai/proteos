@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	api "github.com/tavon-ai/proteos/nodeagent/api"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 )
@@ -46,11 +47,12 @@ func (s *Server) WithPreviewRange(min, max uint32) *Server {
 	return s
 }
 
-// Handler builds the fully-wired http.Handler. /healthz is public; everything
-// else is behind the bearer check.
+// Handler builds the fully-wired http.Handler. /healthz and /metrics are
+// public; everything else is behind the bearer check.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.RouteHealthz, s.handleHealthz)
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle(api.RouteEnsure, s.auth(http.HandlerFunc(s.handleEnsure)))
 	mux.Handle(api.RouteStop, s.auth(http.HandlerFunc(s.handleStop)))
 	mux.Handle(api.RouteGetMachine, s.auth(http.HandlerFunc(s.handleGet)))
