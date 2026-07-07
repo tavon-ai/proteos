@@ -46,6 +46,17 @@ const (
 	// PR review mutations. Target is the repo full name (owner/repo).
 	ActionGitPRMerge   = "git.pr.merge"   // a user merged a pull request
 	ActionGitPRComment = "git.pr.comment" // a user commented on a pull request
+
+	// Auth session events. Target is the user id.
+	ActionAuthLogin    = "auth.login"     // a user completed OAuth login and a session was created
+	ActionAuthLogout   = "auth.logout"    // a user explicitly logged out
+	ActionSessionRevoke = "session.revoke" // an active session was explicitly revoked (logout or admin)
+
+	// Machine lifecycle events. Target is the machine id; metadata carries the name.
+	ActionMachineCreate  = "machine.create"  // a user provisioned a new machine
+	ActionMachineStart   = "machine.start"   // a user cold-booted or resumed a stopped machine
+	ActionMachineStop    = "machine.stop"    // a user stopped a running machine
+	ActionMachineDestroy = "machine.destroy" // a user permanently destroyed a machine
 )
 
 // Actor prefixes identify who performed the action.

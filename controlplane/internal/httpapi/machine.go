@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
@@ -160,18 +161,26 @@ func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 		slog.Error("create machine failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
+		uid := uuidString(user.ID)
+		s.Audit.Record(r.Context(), audit.Entry{
+			UserID:   uid,
+			Actor:    audit.UserActor(uid),
+			Action:   audit.ActionMachineCreate,
+			Target:   machine.UUIDString(m.ID),
+			Metadata: map[string]any{"name": m.Name},
+		})
 		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 	}
 }
 
 // handleStartMachine cold-boots a stopped/errored machine. 202 or 409 invalid_state.
 func (s *Server) handleStartMachine(w http.ResponseWriter, r *http.Request) {
-	s.machineMutation(w, r, s.Machines.Start)
+	s.machineMutation(w, r, audit.ActionMachineStart, s.Machines.Start)
 }
 
 // handleStopMachine gracefully stops a running machine. 202 or 409 invalid_state.
 func (s *Server) handleStopMachine(w http.ResponseWriter, r *http.Request) {
-	s.machineMutation(w, r, s.Machines.Stop)
+	s.machineMutation(w, r, audit.ActionMachineStop, s.Machines.Stop)
 }
 
 // handleRenameMachine sets a machine's display name from a JSON body
@@ -228,14 +237,22 @@ func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 		slog.Error("destroy machine failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
+		uid := uuidString(user.ID)
+		s.Audit.Record(r.Context(), audit.Entry{
+			UserID: uid,
+			Actor:  audit.UserActor(uid),
+			Action: audit.ActionMachineDestroy,
+			Target: machine.UUIDString(id),
+		})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
 // machineMutation factors the shared shape of start/stop: auth, parse the {id}
 // path value, run op (which ownership-checks), map ErrNoMachine→404,
-// ErrInvalidState→409, else 202 with the summary.
-func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func(context.Context, pgtype.UUID, pgtype.UUID) (store.Machine, error)) {
+// ErrInvalidState→409, else 202 with the summary. action is the audit constant
+// to record on success.
+func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, action string, op func(context.Context, pgtype.UUID, pgtype.UUID) (store.Machine, error)) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
@@ -256,6 +273,14 @@ func (s *Server) machineMutation(w http.ResponseWriter, r *http.Request, op func
 		slog.Error("machine mutation failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
+		uid := uuidString(user.ID)
+		s.Audit.Record(r.Context(), audit.Entry{
+			UserID:   uid,
+			Actor:    audit.UserActor(uid),
+			Action:   action,
+			Target:   machine.UUIDString(m.ID),
+			Metadata: map[string]any{"name": m.Name},
+		})
 		writeJSON(w, http.StatusAccepted, s.summary(r.Context(), m))
 	}
 }

@@ -64,6 +64,12 @@ func sessionIDFromContext(ctx context.Context) (string, bool) {
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if tok := bearerToken(r); tok != "" {
+			// Rate-limit bearer-token auth attempts per IP to slow brute-force
+			// token guessing before the hash lookup hits the database.
+			if !s.patRL.Allow(clientIP(r)) {
+				writeError(w, http.StatusTooManyRequests, "rate_limited")
+				return
+			}
 			if s.PATs == nil {
 				writeError(w, http.StatusUnauthorized, "unauthorized")
 				return

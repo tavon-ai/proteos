@@ -105,10 +105,22 @@ type Server struct {
 	// AT2: the live agent-task event fan-out the task SSE endpoint subscribes to.
 	// Nil disables GET /api/machines/{id}/tasks/{tid}/events.
 	TaskEvents *taskevents.Hub
+
+	// Rate limiters — initialized by Handler(). All are nil-safe (nil = disabled).
+	authRL    *Limiter // login + OAuth callback, per client IP: 10 req/min burst
+	patRL     *Limiter // PAT bearer auth attempts, per client IP: 30 burst, 1/s
+	machineRL *Limiter // machine create + destroy, per user: 5 req/min burst
+	taskRL    *Limiter // task dispatch (create + resume), per user: 10 req/min burst
 }
 
 // Handler builds the fully-wired http.Handler with all routes and middleware.
 func (s *Server) Handler() http.Handler {
+	// Initialize in-memory token-bucket rate limiters.
+	s.authRL = NewLimiter(10, 10.0/60)   // 10-req burst, refill 10/min per IP
+	s.patRL = NewLimiter(30, 1.0)        // 30-req burst, refill 1/s per IP
+	s.machineRL = NewLimiter(5, 5.0/60)  // 5-req burst, refill 5/min per user
+	s.taskRL = NewLimiter(10, 10.0/60)   // 10-req burst, refill 10/min per user
+
 	mux := http.NewServeMux()
 
 	// Liveness probe — unauthenticated, no logging noise needed but harmless.
@@ -119,12 +131,13 @@ func (s *Server) Handler() http.Handler {
 	// Prometheus metrics — unauthenticated; restrict at the network layer.
 	mux.Handle("GET /metrics", promhttp.Handler())
 
-	// Auth flow (public).
+	// Auth flow (public). Login and callback are IP-rate-limited to slow credential
+	// stuffing and OAuth abuse before a session exists.
 	if s.Auth != nil {
-		mux.HandleFunc("GET /api/auth/github/login", s.Auth.Login)
-		mux.HandleFunc("GET /api/auth/github/callback", s.Auth.Callback)
-		// Logout mutates state, so it requires the CSRF header and a session.
-		mux.Handle("POST /api/auth/logout", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.Auth.Logout))))
+		mux.Handle("GET /api/auth/github/login", s.ipLimit(s.authRL, http.HandlerFunc(s.Auth.Login)))
+		mux.Handle("GET /api/auth/github/callback", s.ipLimit(s.authRL, http.HandlerFunc(s.Auth.Callback)))
+		// Logout requires auth + CSRF; the wrapper also appends the audit event.
+		mux.Handle("POST /api/auth/logout", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleLogout))))
 	}
 
 	// Current user (authenticated).
@@ -149,10 +162,10 @@ func (s *Server) Handler() http.Handler {
 	// the CSRF header. The SSE stream is a GET (no CSRF) — EventSource cannot set
 	// custom headers, and it is read-only.
 	mux.Handle("GET /api/machines", s.requireAuth(http.HandlerFunc(s.handleListMachines)))
-	mux.Handle("POST /api/machines", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateMachine))))
+	mux.Handle("POST /api/machines", s.requireAuth(s.csrfHeader(s.userLimit(s.machineRL, http.HandlerFunc(s.handleCreateMachine)))))
 	mux.Handle("GET /api/machines/{id}", s.requireAuth(http.HandlerFunc(s.handleGetMachine)))
 	mux.Handle("PATCH /api/machines/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleRenameMachine))))
-	mux.Handle("DELETE /api/machines/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDestroyMachine))))
+	mux.Handle("DELETE /api/machines/{id}", s.requireAuth(s.csrfHeader(s.userLimit(s.machineRL, http.HandlerFunc(s.handleDestroyMachine)))))
 	mux.Handle("POST /api/machines/{id}/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
 	mux.Handle("POST /api/machines/{id}/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
@@ -254,14 +267,14 @@ func (s *Server) Handler() http.Handler {
 	// it needs the provider registry + secrets (key check) and the worktree
 	// surface (project resolution); reads are auth-only. POST is CSRF-guarded.
 	if s.TaskChannel != nil && s.Providers != nil && s.GitWorktree != nil && s.Secrets != nil {
-		mux.Handle("POST /api/machines/{id}/tasks", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCreateTask))))
+		mux.Handle("POST /api/machines/{id}/tasks", s.requireAuth(s.csrfHeader(s.userLimit(s.taskRL, http.HandlerFunc(s.handleCreateTask)))))
 		mux.Handle("GET /api/machines/{id}/tasks", s.requireAuth(http.HandlerFunc(s.handleListTasks)))
 		mux.Handle("GET /api/machines/{id}/tasks/{tid}", s.requireAuth(http.HandlerFunc(s.handleGetTask)))
 		// Cancel a running task (AT3): a mutation, so CSRF-guarded.
 		mux.Handle("POST /api/machines/{id}/tasks/{tid}/cancel", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCancelTask))))
 		// Follow-up turn on a finished task (AT4: resume the agent session). A
 		// dispatch mutation, so CSRF-guarded.
-		mux.Handle("POST /api/machines/{id}/tasks/{tid}/messages", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSendMessage))))
+		mux.Handle("POST /api/machines/{id}/tasks/{tid}/messages", s.requireAuth(s.csrfHeader(s.userLimit(s.taskRL, http.HandlerFunc(s.handleSendMessage)))))
 	}
 
 	// AT2: live agent-event SSE for one task. A GET stream (no CSRF — like the

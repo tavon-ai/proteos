@@ -363,7 +363,7 @@ func run(migrate, migrateOnly bool) error {
 			CookieSecure:        cfg.CookieSecure,
 			SessionTTL:          cfg.SessionTTL,
 			AllowedGitHubLogins: cfg.AllowedGitHubLogins,
-		}, ghClient, sessions, q, sec)
+		}, ghClient, sessions, q, sec, auditRec)
 
 		// Phase 7: per-user token lifecycle + the persistent guest control channel
 		// manager. The manager watches machine state (via the broker) and keeps one
