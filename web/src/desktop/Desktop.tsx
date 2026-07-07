@@ -18,7 +18,7 @@ import { ContextBar } from './ContextBar';
 import { CommandPalette } from './CommandPalette';
 import { OpenAppDialog } from './OpenAppDialog';
 import { openPreview } from './openers';
-import { Window } from './Window';
+import { Window, WindowErrorBoundary } from './Window';
 import { WindowManagerProvider } from './WindowManager';
 import { useWindowManager } from './windowManagerContext';
 import { openProjects } from './openers';
@@ -31,8 +31,9 @@ import { useWallpaper } from './wallpaper';
 // the live machines + event + provider subscriptions once (a single EventSource
 // backs the whole UI) and provides the active-machine selection to the tree.
 export function Desktop({ me }: { me: Me }) {
+  const navigate = useNavigate();
   const { data: machines } = useMachines(me.machines);
-  const events = useMachineEvents();
+  const events = useMachineEvents(() => navigate('/login', { replace: true }));
 
   return (
     <WallpaperProvider>
@@ -146,11 +147,14 @@ function DesktopShell({
               : selected;
             return (
               <Window key={win.id} win={win} viewport={viewport} hidden={!visible}>
-                <WindowBody
-                  win={win}
-                  machineState={winMachine?.state ?? 'stopped'}
-                  events={events}
-                />
+                <WindowErrorBoundary onClose={() => wm.close(win.id)}>
+                  <WindowBody
+                    win={win}
+                    machineState={winMachine?.state ?? 'stopped'}
+                    lastError={winMachine?.last_error ?? null}
+                    events={events}
+                  />
+                </WindowErrorBoundary>
               </Window>
             );
           })}
@@ -188,12 +192,24 @@ function DesktopShell({
 function WindowBody({
   win,
   machineState,
+  lastError,
   events,
 }: {
   win: WindowState;
   machineState: MachineState;
+  lastError: string | null;
   events: MachineEvent[];
 }) {
+  // Machine-scoped windows show the error reason instead of their normal content
+  // so users know why the machine is unavailable without opening machine details.
+  if (win.machineId && machineState === 'error') {
+    return (
+      <div className="editor-banner" role="alert">
+        <p>Machine error{lastError ? `: ${lastError}` : '.'}</p>
+        <p style={{ fontSize: '0.8rem' }}>Start the machine from the machine menu to reconnect.</p>
+      </div>
+    );
+  }
   switch (win.kind) {
     case 'projects':
       return (

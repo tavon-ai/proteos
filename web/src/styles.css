@@ -392,6 +392,29 @@ body {
   padding: 1.5rem;
 }
 
+/* Window crash fallback rendered by WindowErrorBoundary */
+.window-crash-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  padding: 1.5rem;
+}
+.window-crash-msg {
+  font-weight: 600;
+  color: var(--error);
+}
+.window-crash-detail {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-family: monospace;
+  max-width: 34ch;
+  word-break: break-word;
+}
+
 /* --- PP3: port-preview window --------------------------------------------- */
 
 .preview-window {
@@ -1151,8 +1174,22 @@ body {
 .machine-menu-item.is-selected {
   border-color: var(--accent, #2f81f7);
 }
+.machine-menu-name-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
 .machine-menu-name {
   font-weight: 600;
+}
+.machine-menu-error-reason {
+  font-size: 0.75rem;
+  color: var(--error);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
 }
 .machine-menu-sep {
   height: 1px;

@@ -121,7 +121,14 @@ function MachinePill() {
               }}
             >
               <span className={`badge badge-${m.state}`}>{m.state}</span>
-              <span className="machine-menu-name">{m.name}</span>
+              <span className="machine-menu-name-col">
+                <span className="machine-menu-name">{m.name}</span>
+                {m.state === 'error' && m.last_error && (
+                  <span className="machine-menu-error-reason" title={m.last_error}>
+                    {m.last_error}
+                  </span>
+                )}
+              </span>
             </button>
           ))}
           <div className="machine-menu-sep" />
