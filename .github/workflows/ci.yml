@@ -84,7 +84,7 @@ jobs:
 
       # The node-agent module builds and tests with no Postgres and no KVM: the
       # dev driver is the default, and the firecracker driver is behind a build
-      # tag (exercised only by the gated KVM job below).
+      # tag (exercised only by the self-hosted KVM job below).
       - name: go vet
         run: go vet ./...
 
@@ -124,13 +124,11 @@ jobs:
 
   # Firecracker integration tests run the real jailed VMM and need KVM, so they
   # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
-  # The job is gated on the repo/org variable HAS_KVM_RUNNER so CI stays green
-  # until that runner exists; flip the variable to 'true' once it is online
-  # (Task 2.8 acceptance). The runner must have firecracker+jailer installed and
-  # the pinned kernel/rootfs exported via the PROTEOS_TEST_* env below.
+  # The runner must have firecracker+jailer installed and the pinned kernel/rootfs
+  # exported via the PROTEOS_TEST_* env below. If no matching runner is registered,
+  # the job queues until one becomes available.
   firecracker:
     name: firecracker driver (KVM)
-    if: vars.HAS_KVM_RUNNER == 'true'
     runs-on: [self-hosted, linux, kvm]
     defaults:
       run:
@@ -172,6 +170,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: npm audit
+        run: npm audit --audit-level=high
+
       - name: Lint (ESLint)
         run: npm run lint
 
@@ -194,11 +195,79 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
+  # govulncheck scans all Go workspace modules for known CVEs. Runs from the
+  # workspace root so the go.work file covers controlplane, nodeagent, and guestagent
+  # in a single pass (cli has no external deps and is a no-op).
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: controlplane/go.mod
+          cache-dependency-path: go.work.sum
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  # CodeQL static analysis for Go (all workspace modules) and TypeScript (web/).
+  # Requires security-events: write to upload SARIF results to the Security tab.
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, typescript]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: controlplane/go.mod
+          cache-dependency-path: go.work.sum
+
+      - name: Set up Node
+        if: matrix.language == 'typescript'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "25"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        if: matrix.language == 'typescript'
+        run: npm ci
+        working-directory: web
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
   # Build + push the two app-stack images to GHCR, but ONLY after the Go and web
   # jobs above pass (`needs`) and ONLY on push events (`if`) — never on PRs, so
   # forks/PRs can't publish. Pushes to main publish `latest`; v* tag pushes
   # publish semver tags. The firecracker job is intentionally NOT a dependency:
-  # it's gated on a self-hosted KVM runner and usually skipped.
+  # it requires a self-hosted KVM runner and may not be available in every environment.
   #
   # Both Dockerfiles take the REPO ROOT as their build context — the control
   # plane links sibling Go-workspace modules, and the web image needs both web/
