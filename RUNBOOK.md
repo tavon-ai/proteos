@@ -290,9 +290,10 @@ Tick each row of the Phase 2 checklist in `plans/proteos-poc-to-prod.md`.
 
 The app stack ships an `openbao` service (file storage, persistent `baodata`
 volume). It is the production secrets backend; the dev `file` backend stays the
-default so a fresh stack serves logins immediately. OpenBao boots **sealed** and
-re-seals on every restart — manual unseal is an accepted Phase 5–11 cost (HA +
-auto-unseal are Phase 12).
+default so a fresh stack serves logins immediately. OpenBao boots sealed and is
+**automatically unsealed** by the `bao-unsealer` sidecar service, which reads the
+key from `./bao-unseal-key` (written by `openbao-init.sh`). No manual unseal step
+is required after the one-time init.
 
 ### D1. One-time init
 
@@ -301,8 +302,8 @@ openbao port):
 
 ```bash
 cd deploy/app-stack
-touch openbao-secret-id                       # the controlplane bind-mounts it
-docker compose up -d openbao                   # bring OpenBao up (it boots sealed)
+touch openbao-secret-id bao-unseal-key        # placeholder files for bind-mounts
+docker compose up -d                           # bring up all services
 export BAO_ADDR=http://127.0.0.1:8200
 ./openbao-init.sh
 ```
@@ -311,8 +312,11 @@ export BAO_ADDR=http://127.0.0.1:8200
 `openbao-init.json`), unseals, logs in, enables KV v2 at `secret/`, a file audit
 device (`/openbao/logs/audit.log` on the `baologs` volume), and AppRole; writes
 policy `cp-base`, the `proteos-user` token role, and the `proteos-cp` AppRole;
-then emits `PROTEOS_OPENBAO_ROLE_ID` into `.env` and the AppRole secret_id into
-`./openbao-secret-id`.
+then emits `PROTEOS_OPENBAO_ROLE_ID` into `.env`, the AppRole secret_id into
+`./openbao-secret-id`, and the **unseal key** into `./bao-unseal-key`.
+
+After the init script writes `bao-unseal-key`, the `bao-unsealer` sidecar picks
+it up within 10 s and all subsequent restarts are unsealed automatically.
 
 The `cp-base` policy it writes grants the machine paths **under a namespace
 prefix** — by default `proteos`, so the granted paths are
@@ -323,8 +327,9 @@ plane, e.g. `PROTEOS_OPENBAO_PREFIX=acme ./openbao-init.sh`. Set it to the empty
 string (`PROTEOS_OPENBAO_PREFIX=`) on both sides to disable namespacing and use
 un-prefixed `secret/data/machines/*` paths.
 
-> **Keep `openbao-init.json` and `openbao-secret-id` safe and uncommitted** (both
-> are gitignored). `openbao-init.json` holds the unseal key + root token.
+> **Keep `openbao-init.json`, `openbao-secret-id`, and `bao-unseal-key` safe and
+> uncommitted** (all three are gitignored). `openbao-init.json` holds the unseal
+> key + root token; `bao-unseal-key` holds the key the sidecar uses at runtime.
 
 ### D2. Switch the control plane to OpenBao
 
@@ -370,15 +375,28 @@ docker compose exec controlplane \
   /usr/local/bin/controlplane -migrate-secrets /var/lib/proteos/secrets.json
 ```
 
-### D4. After a restart — unseal
+### D4. After a restart — auto-unsealed
 
-`docker compose restart openbao` (or a host reboot) leaves OpenBao sealed; the
-control plane's secret reads fail until you unseal:
+`docker compose restart openbao` (or a host reboot) leaves OpenBao sealed, but
+the `bao-unsealer` sidecar detects this within 10 s and unseals it automatically.
+No operator action is required.
+
+To confirm the sidecar is working:
+
+```bash
+docker compose logs bao-unsealer   # look for "unsealed successfully"
+docker compose exec openbao bao status   # Sealed: false
+```
+
+If the sidecar is missing its key file (e.g. after restoring from backup without
+restoring `bao-unseal-key`), unseal manually once and re-run `openbao-init.sh`
+to repopulate the file:
 
 ```bash
 cd deploy/app-stack
 BAO_ADDR=http://127.0.0.1:8200 \
   bao operator unseal "$(jq -r '.unseal_keys_b64[0]' openbao-init.json)"
+# then re-run ./openbao-init.sh to refresh bao-unseal-key
 ```
 
 ### D5. Verify + backup
