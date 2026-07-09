@@ -195,26 +195,35 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
-  # govulncheck scans all Go workspace modules for known CVEs. Runs from the
-  # workspace root so the go.work file covers controlplane, nodeagent, and guestagent
-  # in a single pass (cli has no external deps and is a no-op).
+  # govulncheck scans the Go modules for known CVEs. govulncheck is module-scoped
+  # (it needs a go.mod in the working directory — the workspace root has only a
+  # go.work, hence the per-module matrix). cli and nodeagent have no external deps,
+  # so their scans are effectively no-ops but keep coverage honest as deps are added.
   govulncheck:
-    name: govulncheck
+    name: govulncheck (${{ matrix.module }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [controlplane, guestagent, nodeagent, cli]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: controlplane/go.mod
+          go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: go.work.sum
 
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
       - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+        run: govulncheck ./...
 
   # CodeQL static analysis for Go (all workspace modules) and TypeScript (web/).
   # Requires security-events: write to upload SARIF results to the Security tab.
