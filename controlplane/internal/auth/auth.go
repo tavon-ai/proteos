@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
 	"github.com/tavon-ai/proteos/controlplane/internal/session"
@@ -43,11 +44,12 @@ type Handler struct {
 	sessions *session.Manager
 	store    *store.Queries
 	secrets  secrets.Store
+	audit    *audit.Recorder
 }
 
-// NewHandler wires the auth handler dependencies.
-func NewHandler(cfg Config, gh *github.Client, sessions *session.Manager, q *store.Queries, sec secrets.Store) *Handler {
-	return &Handler{cfg: cfg, gh: gh, sessions: sessions, store: q, secrets: sec}
+// NewHandler wires the auth handler dependencies. aud may be nil (audit disabled).
+func NewHandler(cfg Config, gh *github.Client, sessions *session.Manager, q *store.Queries, sec secrets.Store, aud *audit.Recorder) *Handler {
+	return &Handler{cfg: cfg, gh: gh, sessions: sessions, store: q, secrets: sec, audit: aud}
 }
 
 func (h *Handler) callbackURL() string {
@@ -190,6 +192,14 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		h.redirectError(w, r, "internal")
 		return
 	}
+	uid := uuidString(user.ID)
+	h.audit.Record(r.Context(), audit.Entry{
+		UserID:   uid,
+		Actor:    audit.UserActor(uid),
+		Action:   audit.ActionAuthLogin,
+		Target:   uid,
+		Metadata: map[string]any{"github_login": ghUser.Login},
+	})
 	http.SetCookie(w, h.sessionCookie(token))
 	http.Redirect(w, r, "/", http.StatusFound)
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
 	"github.com/tavon-ai/proteos/controlplane/internal/injector"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	cpmetrics "github.com/tavon-ai/proteos/controlplane/internal/metrics"
 	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
 	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 	"github.com/tavon-ai/proteos/controlplane/internal/providers"
@@ -41,6 +42,7 @@ func main() {
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})))
+	cpmetrics.Register()
 
 	if *migrateSecretsFlag != "" {
 		if err := migrateSecrets(*migrateSecretsFlag); err != nil {
@@ -69,6 +71,66 @@ func logLevel() slog.Level {
 		return slog.LevelError
 	default:
 		return slog.LevelInfo
+	}
+}
+
+// trackMachineStateMetric seeds the MachinesByState gauge from the DB, then
+// subscribes to the broker to keep it current as machines transition states.
+func trackMachineStateMetric(ctx context.Context, b *machine.Broker, q *store.Queries) {
+	// Seed: count all machines by state at startup so the gauge is accurate
+	// before any broker events arrive.
+	allStates := []string{
+		string(machine.StateRequested),
+		string(machine.StateProvisioning),
+		string(machine.StateRunning),
+		string(machine.StateStarting),
+		string(machine.StateStopping),
+		string(machine.StateHibernating),
+		string(machine.StateStopped),
+		string(machine.StateError),
+	}
+	if machines, err := q.ListMachinesInStates(ctx, allStates); err == nil {
+		counts := make(map[string]float64)
+		for _, m := range machines {
+			counts[m.State]++
+		}
+		for st, n := range counts {
+			cpmetrics.MachinesByState.WithLabelValues(st).Set(n)
+		}
+	}
+
+	// Track subsequent state changes via the broker.
+	ch, cancel := b.Subscribe()
+	defer cancel()
+	states := make(map[string]string) // machineID → current state
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case u, ok := <-ch:
+			if !ok || u.Shutdown {
+				return
+			}
+			id := u.Machine.ID.String()
+			if u.Deleted {
+				if old, exists := states[id]; exists {
+					cpmetrics.MachinesByState.WithLabelValues(old).Dec()
+					delete(states, id)
+				}
+				continue
+			}
+			newState := u.Machine.State
+			if old, exists := states[id]; exists {
+				if old != newState {
+					cpmetrics.MachinesByState.WithLabelValues(old).Dec()
+					cpmetrics.MachinesByState.WithLabelValues(newState).Inc()
+					states[id] = newState
+				}
+			} else {
+				cpmetrics.MachinesByState.WithLabelValues(newState).Inc()
+				states[id] = newState
+			}
+		}
 	}
 }
 
@@ -178,6 +240,7 @@ func run(migrate, migrateOnly bool) error {
 		return err
 	}
 	broker := machine.NewBroker()
+	go trackMachineStateMetric(ctx, broker, q)
 
 	// AT2: the in-process fan-out for headless agent-task event streams. The
 	// guest control channel publishes normalized agent.event frames here; the task
@@ -300,7 +363,7 @@ func run(migrate, migrateOnly bool) error {
 			CookieSecure:        cfg.CookieSecure,
 			SessionTTL:          cfg.SessionTTL,
 			AllowedGitHubLogins: cfg.AllowedGitHubLogins,
-		}, ghClient, sessions, q, sec)
+		}, ghClient, sessions, q, sec, auditRec)
 
 		// Phase 7: per-user token lifecycle + the persistent guest control channel
 		// manager. The manager watches machine state (via the broker) and keeps one

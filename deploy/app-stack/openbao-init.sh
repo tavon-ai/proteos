@@ -12,14 +12,16 @@
 #   3. enable KV v2 at secret/, a file audit device, and AppRole auth
 #   4. write policy cp-base, the proteos-user token role, and the proteos-cp
 #      AppRole role
-#   5. emit role_id into .env (PROTEOS_OPENBAO_ROLE_ID) and a fresh secret_id
-#      into ./openbao-secret-id (mounted into the control plane)
+#   5. emit role_id into .env (PROTEOS_OPENBAO_ROLE_ID), a fresh secret_id into
+#      ./openbao-secret-id (mounted into the control plane), and the unseal key
+#      into ./bao-unseal-key (read by the bao-unsealer sidecar)
 #
 # After it runs: set PROTEOS_SECRETS_BACKEND=openbao in .env and restart the
 # control plane (`docker compose up -d controlplane`).
 #
-# NOTE: openbao boots SEALED and seals again on every restart. After a restart,
-# re-run just the unseal:  bao operator unseal "$(jq -r .unseal_key openbao-init.json)"
+# Auto-unseal: the bao-unsealer sidecar service reads ./bao-unseal-key and
+# unseals openbao automatically on every restart — no manual `bao operator
+# unseal` step required after this script has run once.
 set -euo pipefail
 
 : "${BAO_ADDR:=http://127.0.0.1:8200}"
@@ -27,6 +29,7 @@ export BAO_ADDR
 HERE="$(cd "$(dirname "$0")" && pwd)"
 INIT_JSON="$HERE/openbao-init.json"
 SECRET_ID_FILE="$HERE/openbao-secret-id"
+UNSEAL_KEY_FILE="$HERE/bao-unseal-key"
 ENV_FILE="$HERE/.env"
 MOUNT="${PROTEOS_OPENBAO_MOUNT:-secret}"
 # Path namespace inside the mount. MUST match the control plane's
@@ -57,6 +60,11 @@ fi
 
 UNSEAL_KEY="$(jq -r '.unseal_keys_b64[0]' "$INIT_JSON")"
 ROOT_TOKEN="$(jq -r '.root_token' "$INIT_JSON")"
+
+# Write the unseal key for the bao-unsealer sidecar (auto-unseal on restart).
+umask 077
+printf '%s' "$UNSEAL_KEY" > "$UNSEAL_KEY_FILE"
+echo "==> Wrote unseal key to $UNSEAL_KEY_FILE (read by bao-unsealer sidecar)"
 
 # 2. Unseal (no-op if already unsealed) + login.
 if [ "$(bao status -format=json 2>/dev/null | jq -r .sealed)" = "true" ]; then
@@ -155,6 +163,7 @@ Next:
   2. Restart the control plane:  docker compose up -d controlplane
   3. (Migrating an existing dev FileStore? See RUNBOOK Part D — controlplane -migrate-secrets)
 
-After ANY openbao restart it boots sealed; unseal with:
-  BAO_ADDR=$BAO_ADDR bao operator unseal "\$(jq -r '.unseal_keys_b64[0]' $INIT_JSON)"
+Auto-unseal is active: the bao-unsealer sidecar reads $UNSEAL_KEY_FILE and
+unseals openbao automatically on every restart.  No manual unseal step needed.
+  Monitor:  docker compose logs -f bao-unsealer
 DONE

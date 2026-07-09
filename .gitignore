@@ -16,9 +16,11 @@ controlplane/.data/
 controlplane/controlplane
 
 # OpenBao operator secrets (Phase 5) — never commit. openbao-init.sh writes
-# the AppRole secret_id here and the unseal/root material to openbao-init.json.
+# the AppRole secret_id here, the unseal key to bao-unseal-key, and the
+# unseal/root material to openbao-init.json.
 deploy/app-stack/openbao-secret-id
 deploy/app-stack/openbao-init.json
+deploy/app-stack/bao-unseal-key
 
 # Operator-local Ansible inventory (copy from inventory.example.ini); holds
 # real host IPs/users and must never be committed.

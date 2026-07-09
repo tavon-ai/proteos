@@ -86,7 +86,7 @@ func newHarness(t *testing.T, gh *fakeGitHub, allowlist []string) *harness {
 		CookieSecure:        false, // httptest is plain HTTP; Secure cookies wouldn't round-trip
 		SessionTTL:          30 * 24 * time.Hour,
 		AllowedGitHubLogins: allowlist,
-	}, ghClient, sessions, q, sec)
+	}, ghClient, sessions, q, sec, nil)
 
 	// /api/me reports the user's machine; wire a real (DB-backed) machine
 	// service. No machine is ever created in these auth tests, so the node

@@ -82,6 +82,13 @@ func (m *Manager) getOrCreate(name string, cfg Config) (*Session, error) {
 	return s, nil
 }
 
+// ActiveCount returns the number of live sessions currently tracked.
+func (m *Manager) ActiveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sessions)
+}
+
 // Shutdown kills every live session. Used on agent shutdown and in tests.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()

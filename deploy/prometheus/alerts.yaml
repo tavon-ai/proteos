@@ -1,0 +1,140 @@
+groups:
+  - name: proteos.nodeagent
+    interval: 30s
+    rules:
+      # Fire when the node-agent process is unreachable by Prometheus.
+      - alert: NodeAgentDown
+        expr: up{job="proteos-nodeagent"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node-agent is down"
+          description: "Prometheus cannot scrape the node-agent at {{ $labels.instance }}. VM boot and stop operations are unavailable."
+
+      # Fire when VM boots are failing at a high rate.
+      - alert: VMBootFailureRateHigh
+        expr: |
+          rate(proteos_nodeagent_vm_operations_total{op=~"cold_boot|resume",result="error"}[10m])
+          / on(instance)
+          (rate(proteos_nodeagent_vm_operations_total{op=~"cold_boot|resume"}[10m]) + 1e-9)
+          > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High VM boot failure rate on {{ $labels.instance }}"
+          description: "More than 20% of VM boots are failing over the last 10 minutes (current: {{ $value | humanizePercentage }})."
+
+      # Fire when hibernate snapshots are failing (falling back to cold poweroff).
+      - alert: VMHibernateSnapshotFailures
+        expr: rate(proteos_nodeagent_vm_operations_total{op="hibernate",result="snapshot_failed"}[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hibernate snapshot failures on {{ $labels.instance }}"
+          description: "VMs are failing to snapshot during hibernate and falling back to cold poweroff. User state may be lost."
+
+      # Fire when VM boots are taking unusually long.
+      - alert: VMColdBootSlow
+        expr: histogram_quantile(0.95, rate(proteos_nodeagent_vm_operation_duration_seconds_bucket{op="cold_boot"}[10m])) > 120
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow VM cold boots on {{ $labels.instance }}"
+          description: "p95 cold boot time is {{ $value | humanizeDuration }}, above the 120s threshold."
+
+      # Fire when resume is taking unusually long (large snapshots or slow storage).
+      - alert: VMResumeSlow
+        expr: histogram_quantile(0.95, rate(proteos_nodeagent_vm_operation_duration_seconds_bucket{op="resume"}[10m])) > 60
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow VM resumes on {{ $labels.instance }}"
+          description: "p95 resume time is {{ $value | humanizeDuration }}, above the 60s threshold."
+
+      # Fire when many VMs are in the error state.
+      - alert: VMsInErrorState
+        expr: proteos_nodeagent_vms_by_state{state="error"} > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Multiple VMs in error state on {{ $labels.instance }}"
+          description: "{{ $value }} VMs are in the error state. Check Firecracker logs for boot failures."
+
+      # Fire when Firecracker is emitting error-level log lines.
+      - alert: FirecrackerErrors
+        expr: rate(proteos_nodeagent_fc_log_lines_total{level=~"Error|ERROR"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Firecracker error log rate elevated on {{ $labels.instance }}"
+          description: "Firecracker is emitting error log lines at {{ $value | humanize }} lines/s. Investigate VMM stability."
+
+  - name: proteos.controlplane
+    interval: 30s
+    rules:
+      # Fire when the control plane is unreachable.
+      - alert: ControlPlaneDown
+        expr: up{job="proteos-controlplane"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Control plane is down"
+          description: "Prometheus cannot scrape the control plane at {{ $labels.instance }}. All API operations are unavailable."
+
+      # Fire when the HTTP error rate is elevated.
+      - alert: ControlPlaneHTTPErrorRateHigh
+        expr: |
+          rate(proteos_controlplane_http_requests_total{code=~"5.."}[5m])
+          / on(instance)
+          (rate(proteos_controlplane_http_requests_total[5m]) + 1e-9)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate on control plane {{ $labels.instance }}"
+          description: "More than 5% of HTTP requests are returning 5xx responses (current: {{ $value | humanizePercentage }})."
+
+      # Fire when API latency is high.
+      - alert: ControlPlaneAPILatencyHigh
+        expr: histogram_quantile(0.99, rate(proteos_controlplane_http_request_duration_seconds_bucket[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency on control plane {{ $labels.instance }}"
+          description: "p99 HTTP request latency is {{ $value | humanizeDuration }}, above the 5s threshold."
+
+      # Fire when many machines are stuck in a transitional state.
+      - alert: MachinesStuckInTransition
+        expr: |
+          (
+            proteos_controlplane_machines_by_state{state="provisioning"}
+            + proteos_controlplane_machines_by_state{state="starting"}
+            + proteos_controlplane_machines_by_state{state="stopping"}
+            + proteos_controlplane_machines_by_state{state="hibernating"}
+          ) > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many machines stuck in transitional states"
+          description: "{{ $value }} machines have been in transitional states for over 15 minutes. The node-agent or control plane poller may be unhealthy."
+
+      # Fire when many machines are in error state.
+      - alert: MachinesInErrorState
+        expr: proteos_controlplane_machines_by_state{state="error"} > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Multiple machines in error state"
+          description: "{{ $value }} machines are in the error state. Users may be unable to start or access their machines."

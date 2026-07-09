@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 )
 
 // meResponse is the shape returned by GET /api/me. machines is all of the user's
@@ -17,6 +19,30 @@ type meUser struct {
 	Login     string `json:"login"`
 	Email     string `json:"email"`
 	AvatarURL string `json:"avatar_url"`
+}
+
+// handleLogout delegates to the Auth handler and appends an audit event on
+// success. It wraps s.Auth.Logout so the httpapi layer can reach userFromContext
+// (the context key is private to this package).
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	s.Auth.Logout(w, r)
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		return
+	}
+	uid := uuidString(user.ID)
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID: uid,
+		Actor:  audit.UserActor(uid),
+		Action: audit.ActionAuthLogout,
+		Target: uid,
+	})
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID: uid,
+		Actor:  audit.UserActor(uid),
+		Action: audit.ActionSessionRevoke,
+		Target: uid,
+	})
 }
 
 // handleMe returns the authenticated user and their machine summary (or null).

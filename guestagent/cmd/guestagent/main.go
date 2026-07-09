@@ -22,6 +22,7 @@ import (
 	"github.com/tavon-ai/proteos/guestagent/internal/ctlchan"
 	"github.com/tavon-ai/proteos/guestagent/internal/listen"
 	"github.com/tavon-ai/proteos/guestagent/internal/localsock"
+	gaMetrics "github.com/tavon-ai/proteos/guestagent/internal/metrics"
 	"github.com/tavon-ai/proteos/guestagent/internal/persist"
 	"github.com/tavon-ai/proteos/guestagent/internal/previewfwd"
 	"github.com/tavon-ai/proteos/guestagent/internal/runas"
@@ -46,6 +47,7 @@ func main() {
 	}
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	gaMetrics.Register()
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -108,6 +110,28 @@ func run() error {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
+	// Track PTY session counts for Prometheus. Samples every 15s; the gauge
+	// reflects the manager's live session map at each tick.
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		var prev int
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				cur := mgr.ActiveCount()
+				delta := cur - prev
+				if delta > 0 {
+					gaMetrics.PTYSessionsTotal.Add(float64(delta))
+				}
+				gaMetrics.PTYSessionsActive.Set(float64(cur))
+				prev = cur
+			}
+		}
+	}()
 	defer stop()
 
 	// Phase 7: the control channel (CP-dialed GET /control) and the local

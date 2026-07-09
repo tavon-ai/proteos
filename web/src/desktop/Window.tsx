@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react';
+import { Component, memo, type ErrorInfo, type ReactNode } from 'react';
 import { Rnd } from 'react-rnd';
 import { useWindowManager } from './windowManagerContext';
 import type { WindowState } from './windowState';
@@ -109,3 +109,42 @@ function WindowImpl({ win, children, viewport, hidden }: WindowProps) {
 }
 
 export const Window = memo(WindowImpl);
+
+// WindowErrorBoundary catches render errors inside a window's content so one
+// crashed window doesn't white-screen the whole desktop.
+interface ErrorBoundaryProps {
+  onClose: () => void;
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  error: Error | null;
+}
+
+export class WindowErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[window crash]', error.message, info.componentStack);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (error) {
+      return (
+        <div className="window-crash-body">
+          <p className="window-crash-msg">This window crashed.</p>
+          <p className="window-crash-detail">{error.message}</p>
+          <button className="btn" onClick={this.props.onClose}>
+            Close window
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
