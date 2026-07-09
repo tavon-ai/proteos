@@ -125,10 +125,16 @@ jobs:
   # Firecracker integration tests run the real jailed VMM and need KVM, so they
   # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
   # The runner must have firecracker+jailer installed and the pinned kernel/rootfs
-  # exported via the PROTEOS_TEST_* env below. If no matching runner is registered,
-  # the job queues until one becomes available.
+  # exported via the PROTEOS_TEST_* env below.
+  #
+  # Gated on the HAS_KVM_RUNNER repository variable: with no matching runner
+  # registered the job would otherwise queue for 24h and fail on every push/PR.
+  # Self-hosted runners on a public repo are also a security risk (fork PRs can
+  # run arbitrary code on them) — before flipping the variable to "true",
+  # restrict the runner to a runner group that requires workflow approval.
   firecracker:
     name: firecracker driver (KVM)
+    if: vars.HAS_KVM_RUNNER == 'true'
     runs-on: [self-hosted, linux, kvm]
     defaults:
       run:
