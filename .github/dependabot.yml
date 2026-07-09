@@ -58,6 +58,12 @@ updates:
         dependency-type: development
       web-prod:
         dependency-type: production
+    ignore:
+      # TypeScript majors are held back until typescript-eslint's peer range
+      # supports them (TS 7 is outside `<6.1.0` as of 2026-07); upgrade
+      # deliberately in a dedicated PR, not via the weekly group.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used in our workflows.
   - package-ecosystem: github-actions
