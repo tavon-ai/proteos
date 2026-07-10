@@ -81,8 +81,9 @@ open http://localhost:5173
 Run `task --list` for every target (build, test, vet, fmt).
 
 See **[docs/architecture.md](docs/architecture.md)** for how the pieces fit
-together, **DEPLOYMENT.md** for the production (Proxmox / app-stack) deployment,
-and **RUNBOOK.md** for operations.
+together, **[DEPLOYMENT.md](DEPLOYMENT.md)** for the production (Proxmox /
+app-stack) deployment, and **[RUNBOOK.md](RUNBOOK.md)** for operations. See
+**[INCIDENT_RUNBOOK.md](INCIDENT_RUNBOOK.md)** for incident response.
 
 ## ⌨️ Command-line interface
 
