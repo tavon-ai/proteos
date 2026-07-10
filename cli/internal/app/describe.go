@@ -169,6 +169,13 @@ func commandRegistry() []group {
 			{name: "push", run: gitPush},
 			{name: "pr", run: gitPR},
 		}},
+		{name: "pr", usage: prGroupUsage, leaves: []leaf{
+			{name: "view", run: prView},
+			{name: "files", run: prFiles},
+			{name: "checks", run: prChecks},
+			{name: "merge", run: prMerge},
+			{name: "comment", run: prComment},
+		}},
 		{name: "task", aliases: []string{"tasks"}, usage: taskGroupUsage, leaves: []leaf{
 			{name: "run", run: taskRun},
 			{name: "ls", aliases: []string{"list"}, run: taskList},

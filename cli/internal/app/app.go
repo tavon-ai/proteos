@@ -50,6 +50,8 @@ func Run(env Env, args []string) int {
 		return runProjects(env, rest)
 	case "git":
 		return runGit(env, rest)
+	case "pr":
+		return runPR(env, rest)
 	case "task", "tasks":
 		return runTask(env, rest)
 	case "version", "--version", "-v":
@@ -93,6 +95,11 @@ Commands:
   git commit -m <msg>  Commit a project's changes
   git push             Push a project's branch to origin
   git pr               Open a pull request for a project
+  pr view <r> <n>      Show a pull request's summary
+  pr files <r> <n>     List a pull request's changed files
+  pr checks <r> <n>    Show a pull request's check-run summary
+  pr merge <r> <n>     Merge a pull request
+  pr comment <r> <n>   Post a comment on a pull request
   task run             Dispatch a headless agent task
   task ls              List a machine's tasks
   task get <tid>       Show one task
