@@ -19,8 +19,8 @@ ProteOS is a Go workspace (`go.work`) plus a React SPA:
 | **CLI**          | `cli/`          | `proteos` — drives the platform from the terminal/CI        |
 | **web**          | `web/`          | React (Vite) single-page desktop                            |
 
-Deployment and operations live in `deploy/`, `DEPLOYMENT.md`, and `RUNBOOK.md`.
-Design history is in `plans/`.
+Deployment and operations live in `deploy/`, `DEPLOYMENT.md`, `RUNBOOK.md`, and
+`INCIDENT_RUNBOOK.md`. Design history is in `plans/`.
 
 ## Prerequisites
 
@@ -85,8 +85,8 @@ Notes:
 - **Branch** off `main` and open a PR against `main`.
 - Keep PRs focused; one logical change per PR is easier to review.
 - Write a clear description: what changed, why, and how you tested it.
-- Update docs (`README.md`, `DEPLOYMENT.md`, `RUNBOOK.md`, `docs/`) when behavior
-  or operations change.
+- Update docs (`README.md`, `DEPLOYMENT.md`, `RUNBOOK.md`, `INCIDENT_RUNBOOK.md`,
+  `docs/`) when behavior or operations change.
 - Add or update tests for new behavior.
 - Make sure `task ci` is green and the working tree is formatter-clean.
 
