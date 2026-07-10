@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
