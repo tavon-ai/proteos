@@ -18,9 +18,7 @@ func runTemplates(env Env, args []string) int {
 	case "ls", "list":
 		return templatesList(env, rest)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown templates subcommand %q\n\n", sub)
-		templatesGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "templates subcommand", sub, templatesGroupUsage)
 	}
 }
 
@@ -42,11 +40,12 @@ Reads accept --json. Run 'proteos templates <command> -h' for flags.
 func templatesList(env Env, args []string) int {
 	fs := cmdFlags(env, "templates ls", cmdHelp{
 		summary:  "List the machine templates you can create.",
-		usage:    "proteos templates ls [--json]",
+		usage:    "proteos templates ls [--json] [--limit N] [--offset N]",
 		examples: []string{"proteos templates ls", "proteos templates ls --json"},
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
+	limit, offset := paginationFlags(fs)
 	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
@@ -58,21 +57,23 @@ func templatesList(env Env, args []string) int {
 	if err != nil {
 		return fail(env, err)
 	}
+	p := paginate(ts, *offset, *limit)
 	if *asJSON {
-		if err := printJSON(env.Stdout, ts); err != nil {
+		if err := printPageJSON(env.Stdout, p); err != nil {
 			return fail(env, err)
 		}
 		return client.ExitOK
 	}
-	if len(ts) == 0 {
+	if len(p.Items) == 0 {
 		fmt.Fprintln(env.Stdout, "No templates (single-image deployment).")
 		return client.ExitOK
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tLABEL\tDESCRIPTION")
-	for _, t := range ts {
+	for _, t := range p.Items {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", t.ID, t.Label, t.Description)
 	}
 	tw.Flush()
+	printPageFooter(env.Stdout, p, "templates")
 	return client.ExitOK
 }

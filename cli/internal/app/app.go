@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/tavon-ai/proteos/cli/internal/client"
 	"github.com/tavon-ai/proteos/cli/internal/config"
@@ -18,11 +19,20 @@ import (
 // Env carries the process I/O and build metadata into the command tree, so tests
 // can capture output and drive commands without touching os.Stdout/Args.
 type Env struct {
+	Stdin   io.Reader // defaults to nothing read; main wires this to os.Stdin
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Version string // semantic version, e.g. "v1.2.3" or "dev"
 	Commit  string // git short sha the binary was built from
 	Date    string // build timestamp (RFC 3339, UTC)
+
+	// JSON is true when --json appeared anywhere in the invocation. It is
+	// detected once in Run (before any per-command flag parsing) so every error
+	// path — including ones before a command's own --json flag is parsed, like a
+	// missing endpoint/token — can emit the machine-readable envelope instead of
+	// prose. Commands that also use --json for success output read their own
+	// parsed flag; this field only governs error formatting.
+	JSON bool
 
 	// describe, when non-nil, puts the command tree in introspection mode: each
 	// leaf registers its flags as usual but parse() captures them and returns
@@ -32,6 +42,7 @@ type Env struct {
 
 // Run dispatches args (os.Args[1:]) and returns the process exit code.
 func Run(env Env, args []string) int {
+	env.JSON = hasJSONFlag(args)
 	if len(args) == 0 {
 		usage(env.Stderr)
 		return client.ExitUsage
@@ -54,6 +65,10 @@ func Run(env Env, args []string) int {
 		return runPR(env, rest)
 	case "task", "tasks":
 		return runTask(env, rest)
+	case "providers", "provider":
+		return runProviders(env, rest)
+	case "secrets", "secret":
+		return runSecrets(env, rest)
 	case "version", "--version", "-v":
 		printVersion(env)
 		return client.ExitOK
@@ -63,10 +78,51 @@ func Run(env Env, args []string) int {
 	case "help-json", "--help-json":
 		return emitHelpJSON(env)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown command %q\n\n", cmd)
-		usage(env.Stderr)
+		return unknownSubcommand(env, "command", cmd, usage)
+	}
+}
+
+// hasJSONFlag reports whether args carries a --json/-json flag anywhere before
+// the "--" end-of-flags terminator (matching Go's flag package, which stops
+// recognizing flags there too). It recognizes the bare, "=true", and "=1"
+// forms; "=false"/"=0" opt back out. This is a lightweight heuristic, not a
+// full flag parse: it can't know which preceding flag (if any) a leaf's own
+// FlagSet would consume "--json" as the *value* of, so a command whose flags
+// take a following argument (e.g. --url --json) can still be misdetected —
+// an accepted tradeoff for not needing every leaf's flag shape up front.
+func hasJSONFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || name != "json" {
+			continue
+		}
+		if !hasVal {
+			return true
+		}
+		switch val {
+		case "false", "0":
+			return false
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// unknownSubcommand reports an unrecognized command/subcommand: JSON envelope
+// under --json, else the prose message followed by the group's usage text.
+func unknownSubcommand(env Env, kind, name string, usage func(io.Writer)) int {
+	if env.JSON {
+		code := "unknown_" + strings.ReplaceAll(kind, " ", "_")
+		writeErrorMsg(env, code, fmt.Sprintf("unknown %s %q", kind, name))
 		return client.ExitUsage
 	}
+	fmt.Fprintf(env.Stderr, "proteos: unknown %s %q\n\n", kind, name)
+	usage(env.Stderr)
+	return client.ExitUsage
 }
 
 func usage(w io.Writer) {
@@ -106,6 +162,10 @@ Commands:
   task watch <tid>     Stream a task's live events
   task cancel <tid>    Cancel a running task
   task send <tid>      Send a follow-up turn to a task
+  providers ls         List AI providers and whether a key is set for each
+  providers get <key>  Show one provider
+  secrets set <key>    Set (or replace) a provider's API key
+  secrets unset <key>  Remove a provider's stored key
   version              Print the CLI version
 
 Authentication:
@@ -141,25 +201,70 @@ func orUnknown(s string) string {
 func newClient(env Env, flagURL string) (*client.Client, config.Resolved, int, bool) {
 	r, err := config.Resolve(flagURL)
 	if err != nil {
-		fmt.Fprintf(env.Stderr, "proteos: %v\n", err)
+		writeErrorMsg(env, "config_error", err.Error())
 		return nil, r, client.ExitError, false
 	}
 	if r.BaseURL == "" {
-		fmt.Fprintln(env.Stderr, "proteos: no endpoint configured — pass --url, set PROTEOS_URL, or run 'proteos auth login'")
+		writeErrorMsg(env, "no_endpoint", "no endpoint configured — pass --url, set PROTEOS_URL, or run 'proteos auth login'")
 		return nil, r, client.ExitUsage, false
 	}
 	if r.Token == "" {
-		fmt.Fprintln(env.Stderr, "proteos: not authenticated — set PROTEOS_TOKEN or run 'proteos auth login' (mint a token under Settings → CLI tokens)")
+		writeErrorMsg(env, "unauthenticated", "not authenticated — set PROTEOS_TOKEN or run 'proteos auth login' (mint a token under Settings → CLI tokens)")
 		return nil, r, client.ExitAuth, false
 	}
 	return client.New(r.BaseURL, r.Token), r, client.ExitOK, true
 }
 
-// fail prints an error (mapping *APIError to a clean message) and returns the
-// matching exit code.
+// errorEnvelope is the --json error shape written to stderr: a stable,
+// scriptable code plus a human-readable detail. It deliberately mirrors the
+// control-plane's {error,detail} response envelope (see client.APIError) so
+// CLI and API errors look the same to a machine consumer.
+type errorEnvelope struct {
+	Error  string `json:"error"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// fail prints an error (mapping *APIError to a clean message, or the {error,
+// detail} JSON envelope under --json) and returns the matching exit code.
 func fail(env Env, err error) int {
-	fmt.Fprintf(env.Stderr, "proteos: %v\n", err)
+	if env.JSON {
+		writeErrorJSON(env, errorEnvelopeFor(err))
+	} else {
+		fmt.Fprintf(env.Stderr, "proteos: %v\n", err)
+	}
 	return client.ExitCodeFor(err)
+}
+
+// errorEnvelopeFor renders err as an errorEnvelope: an *APIError contributes
+// its server-given code (or "http_<status>" if the server sent none) and
+// detail; anything else becomes a generic "error" code with err's message as
+// the detail.
+func errorEnvelopeFor(err error) errorEnvelope {
+	if ae, ok := errors.AsType[*client.APIError](err); ok {
+		code := ae.Code
+		if code == "" {
+			code = fmt.Sprintf("http_%d", ae.Status)
+		}
+		return errorEnvelope{Error: code, Detail: ae.Detail}
+	}
+	return errorEnvelope{Error: "error", Detail: err.Error()}
+}
+
+// writeErrorMsg emits a code+message pair as the JSON envelope under --json,
+// else "proteos: <message>" prose — the shared tail of every hand-rolled error
+// site that isn't wrapping a client.APIError (fail handles those).
+func writeErrorMsg(env Env, code, message string) {
+	if env.JSON {
+		writeErrorJSON(env, errorEnvelope{Error: code, Detail: message})
+		return
+	}
+	fmt.Fprintf(env.Stderr, "proteos: %s\n", message)
+}
+
+// writeErrorJSON writes e to env.Stderr as JSON. Encoding failures here have no
+// good recovery (we're already on the error path), so they're swallowed.
+func writeErrorJSON(env Env, e errorEnvelope) {
+	_ = printJSON(env.Stderr, e)
 }
 
 // printJSON writes v as indented JSON.

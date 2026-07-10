@@ -184,6 +184,14 @@ func commandRegistry() []group {
 			{name: "cancel", run: taskCancel},
 			{name: "send", aliases: []string{"message"}, run: taskSend},
 		}},
+		{name: "providers", aliases: []string{"provider"}, usage: providersGroupUsage, leaves: []leaf{
+			{name: "ls", aliases: []string{"list"}, run: providersList},
+			{name: "get", aliases: []string{"show"}, run: providersGet},
+		}},
+		{name: "secrets", aliases: []string{"secret"}, usage: secretsGroupUsage, leaves: []leaf{
+			{name: "set", run: secretsSet},
+			{name: "unset", aliases: []string{"delete", "rm"}, run: secretsUnset},
+		}},
 	}
 }
 

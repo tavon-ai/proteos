@@ -1,9 +1,17 @@
 # ProteOS app stack: Postgres + control plane + web (SPA behind nginx).
 # Runs on the app VM; dials the native node-agent on the KVM host over the LAN.
 #
-#   cp .env.example .env && $EDITOR .env
-#   docker compose up -d --build
+#   cp .env.example .env && $EDITOR .env   # set PROTEOS_VERSION (see below)
+#   docker compose up -d
 #   # browse to $PROTEOS_BASE_URL and sign in with GitHub
+#
+# controlplane/web run PRE-BUILT images from GHCR
+# (ghcr.io/tavon-ai/proteos-api, ghcr.io/tavon-ai/proteos-ui), published by
+# .github/workflows/ci.yml on every push to main (tags: `latest` + the commit
+# SHA) and on `v*` tags (semver). Pin PROTEOS_VERSION to a SHA or semver tag —
+# never `latest` — so a deploy is reproducible and rollback is just "set
+# PROTEOS_VERSION back to the last-known-good tag". See DEPLOYMENT.md for the
+# full deploy/rollback procedure.
 #
 # The node-agent is NOT part of this stack — it runs natively on the KVM host
 # (see deploy/node-agent/). Set PROTEOS_NODE_AGENT_URL to that host's address.
@@ -88,9 +96,16 @@ services:
     restart: unless-stopped
 
   controlplane:
-    build:
-      context: ../..
-      dockerfile: deploy/app-stack/controlplane.Dockerfile
+    image: ghcr.io/tavon-ai/proteos-api:${PROTEOS_VERSION:?set to a pinned GHCR tag (e.g. sha-abc1234 or 1.2.3), never latest — see DEPLOYMENT.md}
+    # Steady state stays at 1: the poller, SSE/task-event broker, gateway WS
+    # registry, and per-process rate limiter all hold in-memory state that
+    # isn't shared across instances, so an always-on 2nd replica would
+    # duplicate secret-injection pushes and could silently drop live SSE/WS
+    # updates for clients pinned to the other instance. To deploy without a
+    # hard restart, temporarily scale to 2 for the image swap only, then back
+    # to 1 — see "Rolling deploy" in DEPLOYMENT.md.
+    deploy:
+      replicas: 1
     depends_on:
       postgres:
         condition: service_healthy
@@ -212,9 +227,13 @@ services:
     restart: unless-stopped
 
   web:
-    build:
-      context: ../..
-      dockerfile: deploy/app-stack/web.Dockerfile
+    image: ghcr.io/tavon-ai/proteos-ui:${PROTEOS_VERSION:?set to a pinned GHCR tag (e.g. sha-abc1234 or 1.2.3), never latest — see DEPLOYMENT.md}
+    # Single replica: it publishes a fixed host port (WEB_PORT), so a 2nd
+    # replica can't bind alongside it without a load balancer in front. It's
+    # a thin, stateless nginx (static SPA + reverse proxy) — recreating it is
+    # a sub-second blip, and long-lived terminal/editor WebSockets reconnect
+    # on their own (RUNBOOK Part E5), so this is not the "hard restart" this
+    # ticket is about; see DEPLOYMENT.md.
     depends_on:
       - controlplane
     ports:

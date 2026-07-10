@@ -28,9 +28,7 @@ func runGit(env Env, args []string) int {
 	case "pr":
 		return gitPR(env, rest)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown git subcommand %q\n\n", sub)
-		gitGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "git subcommand", sub, gitGroupUsage)
 	}
 }
 
