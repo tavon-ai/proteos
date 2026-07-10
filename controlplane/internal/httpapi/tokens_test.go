@@ -26,7 +26,7 @@ func setupTokens(t *testing.T) (url, cookie string) {
 	ctx := context.Background()
 	pool, q := testutil.Postgres(t)
 
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://127.0.0.1:9090"})
+	_, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://127.0.0.1:9090"})
 	if err != nil {
 		t.Fatalf("host: %v", err)
 	}
@@ -45,7 +45,7 @@ func setupTokens(t *testing.T) (url, cookie string) {
 		PATs:     token.NewManager(q),
 		Queries:  q,
 		Audit:    audit.NewRecorder(q),
-		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{}),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

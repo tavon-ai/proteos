@@ -21,16 +21,19 @@ func newFirecrackerDriver(cfg *config.Config, store *state.Store) (driver.Driver
 		return nil, fmt.Errorf("parsing PROTEOS_AGENT_ADDR %q: %w", cfg.Addr, err)
 	}
 	return firecracker.New(firecracker.Config{
-		FirecrackerBin: cfg.FirecrackerBin,
-		JailerBin:      cfg.JailerBin,
-		ChrootBaseDir:  cfg.ChrootBaseDir,
-		ImagesDir:      cfg.ImagesDir,
-		JailUIDStart:   cfg.JailUIDStart,
-		JailUIDCount:   cfg.JailUIDCount,
-		GuestVsockPort: cfg.GuestVsockPort,
-		VolumesDir:     cfg.VolumesDir,
-		CryptsetupBin:  cfg.CryptsetupBin,
-		AgentPort:      agentPort,
-		MgmtIfaces:     cfg.MgmtIfaces,
+		FirecrackerBin:  cfg.FirecrackerBin,
+		JailerBin:       cfg.JailerBin,
+		ChrootBaseDir:   cfg.ChrootBaseDir,
+		ImagesDir:       cfg.ImagesDir,
+		JailUIDStart:    cfg.JailUIDStart,
+		JailUIDCount:    cfg.JailUIDCount,
+		GuestVsockPort:  cfg.GuestVsockPort,
+		VolumesDir:      cfg.VolumesDir,
+		CryptsetupBin:   cfg.CryptsetupBin,
+		AgentPort:       agentPort,
+		MgmtIfaces:      cfg.MgmtIfaces,
+		CapacityVcpus:   cfg.CapacityVcpus,
+		CapacityMemMiB:  cfg.CapacityMemMiB,
+		CapacityDiskMiB: cfg.CapacityDiskMiB,
 	}, store), nil
 }

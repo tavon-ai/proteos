@@ -64,7 +64,7 @@ func setupTasks(t *testing.T, machineState string, withKey bool) wtFixture {
 		Sessions:    sessions,
 		Queries:     q,
 		Audit:       audit.NewRecorder(q),
-		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, host.ID, machine.Spec{}),
+		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
 		Providers:   reg,
 		Secrets:     sec,
 		GitWorktree: ch,

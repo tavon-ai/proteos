@@ -75,8 +75,7 @@ func setupAgent(t *testing.T) agentFixture {
 	sessions.SetRevocationListener(registry)
 	gw := gateway.NewProxy([]string{testWSOrigin}, failDialer{t}, registry)
 
-	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), host.ID,
-		machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
+	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
 	sec := secrets.NewMemStore()
 
 	reg := providers.NewRegistry(q)

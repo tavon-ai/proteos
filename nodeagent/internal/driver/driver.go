@@ -109,6 +109,24 @@ type Driver interface {
 	// startup: live processes are re-adopted; dead ones are marked stopped or
 	// error. Called once before serving.
 	Reattach(ctx context.Context) error
+
+	// Capacity reports the host's total resource shape and how much is
+	// currently allocated to tracked machines (TAV-37: multi-host foundation),
+	// backing GET /v1/capacity.
+	Capacity(ctx context.Context) (Capacity, error)
+}
+
+// Capacity is the driver-level view of a host's total and currently-allocated
+// resource shape (TAV-37: multi-host foundation). Total comes from the
+// driver's configured host limits; Used sums what tracked machines are
+// actually holding (see Driver.Capacity).
+type Capacity struct {
+	TotalVcpus   int
+	TotalMemMiB  int
+	TotalDiskMiB int
+	UsedVcpus    int
+	UsedMemMiB   int
+	UsedDiskMiB  int
 }
 
 // GuestDialer is implemented by drivers that can open a byte stream to a

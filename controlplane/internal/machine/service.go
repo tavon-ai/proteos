@@ -38,7 +38,15 @@ type NodeClient interface {
 	Ensure(ctx context.Context, id string, req agentapi.EnsureRequest) (agentapi.EnsureResponse, error)
 	Stop(ctx context.Context, id, mode string) error
 	Status(ctx context.Context, id string) (agentapi.MachineStatus, error)
+	// List returns every machine the agent currently tracks in one call. The
+	// poller's running sweep uses it instead of one Status call per machine so
+	// the request count against the agent doesn't scale with fleet size.
+	List(ctx context.Context) ([]agentapi.MachineStatus, error)
 	Destroy(ctx context.Context, id string) error
+	// Capacity reports hostID's total/used resource shape (TAV-37: multi-host
+	// foundation), used by the scheduler to place a new machine across active
+	// hosts.
+	Capacity(ctx context.Context, hostID pgtype.UUID) (agentapi.CapacityResponse, error)
 }
 
 // Spec is the resource shape and pinned image refs stamped on new machines.
@@ -78,15 +86,17 @@ type Service struct {
 	nodes   NodeClient
 	broker  *Broker
 	secrets secrets.Store
-	hostID  pgtype.UUID
 	spec    Spec
 }
 
 // NewService wires a lifecycle service. broker may be nil (publishing is then a
 // no-op), which keeps unit tests that don't care about SSE simple. sec holds
-// per-machine volume keys (Phase 4); it must be non-nil.
-func NewService(pool *pgxpool.Pool, nodes NodeClient, broker *Broker, sec secrets.Store, hostID pgtype.UUID, spec Spec) *Service {
-	return &Service{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, secrets: sec, hostID: hostID, spec: spec}
+// per-machine volume keys (Phase 4); it must be non-nil. The host a new machine
+// lands on is no longer fixed at construction (TAV-37: multi-host foundation) —
+// Create picks it per call via chooseHost, from whatever hosts are active in
+// Postgres at that moment.
+func NewService(pool *pgxpool.Pool, nodes NodeClient, broker *Broker, sec secrets.Store, spec Spec) *Service {
+	return &Service{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, secrets: sec, spec: spec}
 }
 
 // Get returns the user's machine, or ErrNoMachine. With multi-machine it returns
@@ -178,6 +188,44 @@ func (s *Service) SnapshotFor(ctx context.Context, machineID pgtype.UUID) (*stor
 	return &snap, nil
 }
 
+// DisksFor batch-loads the persistent disks for a set of machines, keyed by
+// machine id. A machine with no provisioned disk is simply absent from the
+// map. Used to render a machine list/SSE snapshot in one query instead of one
+// DiskFor call per machine.
+func (s *Service) DisksFor(ctx context.Context, machineIDs []pgtype.UUID) (map[pgtype.UUID]store.Disk, error) {
+	if len(machineIDs) == 0 {
+		return nil, nil
+	}
+	disks, err := s.q.ListDisksByMachineIDs(ctx, machineIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[pgtype.UUID]store.Disk, len(disks))
+	for _, d := range disks {
+		out[d.MachineID] = d
+	}
+	return out, nil
+}
+
+// SnapshotsFor batch-loads the current hibernation snapshots for a set of
+// machines, keyed by machine id. A machine that is not hibernated is simply
+// absent from the map. Used to render a machine list/SSE snapshot in one query
+// instead of one SnapshotFor call per machine.
+func (s *Service) SnapshotsFor(ctx context.Context, machineIDs []pgtype.UUID) (map[pgtype.UUID]store.Snapshot, error) {
+	if len(machineIDs) == 0 {
+		return nil, nil
+	}
+	snaps, err := s.q.ListSnapshotsByMachineIDs(ctx, machineIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[pgtype.UUID]store.Snapshot, len(snaps))
+	for _, sn := range snaps {
+		out[sn.MachineID] = sn
+	}
+	return out, nil
+}
+
 // GetByID returns the machine with the given id, or ErrNoMachine. Ownership is
 // the caller's responsibility (the gateway treats a foreign machine as
 // ErrNoMachine to avoid leaking existence).
@@ -217,11 +265,15 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 	if err != nil {
 		return store.Machine{}, err
 	}
+	host, err := s.chooseHost(ctx, res)
+	if err != nil {
+		return store.Machine{}, err
+	}
 	diskMiB := res.DiskMiB
 	specJSON, _ := json.Marshal(map[string]int{"vcpus": res.Vcpus, "mem_mib": res.MemMiB, "disk_mib": diskMiB})
 	m, err := s.q.CreateMachine(ctx, store.CreateMachineParams{
 		UserID:       userID,
-		HostID:       s.hostID,
+		HostID:       host.ID,
 		Name:         name,
 		KernelRef:    kernelRef,
 		RootfsRef:    rootfsRef,

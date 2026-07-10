@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
@@ -122,6 +124,18 @@ func (c *Client) Destroy(ctx context.Context, id string) error {
 // header anyway — it is ignored).
 func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/healthz", nil, nil, http.StatusOK)
+}
+
+// Capacity issues GET /v1/capacity (TAV-37: multi-host foundation), reporting
+// this agent's host total/used resource shape for scheduling. hostID is
+// ignored: a bare Client is already bound to one agent (unlike Registry,
+// which dials whichever host hostID names), so it accepts the parameter only
+// to satisfy machine.NodeClient — single-host callers (and tests) use this
+// concrete type to implement the interface directly.
+func (c *Client) Capacity(ctx context.Context, hostID pgtype.UUID) (agentapi.CapacityResponse, error) {
+	var out agentapi.CapacityResponse
+	err := c.do(ctx, http.MethodGet, "/v1/capacity", nil, &out, http.StatusOK)
+	return out, err
 }
 
 // DialGuest opens the opaque byte tunnel to a machine's guest agent. It dials

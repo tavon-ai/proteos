@@ -97,7 +97,7 @@ func (m *Manager) Run(ctx context.Context) {
 		}
 	}
 
-	ch, cancel := m.broker.Subscribe()
+	ch, cancel := m.broker.SubscribeAll()
 	defer cancel()
 	slog.Info("guestctl manager started")
 	for {

@@ -78,6 +78,14 @@ type Config struct {
 	// the interface the control plane's requests arrive on (tailscale0 in
 	// production). Never list tap devices here.
 	MgmtIfaces []string
+
+	// CapacityVcpus / CapacityMemMiB / CapacityDiskMiB are the host's advertised
+	// total resource shape (TAV-37: multi-host foundation), reported via GET
+	// /v1/capacity. Zero reports a host with no capacity, so operators must set
+	// these explicitly.
+	CapacityVcpus   int
+	CapacityMemMiB  int
+	CapacityDiskMiB int
 }
 
 // Driver implements driver.Driver against jailed Firecracker VMMs.
@@ -86,7 +94,7 @@ type Driver struct {
 	store *state.Store
 
 	mu        sync.Mutex
-	booting   map[string]struct{}         // machineID set for in-flight EnsureRunning calls
+	booting   map[string]struct{}           // machineID set for in-flight EnsureRunning calls
 	logCancel map[string]context.CancelFunc // per-VM log reader goroutine cancel functions
 }
 
@@ -690,6 +698,27 @@ func (d *Driver) List(ctx context.Context) ([]driver.Status, error) {
 	out := make([]driver.Status, 0, len(recs))
 	for _, r := range recs {
 		out = append(out, statusOf(r))
+	}
+	return out, nil
+}
+
+// Capacity reports the configured host capacity and how much of it the
+// tracked machines currently hold (TAV-37: multi-host foundation).
+func (d *Driver) Capacity(ctx context.Context) (driver.Capacity, error) {
+	recs, err := d.store.List()
+	if err != nil {
+		return driver.Capacity{}, err
+	}
+	out := driver.Capacity{
+		TotalVcpus: d.cfg.CapacityVcpus, TotalMemMiB: d.cfg.CapacityMemMiB, TotalDiskMiB: d.cfg.CapacityDiskMiB,
+	}
+	for _, rec := range recs {
+		out.UsedDiskMiB += rec.DiskMiB
+		if rec.State == api.StateStopped || rec.State == api.StateError {
+			continue // released its VMM; only the disk lingers
+		}
+		out.UsedVcpus += rec.Vcpus
+		out.UsedMemMiB += rec.MemMiB
 	}
 	return out, nil
 }

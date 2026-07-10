@@ -122,6 +122,20 @@ func (f *fakeAgent) handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(st)
 	})
+	mux.HandleFunc(agentapi.RouteListMachine, func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		fail := f.failStatus
+		statuses := make([]agentapi.MachineStatus, 0, len(f.status))
+		for _, st := range f.status {
+			statuses = append(statuses, st)
+		}
+		f.mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(agentapi.ListResponse{Machines: statuses})
+	})
 	mux.HandleFunc(agentapi.RouteDestroy, func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		f.mu.Lock()
@@ -157,7 +171,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "h", AgentUrl: "http://x"})
+	_, err = q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "h", AgentUrl: "http://x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +183,7 @@ func newHarness(t *testing.T) *harness {
 	nc := nodeclient.New(srv.URL, "tok")
 	broker := machine.NewBroker()
 	sec := secrets.NewMemStore()
-	svc := machine.NewService(pool, nc, broker, sec, host.ID, machine.Spec{
+	svc := machine.NewService(pool, nc, broker, sec, machine.Spec{
 		Vcpus: 2, MemMiB: 2048, DiskMiB: 10240, KernelRef: "k1", RootfsRef: "r1",
 		MaxPerUser: harnessMaxPerUser,
 	})

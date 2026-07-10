@@ -177,6 +177,28 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+// TestCapacity proves Capacity hits GET /v1/capacity and decodes the host's
+// total/used shape (TAV-37: multi-host foundation). hostID is accepted only to
+// satisfy machine.NodeClient's signature — a bare Client always queries its own
+// one agent regardless of what's passed.
+func TestCapacity(t *testing.T) {
+	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/capacity" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"total_vcpus":8,"total_mem_mib":16384,"total_disk_mib":102400,"used_vcpus":2,"used_mem_mib":2048,"used_disk_mib":10240}`)
+	})
+	c2, err := c.Capacity(context.Background(), pgtype.UUID{})
+	if err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	want := agentapi.CapacityResponse{TotalVcpus: 8, TotalMemMiB: 16384, TotalDiskMiB: 102400, UsedVcpus: 2, UsedMemMiB: 2048, UsedDiskMiB: 10240}
+	if c2 != want {
+		t.Errorf("capacity = %+v, want %+v", c2, want)
+	}
+}
+
 func TestDoUnexpectedStatus(t *testing.T) {
 	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

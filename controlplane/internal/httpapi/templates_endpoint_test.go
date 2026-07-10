@@ -32,7 +32,7 @@ func setupTemplatesCP(t *testing.T) (url, token string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://x"})
+	_, err = q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func setupTemplatesCP(t *testing.T) (url, token string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{
+	svc := machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{
 		Vcpus: 2, MemMiB: 2048, DiskMiB: 10240, KernelRef: "k", RootfsRef: "r",
 		Catalog: catalog, Limits: machine.NewResourceLimits(8, 16384, 51200),
 	})

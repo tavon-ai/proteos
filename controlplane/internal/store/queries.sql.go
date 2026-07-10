@@ -331,6 +331,25 @@ func (q *Queries) GetGitIdentity(ctx context.Context, userID pgtype.UUID) (GetGi
 	return i, err
 }
 
+const getHostByID = `-- name: GetHostByID :one
+SELECT id, name, agent_url, status, created_at FROM hosts WHERE id = $1
+`
+
+// Resolve a single host by id (TAV-37: the scheduler queries each active
+// host's capacity by id before a machine exists to join against).
+func (q *Queries) GetHostByID(ctx context.Context, id pgtype.UUID) (Host, error) {
+	row := q.db.QueryRow(ctx, getHostByID, id)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.AgentUrl,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getMachineByID = `-- name: GetMachineByID :one
 SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE id = $1
 `
@@ -387,6 +406,28 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+	)
+	return i, err
+}
+
+const getMachineHost = `-- name: GetMachineHost :one
+SELECT h.id, h.name, h.agent_url, h.status, h.created_at FROM hosts h
+JOIN machines m ON m.host_id = h.id
+WHERE m.id = $1
+`
+
+// Resolve the node-agent a machine is assigned to (TAV-37: multi-host
+// foundation) so the control plane dials the right host per machine instead of
+// a single hardcoded agent.
+func (q *Queries) GetMachineHost(ctx context.Context, id pgtype.UUID) (Host, error) {
+	row := q.db.QueryRow(ctx, getMachineHost, id)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.AgentUrl,
+		&i.Status,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -695,6 +736,38 @@ func (q *Queries) InsertMachineEvent(ctx context.Context, arg InsertMachineEvent
 	return i, err
 }
 
+const listActiveHosts = `-- name: ListActiveHosts :many
+SELECT id, name, agent_url, status, created_at FROM hosts WHERE status = 'active' ORDER BY name
+`
+
+// Hosts eligible for scheduling new machines (TAV-37: multi-host foundation),
+// ordered by name for stable output.
+func (q *Queries) ListActiveHosts(ctx context.Context) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listActiveHosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Host{}
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.AgentUrl,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentTasksByMachine = `-- name: ListAgentTasksByMachine :many
 SELECT id, machine_id, user_id, provider, project, prompt, status, agent_session_id, usage, result_summary, error, created_at, started_at, ended_at FROM agent_tasks WHERE machine_id = $1 ORDER BY created_at DESC
 `
@@ -724,6 +797,37 @@ func (q *Queries) ListAgentTasksByMachine(ctx context.Context, machineID pgtype.
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDisksByMachineIDs = `-- name: ListDisksByMachineIDs :many
+SELECT id, machine_id, size_mib, created_at FROM disks WHERE machine_id = ANY($1::uuid[])
+`
+
+// Batched disk lookup for a page of machines (list/SSE snapshot rendering),
+// avoiding an N+1 GetDiskByMachineID call per machine.
+func (q *Queries) ListDisksByMachineIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]Disk, error) {
+	rows, err := q.db.Query(ctx, listDisksByMachineIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Disk{}
+	for rows.Next() {
+		var i Disk
+		if err := rows.Scan(
+			&i.ID,
+			&i.MachineID,
+			&i.SizeMib,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1041,22 +1145,60 @@ func (q *Queries) ListRunningMachineIDsByUserID(ctx context.Context, userID pgty
 	return items, nil
 }
 
+const listSnapshotsByMachineIDs = `-- name: ListSnapshotsByMachineIDs :many
+SELECT machine_id, fc_version, mem_bytes, kernel_ref, rootfs_ref, created_at FROM snapshots WHERE machine_id = ANY($1::uuid[])
+`
+
+// Batched snapshot lookup for a page of machines (list/SSE snapshot
+// rendering), avoiding an N+1 GetSnapshot call per machine.
+func (q *Queries) ListSnapshotsByMachineIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]Snapshot, error) {
+	rows, err := q.db.Query(ctx, listSnapshotsByMachineIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Snapshot{}
+	for rows.Next() {
+		var i Snapshot
+		if err := rows.Scan(
+			&i.MachineID,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.KernelRef,
+			&i.RootfsRef,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserMachineEventsAfter = `-- name: ListUserMachineEventsAfter :many
 SELECT me.id, me.machine_id, me.type, me.from_state, me.to_state, me.actor, me.payload, me.created_at FROM machine_events me
 JOIN machines m ON m.id = me.machine_id
 WHERE m.user_id = $1 AND me.id > $2
 ORDER BY me.id ASC
+LIMIT $3
 `
 
 type ListUserMachineEventsAfterParams struct {
 	UserID pgtype.UUID `json:"user_id"`
 	ID     int64       `json:"id"`
+	Limit  int32       `json:"limit"`
 }
 
 // Events across ALL of a user's machines after a given id, oldest-first, for SSE
 // Last-Event-ID replay (ids are a global sequence so cross-machine order holds).
+// Capped by $3: the caller requests one row past its replay limit so it can
+// detect (and fall back on) a backlog too large to replay event-by-event,
+// rather than streaming an unbounded number of rows.
 func (q *Queries) ListUserMachineEventsAfter(ctx context.Context, arg ListUserMachineEventsAfterParams) ([]MachineEvent, error) {
-	rows, err := q.db.Query(ctx, listUserMachineEventsAfter, arg.UserID, arg.ID)
+	rows, err := q.db.Query(ctx, listUserMachineEventsAfter, arg.UserID, arg.ID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

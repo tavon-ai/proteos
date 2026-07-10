@@ -27,7 +27,7 @@ func svcWithCatalog(t *testing.T) (*machine.Service, pgtype.UUID) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "h", AgentUrl: "http://x"})
+	_, err = q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "h", AgentUrl: "http://x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func svcWithCatalog(t *testing.T) (*machine.Service, pgtype.UUID) {
 		t.Fatal(err)
 	}
 
-	svc := machine.NewService(pool, nodeclient.New(srv.URL, "tok"), machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{
+	svc := machine.NewService(pool, nodeclient.New(srv.URL, "tok"), machine.NewBroker(), secrets.NewMemStore(), machine.Spec{
 		Vcpus: 2, MemMiB: 2048, DiskMiB: 10240, KernelRef: "k1", RootfsRef: "r1",
 		Catalog: catalog, Limits: machine.NewResourceLimits(8, 16384, 51200),
 	})

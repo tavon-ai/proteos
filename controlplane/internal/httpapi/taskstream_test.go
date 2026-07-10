@@ -71,7 +71,7 @@ func setupTaskStream(t *testing.T, status string) taskStreamFixture {
 		Sessions:   sessions,
 		Queries:    q,
 		Audit:      audit.NewRecorder(q),
-		Machines:   machine.NewService(pool, nil, machine.NewBroker(), nil, host.ID, machine.Spec{}),
+		Machines:   machine.NewService(pool, nil, machine.NewBroker(), nil, machine.Spec{}),
 		TaskEvents: hub,
 	}
 	ts := httptest.NewServer(srv.Handler())

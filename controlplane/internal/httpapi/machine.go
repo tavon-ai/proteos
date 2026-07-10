@@ -99,6 +99,39 @@ func (s *Server) summary(ctx context.Context, m store.Machine) MachineSummary {
 	return toSummary(m, disk, snap)
 }
 
+// summaries renders a batch of machines as API summaries, loading every
+// machine's disk + snapshot in two queries total instead of two per machine
+// (the N+1 that used to back the machine list and SSE snapshot). Lookups are
+// best-effort like summary: a batch error degrades to summaries without that
+// field rather than failing the whole response.
+func (s *Server) summaries(ctx context.Context, ms []store.Machine) []MachineSummary {
+	ids := make([]pgtype.UUID, len(ms))
+	for i, m := range ms {
+		ids[i] = m.ID
+	}
+	disks, err := s.Machines.DisksFor(ctx, ids)
+	if err != nil {
+		disks = nil
+	}
+	snaps, err := s.Machines.SnapshotsFor(ctx, ids)
+	if err != nil {
+		snaps = nil
+	}
+	out := make([]MachineSummary, 0, len(ms))
+	for _, m := range ms {
+		var disk *store.Disk
+		if d, ok := disks[m.ID]; ok {
+			disk = &d
+		}
+		var snap *store.Snapshot
+		if sn, ok := snaps[m.ID]; ok {
+			snap = &sn
+		}
+		out = append(out, toSummary(m, disk, snap))
+	}
+	return out
+}
+
 // handleListMachines returns all of the authenticated user's machines (possibly
 // empty). This is the multi-machine collection read.
 func (s *Server) handleListMachines(w http.ResponseWriter, r *http.Request) {
@@ -113,11 +146,7 @@ func (s *Server) handleListMachines(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	out := make([]MachineSummary, 0, len(ms))
-	for _, m := range ms {
-		out = append(out, s.summary(r.Context(), m))
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, s.summaries(r.Context(), ms))
 }
 
 // handleGetMachine returns one of the user's machines by id, or 404 no_machine
@@ -155,6 +184,8 @@ func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "machine_limit")
 	case errors.Is(err, machine.ErrUnknownTemplate):
 		writeError(w, http.StatusBadRequest, "unknown_template")
+	case errors.Is(err, machine.ErrNoCapacity):
+		writeError(w, http.StatusServiceUnavailable, "no_capacity")
 	case errors.As(err, &invRes):
 		writeErrorDetail(w, http.StatusBadRequest, "invalid_resources", invRes.Detail)
 	case err != nil:

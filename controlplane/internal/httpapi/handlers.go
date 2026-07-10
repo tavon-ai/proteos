@@ -67,8 +67,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	for _, m := range ms {
-		resp.Machines = append(resp.Machines, s.summary(r.Context(), m))
+	if len(ms) > 0 {
+		resp.Machines = s.summaries(r.Context(), ms)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

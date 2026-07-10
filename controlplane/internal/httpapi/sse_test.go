@@ -155,7 +155,7 @@ func newSSEHarness(t *testing.T) *sseHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "h", AgentUrl: "http://x"})
+	_, err = q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "h", AgentUrl: "http://x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func newSSEHarness(t *testing.T) *sseHarness {
 
 	nc := nodeclient.New(agentSrv.URL, "tok")
 	broker := machine.NewBroker()
-	svc := machine.NewService(pool, nc, broker, secrets.NewMemStore(), host.ID, machine.Spec{Vcpus: 2, MemMiB: 2048, KernelRef: "k", RootfsRef: "r"})
+	svc := machine.NewService(pool, nc, broker, secrets.NewMemStore(), machine.Spec{Vcpus: 2, MemMiB: 2048, KernelRef: "k", RootfsRef: "r"})
 	poller := machine.NewPoller(pool, nc, broker)
 
 	sessions := session.NewManager(q, time.Hour)

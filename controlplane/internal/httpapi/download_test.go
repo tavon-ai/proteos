@@ -103,7 +103,7 @@ func setupDownload(t *testing.T) dlFixture {
 		Sessions: sessions,
 		Queries:  q,
 		Audit:    audit.NewRecorder(q),
-		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{}),
 		Projects: ch,
 		Guests:   fg,
 	}
@@ -226,7 +226,7 @@ func TestProjectDownload_409NotRunning(t *testing.T) {
 	srv := &httpapi.Server{
 		Sessions: sessions,
 		Queries:  q,
-		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{}),
 		Projects: ch,
 		Guests:   fg,
 	}

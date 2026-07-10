@@ -104,6 +104,10 @@ func (p *Poller) AdvanceTransitional(ctx context.Context) {
 // machine the agent no longer reports as running has crashed and is moved to
 // error. Exported for deterministic tests.
 //
+// It fetches every machine's status with a single List call rather than one
+// Status call per running machine — the individual calls used to make a sweep
+// cost one agent round-trip per machine, which doesn't scale with fleet size.
+//
 // Transient node-agent connectivity failures are tolerated for up to
 // blipThreshold consecutive sweep cycles before the machine is moved to error,
 // so brief network blips do not falsely mark idle machines as failed. When the
@@ -115,26 +119,38 @@ func (p *Poller) SweepRunning(ctx context.Context) {
 		slog.Error("poller: list running", "err", err)
 		return
 	}
-	for _, m := range machines {
-		id := UUIDString(m.ID)
-		st, err := p.nodes.Status(ctx, id)
-		if err != nil {
-			if errors.Is(err, nodeclient.ErrUnknownMachine) {
-				// Agent is reachable but has no record of this machine — real failure.
-				p.blipReset(id)
-				p.toError(ctx, m, StateRunning, "node-agent no longer tracks this machine during sweep")
-				continue
-			}
-			// Agent unreachable: could be a transient network blip. Apply grace period.
+	if len(machines) == 0 {
+		return
+	}
+	statuses, err := p.nodes.List(ctx)
+	if err != nil {
+		// Agent unreachable: apply the same grace period to every running
+		// machine as an individual Status call would have hit.
+		for _, m := range machines {
+			id := UUIDString(m.ID)
 			n := p.blipIncr(id)
 			slog.Warn("poller: node-agent unreachable during running sweep", "machine", id, "consecutive_failures", n, "threshold", BlipThreshold, "err", err)
 			if n >= BlipThreshold {
 				p.blipReset(id)
 				p.toError(ctx, m, StateRunning, "node-agent unreachable during running sweep: "+err.Error())
 			}
+		}
+		return
+	}
+	byID := make(map[string]agentapi.MachineStatus, len(statuses))
+	for _, st := range statuses {
+		byID[st.MachineID] = st
+	}
+	for _, m := range machines {
+		id := UUIDString(m.ID)
+		st, ok := byID[id]
+		if !ok {
+			// Agent is reachable but has no record of this machine — real failure.
+			p.blipReset(id)
+			p.toError(ctx, m, StateRunning, "node-agent no longer tracks this machine during sweep")
 			continue
 		}
-		// Agent responded: reset the blip counter.
+		// Agent reported on this machine: reset the blip counter.
 		p.blipReset(id)
 		if st.State != agentapi.StateRunning {
 			reason := "vm no longer running (agent reports " + st.State + ")"
