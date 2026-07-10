@@ -1,0 +1,24 @@
+# systemd unit for the ProteOS app-stack backup (Postgres + OpenBao). TAV-31.
+#
+# Install (on the app VM, alongside the compose stack):
+#   sudo mkdir -p /etc/proteos
+#   sudo cp deploy/app-stack/backup.env.example /etc/proteos/backup.env
+#   sudo $EDITOR /etc/proteos/backup.env          # set retention / remote target
+#   sudo cp deploy/app-stack/proteos-backup.service deploy/app-stack/proteos-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now proteos-backup.timer
+#   systemctl list-timers proteos-backup.timer
+#
+# Adjust WorkingDirectory/ExecStart if your checkout is not at /opt/proteos/src.
+# See docs/disaster-recovery.md.
+
+[Unit]
+Description=ProteOS app-stack backup (Postgres + OpenBao)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/proteos/src/deploy/app-stack
+EnvironmentFile=-/etc/proteos/backup.env
+ExecStart=/opt/proteos/src/deploy/app-stack/backup-all.sh
