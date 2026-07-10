@@ -26,9 +26,7 @@ func runMachines(env Env, args []string) int {
 	case "stop":
 		return machinesStop(env, rest)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown machines subcommand %q\n\n", sub)
-		machinesGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "machines subcommand", sub, machinesGroupUsage)
 	}
 }
 
@@ -53,11 +51,12 @@ Reads accept --json. Run 'proteos machines <command> -h' for flags.
 func machinesList(env Env, args []string) int {
 	fs := cmdFlags(env, "machines ls", cmdHelp{
 		summary:  "List your machines (id, name, state).",
-		usage:    "proteos machines ls [--json]",
-		examples: []string{"proteos machines ls", "proteos machines ls --json"},
+		usage:    "proteos machines ls [--json] [--limit N] [--offset N]",
+		examples: []string{"proteos machines ls", "proteos machines ls --json", "proteos machines ls --limit 20 --offset 20"},
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
+	limit, offset := paginationFlags(fs)
 	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
@@ -69,23 +68,25 @@ func machinesList(env Env, args []string) int {
 	if err != nil {
 		return fail(env, err)
 	}
+	p := paginate(machines, *offset, *limit)
 	if *asJSON {
-		if err := printJSON(env.Stdout, machines); err != nil {
+		if err := printPageJSON(env.Stdout, p); err != nil {
 			return fail(env, err)
 		}
 		return client.ExitOK
 	}
-	if len(machines) == 0 {
+	if len(p.Items) == 0 {
 		fmt.Fprintln(env.Stdout, "No machines.")
 		return client.ExitOK
 	}
 	labels := templateLabels(c)
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tNAME\tSTATE\tTEMPLATE")
-	for _, m := range machines {
+	for _, m := range p.Items {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.ID, m.Name, m.State, templateName(m.TemplateID, labels))
 	}
 	tw.Flush()
+	printPageFooter(env.Stdout, p, "machines")
 	return client.ExitOK
 }
 

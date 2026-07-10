@@ -18,9 +18,7 @@ func runRepos(env Env, args []string) int {
 	case "ls", "list":
 		return reposList(env, rest)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown repo subcommand %q\n\n", sub)
-		reposGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "repo subcommand", sub, reposGroupUsage)
 	}
 }
 
@@ -43,11 +41,12 @@ func reposList(env Env, args []string) int {
 	fs := cmdFlags(env, "repo ls", cmdHelp{
 		summary:  "List the GitHub repositories you can clone.",
 		long:     "These are the repos granted to ProteOS. If the list is empty, the output\npoints you at the page where you can grant access.",
-		usage:    "proteos repo ls [--json]",
+		usage:    "proteos repo ls [--json] [--limit N] [--offset N]",
 		examples: []string{"proteos repo ls", "proteos repo ls --json"},
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
+	limit, offset := paginationFlags(fs)
 	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
@@ -59,13 +58,23 @@ func reposList(env Env, args []string) int {
 	if err != nil {
 		return fail(env, err)
 	}
+	p := paginate(res.Repos, *offset, *limit)
 	if *asJSON {
-		if err := printJSON(env.Stdout, res); err != nil {
+		if !p.paginated() {
+			if err := printJSON(env.Stdout, res); err != nil {
+				return fail(env, err)
+			}
+			return client.ExitOK
+		}
+		if err := printJSON(env.Stdout, struct {
+			page[client.Repo]
+			GrantsURL string `json:"grants_url,omitempty"`
+		}{page: p, GrantsURL: res.GrantsURL}); err != nil {
 			return fail(env, err)
 		}
 		return client.ExitOK
 	}
-	if len(res.Repos) == 0 {
+	if len(p.Items) == 0 {
 		fmt.Fprintln(env.Stdout, "No repositories granted.")
 		if res.GrantsURL != "" {
 			fmt.Fprintf(env.Stdout, "Grant access at: %s\n", res.GrantsURL)
@@ -74,9 +83,10 @@ func reposList(env Env, args []string) int {
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "FULL NAME\tPRIVATE\tDEFAULT BRANCH")
-	for _, r := range res.Repos {
+	for _, r := range p.Items {
 		fmt.Fprintf(tw, "%s\t%t\t%s\n", r.FullName, r.Private, r.DefaultBranch)
 	}
 	tw.Flush()
+	printPageFooter(env.Stdout, p, "repos")
 	return client.ExitOK
 }

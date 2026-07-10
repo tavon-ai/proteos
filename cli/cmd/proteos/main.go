@@ -22,6 +22,7 @@ var (
 func main() {
 	client.SetUserAgent("proteos-cli/" + version)
 	os.Exit(app.Run(app.Env{
+		Stdin:   os.Stdin,
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 		Version: version,

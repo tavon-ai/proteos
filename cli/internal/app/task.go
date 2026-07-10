@@ -33,9 +33,7 @@ func runTask(env Env, args []string) int {
 	case "send", "message":
 		return taskSend(env, rest)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown task subcommand %q\n\n", sub)
-		taskGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "task subcommand", sub, taskGroupUsage)
 	}
 }
 
@@ -132,15 +130,17 @@ func taskRun(env Env, args []string) int {
 func taskList(env Env, args []string) int {
 	fs := cmdFlags(env, "task ls", cmdHelp{
 		summary: "List a machine's agent tasks, newest first.",
-		usage:   "proteos task ls --machine <id> [--json]",
+		usage:   "proteos task ls --machine <id> [--json] [--limit N] [--offset N]",
 		examples: []string{
 			"proteos task ls --machine m-123",
 			"proteos task ls --machine m-123 --json",
+			"proteos task ls --machine m-123 --limit 20",
 		},
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
+	limit, offset := paginationFlags(fs)
 	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
@@ -156,22 +156,24 @@ func taskList(env Env, args []string) int {
 	if err != nil {
 		return fail(env, err)
 	}
+	p := paginate(tasks, *offset, *limit)
 	if *asJSON {
-		if err := printJSON(env.Stdout, tasks); err != nil {
+		if err := printPageJSON(env.Stdout, p); err != nil {
 			return fail(env, err)
 		}
 		return client.ExitOK
 	}
-	if len(tasks) == 0 {
+	if len(p.Items) == 0 {
 		fmt.Fprintln(env.Stdout, "No tasks.")
 		return client.ExitOK
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tSTATUS\tPROVIDER\tPROJECT\tCREATED")
-	for _, t := range tasks {
+	for _, t := range p.Items {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Provider, t.Project, t.CreatedAt)
 	}
 	tw.Flush()
+	printPageFooter(env.Stdout, p, "tasks")
 	return client.ExitOK
 }
 

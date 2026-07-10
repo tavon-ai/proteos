@@ -25,9 +25,7 @@ func runAuth(env Env, args []string) int {
 	case "logout":
 		return authLogout(env)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown auth subcommand %q\n\n", sub)
-		authGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "auth subcommand", sub, authGroupUsage)
 	}
 }
 
