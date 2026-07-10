@@ -43,6 +43,8 @@ type fakeCP struct {
 	lastSetKey     string            // provider key from the last PUT /api/secrets/providers/{key}
 	lastSetFields  map[string]string // fields from the last PUT /api/secrets/providers/{key}
 	lastDeletedKey string            // provider key from the last DELETE /api/secrets/providers/{key}
+	lastMergeMethod string // method from the last PR merge request
+	lastCommentBody string // body from the last PR comment request
 }
 
 func (f *fakeCP) handler() http.Handler {
@@ -287,6 +289,50 @@ func (f *fakeCP) handler() http.Handler {
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprint(w, `{"task_id":"t1"}`)
+	})
+	mux.HandleFunc("GET /api/git/repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		fmt.Fprint(w, `{"number":42,"state":"open","title":"Add health check","body":"desc","html_url":"https://github.com/octocat/hello-world/pull/42","head":"fix/login","base":"main","head_sha":"abc123","author":{"login":"octocat","avatar_url":""},"additions":10,"deletions":2,"changed_files":3}`)
+	})
+	mux.HandleFunc("GET /api/git/repos/{owner}/{repo}/pulls/{number}/files", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		fmt.Fprint(w, `{"files":[{"path":"main.go","status":"M","additions":8,"deletions":2}]}`)
+	})
+	mux.HandleFunc("GET /api/git/repos/{owner}/{repo}/pulls/{number}/checks", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		fmt.Fprint(w, `{"total":2,"passed":1,"failed":0,"pending":1,"runs":[{"name":"build","status":"completed","conclusion":"success"},{"name":"test","status":"in_progress"}]}`)
+	})
+	mux.HandleFunc("POST /api/git/repos/{owner}/{repo}/pulls/{number}/merge", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		var body struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.lastMergeMethod = body.Method
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"merged":true,"sha":"deadbeef"}`)
+	})
+	mux.HandleFunc("POST /api/git/repos/{owner}/{repo}/pulls/{number}/comments", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		var body struct {
+			Body string `json:"body"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.lastCommentBody = body.Body
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"id":99,"html_url":"https://github.com/octocat/hello-world/pull/42#issuecomment-99"}`)
 	})
 	mux.HandleFunc("GET /api/machines/{id}/tasks/{tid}/events", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
@@ -828,6 +874,7 @@ func TestHelpJSONOffline(t *testing.T) {
 			"repo ls",
 			"project ls", "project clone", "project ensure",
 			"git status", "git diff", "git branch", "git commit", "git push", "git pr",
+			"pr view", "pr files", "pr checks", "pr merge", "pr comment",
 			"task run", "task ls", "task get", "task watch", "task cancel", "task send",
 			"providers ls", "providers get",
 			"secrets set", "secrets unset",
@@ -929,6 +976,97 @@ func TestRepoList(t *testing.T) {
 	}
 	if !strings.Contains(out, "octocat/hello-world") {
 		t.Fatalf("repo output:\n%s", out)
+	}
+}
+
+func TestPRView(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "pr", "view", "octocat/hello-world", "42")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if !strings.Contains(out, "#42") || !strings.Contains(out, "Add health check") {
+		t.Fatalf("pr view output:\n%s", out)
+	}
+}
+
+func TestPRViewJSON(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "pr", "view", "--json", "octocat/hello-world", "42")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	var pr struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(out), &pr); err != nil || pr.Number != 42 {
+		t.Fatalf("pr view json output:\n%s", out)
+	}
+}
+
+func TestPRViewBadFullName(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLI(t, url, "tok", "pr", "view", "badname", "42")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want usage; stderr=%s", code, errOut)
+	}
+}
+
+func TestPRFiles(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "pr", "files", "octocat/hello-world", "42")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if !strings.Contains(out, "main.go") || !strings.Contains(out, "M") {
+		t.Fatalf("pr files output:\n%s", out)
+	}
+}
+
+func TestPRChecks(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "pr", "checks", "octocat/hello-world", "42")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if !strings.Contains(out, "1 passed") || !strings.Contains(out, "build") {
+		t.Fatalf("pr checks output:\n%s", out)
+	}
+}
+
+func TestPRMerge(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "pr", "merge", "--method", "squash", "octocat/hello-world", "42")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if cp.lastMergeMethod != "squash" {
+		t.Fatalf("server saw merge method %q", cp.lastMergeMethod)
+	}
+	if !strings.Contains(out, "merged") {
+		t.Fatalf("pr merge output:\n%s", out)
+	}
+}
+
+func TestPRComment(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "pr", "comment", "-m", "LGTM", "octocat/hello-world", "42")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if cp.lastCommentBody != "LGTM" {
+		t.Fatalf("server saw comment %q", cp.lastCommentBody)
+	}
+	if !strings.Contains(out, "commented") {
+		t.Fatalf("pr comment output:\n%s", out)
+	}
+}
+
+func TestPRCommentRequiresBody(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLI(t, url, "tok", "pr", "comment", "octocat/hello-world", "42")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want usage; stderr=%s", code, errOut)
 	}
 }
 
