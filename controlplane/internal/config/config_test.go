@@ -17,7 +17,7 @@ func clearEnv(t *testing.T) {
 		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_PREFIX", "PROTEOS_OPENBAO_ROLE_ID",
 		"PROTEOS_OPENBAO_SECRET_ID_FILE", "ALLOWED_GITHUB_LOGINS", "PROTEOS_COOKIE_SECURE",
 		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN", "PROTEOS_NODE_AGENT_INSECURE_HTTP",
-		"PROTEOS_NODE_CA_FILE", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
+		"PROTEOS_NODE_CA_FILE", "PROTEOS_HOSTS", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
 		"PROTEOS_MACHINE_DISK_MIB", "PROTEOS_KERNEL_REF", "PROTEOS_ROOTFS_REF",
 		"PROTEOS_MACHINE_DOMAIN", "PROTEOS_STATE_KEY",
 		"PROTEOS_ALLOWED_WS_ORIGINS",
@@ -186,6 +186,83 @@ func TestLoadNodeAgentURLRequiresHTTPS(t *testing.T) {
 				t.Fatalf("Load(%q): %v", tc.url, err)
 			}
 		})
+	}
+}
+
+// TAV-37: PROTEOS_HOSTS lists the additional KVM hosts beyond the primary one;
+// unset means the fleet is just the primary host (today's default).
+func TestLoadAdditionalHostsUnsetIsEmpty(t *testing.T) {
+	clearEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.AdditionalHosts) != 0 {
+		t.Errorf("AdditionalHosts = %v, want empty", c.AdditionalHosts)
+	}
+}
+
+func TestLoadAdditionalHostsParsed(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"gpu-1","url":"https://gpu-1.internal:9090"},{"name":"gpu-2","url":"http://127.0.0.1:9091"}]`)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.AdditionalHosts) != 2 {
+		t.Fatalf("AdditionalHosts = %v, want 2 entries", c.AdditionalHosts)
+	}
+	if c.AdditionalHosts[0].Name != "gpu-1" || c.AdditionalHosts[0].URL != "https://gpu-1.internal:9090" {
+		t.Errorf("AdditionalHosts[0] = %+v", c.AdditionalHosts[0])
+	}
+	if c.AdditionalHosts[1].Name != "gpu-2" || c.AdditionalHosts[1].URL != "http://127.0.0.1:9091" {
+		t.Errorf("AdditionalHosts[1] = %+v", c.AdditionalHosts[1])
+	}
+}
+
+func TestLoadAdditionalHostsInvalidJSON(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `not json`)
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject invalid PROTEOS_HOSTS JSON")
+	}
+}
+
+func TestLoadAdditionalHostsMissingFieldsRejected(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"gpu-1"}]`)
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject a host missing url")
+	}
+}
+
+func TestLoadAdditionalHostsDuplicateNameRejected(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"local","url":"http://127.0.0.1:9091"}]`)
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject an additional host reusing the primary host's name")
+	}
+
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"gpu-1","url":"http://127.0.0.1:9091"},{"name":"gpu-1","url":"http://127.0.0.1:9092"}]`)
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject two additional hosts sharing a name")
+	}
+}
+
+// TAV-27's https/loopback rule applies to every additional host too.
+func TestLoadAdditionalHostsRequiresHTTPS(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"gpu-1","url":"http://192.168.2.84:9090"}]`)
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject a non-loopback plain-HTTP additional host")
+	}
+
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"gpu-1","url":"http://192.168.2.84:9090"}]`)
+	t.Setenv("PROTEOS_NODE_AGENT_INSECURE_HTTP", "1")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load with insecure opt-out should succeed: %v", err)
 	}
 }
 

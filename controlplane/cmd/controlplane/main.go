@@ -223,16 +223,28 @@ func run(migrate, migrateOnly bool) error {
 	// /api/tokens management routes (browser settings page mints them).
 	patManager := token.NewManager(q)
 
-	// Seed/refresh this control plane's own host row so the scheduler has at
-	// least one active host to place machines on. Additional hosts (TAV-37:
-	// multi-host foundation) are added directly to the hosts table; the
-	// scheduler (machine.Service.chooseHost) picks among whatever is active
-	// there at Create time — this seed is not otherwise referenced.
+	// Seed/refresh this control plane's own (primary) host row, plus any
+	// PROTEOS_HOSTS additional hosts (TAV-37: multi-host foundation), so the
+	// scheduler has every configured host active to place machines on. The
+	// scheduler (machine.Service.chooseHost) and nodeclient.Registry both
+	// resolve purely from the hosts table at call time — this seed step is not
+	// otherwise referenced once startup completes.
 	if _, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
 		Name:     cfg.HostName,
 		AgentUrl: cfg.NodeAgentURL,
 	}); err != nil {
 		return err
+	}
+	for _, h := range cfg.AdditionalHosts {
+		if _, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
+			Name:     h.Name,
+			AgentUrl: h.URL,
+		}); err != nil {
+			return fmt.Errorf("seed host %q: %w", h.Name, err)
+		}
+	}
+	if len(cfg.AdditionalHosts) > 0 {
+		slog.Info("multi-host fleet configured", "hosts", 1+len(cfg.AdditionalHosts))
 	}
 	if cfg.AgentToken == "" {
 		slog.Warn("PROTEOS_AGENT_TOKEN is empty; node-agent calls will be unauthenticated and will fail")

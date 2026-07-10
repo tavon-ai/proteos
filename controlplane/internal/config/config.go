@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -14,6 +15,14 @@ import (
 
 	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
+
+// HostConfig identifies one additional KVM host beyond the primary
+// (TAV-37: multi-host foundation). Name must be unique across the fleet
+// (including the primary's HostName); URL is that host's node-agent base URL.
+type HostConfig struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
 
 // Config is the fully-resolved control-plane configuration.
 type Config struct {
@@ -77,29 +86,42 @@ type Config struct {
 
 	// --- Phase 2: node-agent + machine spec ---------------------------------
 
-	// HostName is the unique name of the single host this control plane manages
-	// (multi-host scheduling is Phase 11). Upserted into `hosts` at startup.
+	// HostName is the unique name of this control plane's own (primary) host,
+	// upserted into `hosts` at startup. AdditionalHosts (TAV-37: multi-host
+	// foundation) lists any other KVM hosts the scheduler may also place
+	// machines on; every node-agent in the fleet is dialed with the same
+	// AgentToken/NodeCAFile.
 	HostName string
 
-	// NodeAgentURL is the private base URL the control plane dials the
-	// node-agent at (e.g. http://127.0.0.1:9090).
+	// NodeAgentURL is the private base URL the control plane dials the primary
+	// host's node-agent at (e.g. http://127.0.0.1:9090).
 	NodeAgentURL string
 
-	// AgentToken is the shared bearer token presented to the node-agent. Must
-	// match the agent's PROTEOS_AGENT_TOKEN.
+	// AdditionalHosts (PROTEOS_HOSTS, JSON array of {"name","url"}) are extra
+	// KVM hosts beyond the primary one, upserted into `hosts` at startup
+	// alongside it. The scheduler (machine.Service.chooseHost) then places new
+	// machines across every active host by free capacity; nodeclient.Registry
+	// dials each machine's own host by looking up hosts.agent_url per call.
+	// Empty ⇒ the primary host is the only one (today's default).
+	AdditionalHosts []HostConfig
+
+	// AgentToken is the shared bearer token presented to every node-agent in the
+	// fleet (primary and AdditionalHosts alike). Must match each agent's own
+	// PROTEOS_AGENT_TOKEN.
 	AgentToken string
 
-	// NodeCAFile pins the node-agent's TLS certificate/CA (PEM). When set, the
-	// control plane verifies the agent against it instead of the system trust
-	// store (Phase 4 decision #3). Empty ⇒ plain HTTP / system roots (dev).
+	// NodeCAFile pins every node-agent's TLS certificate/CA (PEM), shared across
+	// the fleet. When set, the control plane verifies each agent against it
+	// instead of the system trust store (Phase 4 decision #3). Empty ⇒ plain
+	// HTTP / system roots (dev).
 	NodeCAFile string
 
 	// NodeAgentInsecureHTTP (PROTEOS_NODE_AGENT_INSECURE_HTTP=1) permits a
-	// plain-HTTP NodeAgentURL to a non-loopback host. Dev-only escape hatch
-	// (TAV-27): the channel carries per-machine LUKS volume keys and the
-	// bearer token, so production must dial https with NodeCAFile pinning the
-	// agent's cert. Loopback URLs are always allowed — that traffic never
-	// leaves the host.
+	// plain-HTTP host URL (primary or additional) to a non-loopback host.
+	// Dev-only escape hatch (TAV-27): the channel carries per-machine LUKS
+	// volume keys and the bearer token, so production must dial https with
+	// NodeCAFile pinning the agent's cert. Loopback URLs are always allowed —
+	// that traffic never leaves the host.
 	NodeAgentInsecureHTTP bool
 
 	// MachineVcpus / MachineMemMiB / MachineDiskMiB are the resource spec stamped
@@ -229,10 +251,26 @@ func Load() (*Config, error) {
 
 	// TAV-27: the agent channel carries volume keys — refuse a plaintext URL
 	// unless it stays on this host (loopback dev stacks) or dev explicitly
-	// opts out.
-	if !strings.HasPrefix(c.NodeAgentURL, "https://") && !c.NodeAgentInsecureHTTP && !isLoopbackURL(c.NodeAgentURL) {
-		return nil, fmt.Errorf("PROTEOS_NODE_AGENT_URL %q is plain HTTP to a non-loopback host (the channel carries volume keys): use https with PROTEOS_NODE_CA_FILE, or set PROTEOS_NODE_AGENT_INSECURE_HTTP=1 for dev-only plain HTTP", c.NodeAgentURL)
+	// opts out. Applies to the primary host and every additional one alike.
+	if err := c.checkAgentURL(c.NodeAgentURL, "PROTEOS_NODE_AGENT_URL"); err != nil {
+		return nil, err
 	}
+
+	hosts, err := loadAdditionalHosts()
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{c.HostName: true}
+	for _, h := range hosts {
+		if names[h.Name] {
+			return nil, fmt.Errorf("PROTEOS_HOSTS: duplicate host name %q", h.Name)
+		}
+		names[h.Name] = true
+		if err := c.checkAgentURL(h.URL, "PROTEOS_HOSTS["+h.Name+"]"); err != nil {
+			return nil, err
+		}
+	}
+	c.AdditionalHosts = hosts
 
 	if key := os.Getenv("PROTEOS_STATE_KEY"); key != "" {
 		c.StateSigningKey = []byte(key)
@@ -257,6 +295,36 @@ func Load() (*Config, error) {
 	}
 
 	return c, nil
+}
+
+// checkAgentURL applies the TAV-27 https/loopback rule to a node-agent URL
+// (the primary host's or one of AdditionalHosts'), identifying the offending
+// setting as label in the error.
+func (c *Config) checkAgentURL(url, label string) error {
+	if !strings.HasPrefix(url, "https://") && !c.NodeAgentInsecureHTTP && !isLoopbackURL(url) {
+		return fmt.Errorf("%s %q is plain HTTP to a non-loopback host (the channel carries volume keys): use https with PROTEOS_NODE_CA_FILE, or set PROTEOS_NODE_AGENT_INSECURE_HTTP=1 for dev-only plain HTTP", label, url)
+	}
+	return nil
+}
+
+// loadAdditionalHosts parses PROTEOS_HOSTS (a JSON array of {"name","url"}),
+// the extra KVM hosts (TAV-37: multi-host foundation) upserted into `hosts`
+// alongside the primary one at startup. Unset/empty ⇒ no additional hosts.
+func loadAdditionalHosts() ([]HostConfig, error) {
+	raw := os.Getenv("PROTEOS_HOSTS")
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var hosts []HostConfig
+	if err := json.Unmarshal([]byte(raw), &hosts); err != nil {
+		return nil, fmt.Errorf("PROTEOS_HOSTS: invalid JSON: %w", err)
+	}
+	for i, h := range hosts {
+		if h.Name == "" || h.URL == "" {
+			return nil, fmt.Errorf("PROTEOS_HOSTS[%d]: name and url are both required", i)
+		}
+	}
+	return hosts, nil
 }
 
 // ValidateOAuth returns an error if the settings required for the GitHub OAuth
