@@ -1,0 +1,15 @@
+# Runs proteos-backup-volumes.service daily, offset from the app-stack backup
+# timer so they don't contend for bandwidth if both push to the same remote.
+# See proteos-backup-volumes.service for install steps and
+# docs/disaster-recovery.md for the full backup/restore story.
+
+[Unit]
+Description=Run the ProteOS LUKS volume backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

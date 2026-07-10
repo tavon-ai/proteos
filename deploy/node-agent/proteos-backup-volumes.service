@@ -1,0 +1,24 @@
+# systemd unit for the ProteOS LUKS volume backup (KVM host). TAV-31.
+#
+# Install (on the KVM host, alongside the node-agent):
+#   sudo mkdir -p /etc/proteos
+#   sudo cp deploy/node-agent/backup.env.example /etc/proteos/backup.env
+#   sudo $EDITOR /etc/proteos/backup.env          # set retention / remote target
+#   sudo cp deploy/node-agent/proteos-backup-volumes.service deploy/node-agent/proteos-backup-volumes.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now proteos-backup-volumes.timer
+#   systemctl list-timers proteos-backup-volumes.timer
+#
+# Adjust WorkingDirectory/ExecStart if your checkout is not at /opt/proteos/src.
+# Must run as root (reads volume files under a 0700 dir, calls cryptsetup
+# status). See docs/disaster-recovery.md.
+
+[Unit]
+Description=ProteOS node-agent LUKS volume backup
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/proteos/src/deploy/node-agent
+EnvironmentFile=-/etc/proteos/backup.env
+ExecStart=/opt/proteos/src/deploy/node-agent/backup-volumes.sh

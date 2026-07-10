@@ -26,6 +26,12 @@ deploy/app-stack/bao-unseal-key
 # real host IPs/users and must never be committed.
 deploy/ansible/inventory.ini
 
+# Backup config (TAV-31) — operator-local overrides (retention, off-host rsync
+# targets) copied from backup.env.example; not secret by default but keep
+# operator-specific hostnames/paths out of git same as the other env files.
+deploy/app-stack/backup.env
+deploy/node-agent/backup.env
+
 # Web build output / deps
 web/node_modules/
 web/dist/

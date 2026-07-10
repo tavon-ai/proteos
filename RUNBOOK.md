@@ -812,6 +812,35 @@ checklist:
 
 ---
 
+## Part I — Backups & disaster recovery (TAV-31)
+
+Postgres, OpenBao, and every machine's LUKS volume are backed up on a daily
+timer, off-host. Full detail — what's backed up, how to run/schedule it, and
+step-by-step restore procedures for "app VM disk died", "a KVM host's disk
+died", and "everything died" — lives in
+[docs/disaster-recovery.md](docs/disaster-recovery.md). Quick start:
+
+```bash
+# App VM: Postgres + OpenBao
+cd deploy/app-stack
+sudo cp proteos-backup.service proteos-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now proteos-backup.timer
+
+# Each KVM host: per-machine LUKS volumes
+cd deploy/node-agent
+sudo cp proteos-backup-volumes.service proteos-backup-volumes.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now proteos-backup-volumes.timer
+```
+
+Set an off-host `rsync` target (`*_BACKUP_REMOTE` in each `backup.env`, copied
+from the `backup.env.example` next to each script) before trusting this as
+disaster recovery — a backup left on the same disk as the primary data isn't
+one.
+
+---
+
 ## Reproducibility notes
 
 - **Pinned versions** live in `spike/firecracker/env.sh` + the committed
