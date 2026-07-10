@@ -1,0 +1,13 @@
+# Runs proteos-backup.service daily. See proteos-backup.service for install
+# steps and docs/disaster-recovery.md for the full backup/restore story.
+
+[Unit]
+Description=Run the ProteOS app-stack backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
