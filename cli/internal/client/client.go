@@ -38,7 +38,24 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+
+	// MaxAttempts bounds how many times Do tries a request, including the first
+	// (so 1 disables retries). Zero means DefaultMaxAttempts.
+	MaxAttempts int
+	// RetryBaseDelay / RetryMaxDelay bound the exponential backoff between
+	// retries. Zero means the Default* constants.
+	RetryBaseDelay time.Duration
+	RetryMaxDelay  time.Duration
 }
+
+// Retry defaults for Do: three attempts (one original + two retries), starting
+// at 200ms and doubling up to 2s. Deliberately gentler than the SSE stream's
+// backoff (sse.go) since a foreground CLI command has a human waiting on it.
+const (
+	DefaultMaxAttempts    = 3
+	DefaultRetryBaseDelay = 200 * time.Millisecond
+	DefaultRetryMaxDelay  = 2 * time.Second
+)
 
 // New returns a client for baseURL authenticating with token. baseURL may carry
 // a trailing slash; it is trimmed.
@@ -95,39 +112,120 @@ func (c *Client) NewRequest(ctx context.Context, method, path string, body io.Re
 
 // Do issues an authenticated JSON request. A non-nil body is JSON-encoded; a
 // non-nil out is JSON-decoded from a 2xx response. Non-2xx yields an *APIError.
+//
+// Transient failures are retried with exponential backoff (see MaxAttempts /
+// RetryBaseDelay / RetryMaxDelay), but only for GET: a dropped connection can
+// happen after the server already received and processed a POST/PUT/DELETE, so
+// re-sending one risks a duplicate effect (there is no idempotency-key
+// machinery here to make that safe). GET has no such risk either way — a lost
+// response or a 429/5xx just means try the read again.
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
-	var rdr io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("encode request: %w", err)
 		}
-		rdr = bytes.NewReader(b)
-	}
-	req, err := c.NewRequest(ctx, method, path, rdr)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		bodyBytes = b
 	}
 
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("request %s %s: %w", method, path, err)
+	attempts := 1
+	if method == http.MethodGet {
+		attempts = c.maxAttempts()
 	}
-	defer resp.Body.Close()
+	delay := c.retryBaseDelay()
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		var rdr io.Reader
+		if bodyBytes != nil {
+			rdr = bytes.NewReader(bodyBytes)
+		}
+		req, err := c.NewRequest(ctx, method, path, rdr)
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return decodeAPIError(resp)
-	}
-	if out == nil {
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request %s %s: %w", method, path, err)
+			if attempt == attempts {
+				return lastErr
+			}
+			if !sleepBackoff(ctx, &delay, c.retryMaxDelay()) {
+				return ctx.Err()
+			}
+			continue
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			apiErr := decodeAPIError(resp)
+			resp.Body.Close()
+			if retryableStatus(apiErr.Status) && attempt < attempts {
+				lastErr = apiErr
+				if !sleepBackoff(ctx, &delay, c.retryMaxDelay()) {
+					return ctx.Err()
+				}
+				continue
+			}
+			return apiErr
+		}
+
+		defer resp.Body.Close()
+		if out == nil {
+			return nil
+		}
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	return lastErr
+}
+
+// maxAttempts / retryBaseDelay / retryMaxDelay apply the Default* constants
+// when the client's fields are unset (the New() zero-value case).
+func (c *Client) maxAttempts() int {
+	if c.MaxAttempts > 0 {
+		return c.MaxAttempts
 	}
-	return nil
+	return DefaultMaxAttempts
+}
+
+func (c *Client) retryBaseDelay() time.Duration {
+	if c.RetryBaseDelay > 0 {
+		return c.RetryBaseDelay
+	}
+	return DefaultRetryBaseDelay
+}
+
+func (c *Client) retryMaxDelay() time.Duration {
+	if c.RetryMaxDelay > 0 {
+		return c.RetryMaxDelay
+	}
+	return DefaultRetryMaxDelay
+}
+
+// retryableStatus reports whether status is a transient server condition worth
+// retrying: 429 (rate limited) or any 5xx.
+func retryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+// sleepBackoff waits *delay (or until ctx is done, whichever comes first) and
+// doubles *delay up to max. Returns false if ctx ended the wait early.
+func sleepBackoff(ctx context.Context, delay *time.Duration, max time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(*delay):
+	}
+	if *delay *= 2; *delay > max {
+		*delay = max
+	}
+	return true
 }
 
 // decodeAPIError reads the error envelope from a non-2xx response.

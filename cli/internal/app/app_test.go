@@ -35,6 +35,14 @@ type fakeCP struct {
 
 	lastCreateName     string // name from the last POST /api/machines
 	lastCreateTemplate string // template_id from the last POST /api/machines
+
+	machinesFailN int // GET /api/machines returns 500 this many times before succeeding
+	createFailN   int // POST /api/machines returns 500 this many times before succeeding
+
+	providerKeySet map[string]bool   // provider key -> whether a key is currently stored
+	lastSetKey     string            // provider key from the last PUT /api/secrets/providers/{key}
+	lastSetFields  map[string]string // fields from the last PUT /api/secrets/providers/{key}
+	lastDeletedKey string            // provider key from the last DELETE /api/secrets/providers/{key}
 }
 
 func (f *fakeCP) handler() http.Handler {
@@ -58,12 +66,28 @@ func (f *fakeCP) handler() http.Handler {
 		if !auth(w, r) {
 			return
 		}
-		fmt.Fprint(w, `[{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","template_id":"go","created_at":"2026-06-20T00:00:00Z"}]`)
+		f.mu.Lock()
+		if f.machinesFailN > 0 {
+			f.machinesFailN--
+			f.mu.Unlock()
+			writeErr(w, http.StatusInternalServerError, "boom")
+			return
+		}
+		f.mu.Unlock()
+		fmt.Fprint(w, `[{"id":"m1","name":"alpha","state":"running","guest_ip":"10.0.0.2","template_id":"go","created_at":"2026-06-20T00:00:00Z"},{"id":"m2","name":"beta","state":"stopped","guest_ip":null,"template_id":"go","created_at":"2026-06-21T00:00:00Z"}]`)
 	})
 	mux.HandleFunc("POST /api/machines", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
 			return
 		}
+		f.mu.Lock()
+		if f.createFailN > 0 {
+			f.createFailN--
+			f.mu.Unlock()
+			writeErr(w, http.StatusInternalServerError, "boom")
+			return
+		}
+		f.mu.Unlock()
 		var body struct {
 			Name       string `json:"name"`
 			TemplateID string `json:"template_id"`
@@ -79,6 +103,56 @@ func (f *fakeCP) handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprintf(w, `{"id":"m2","name":%q,"state":"provisioning","guest_ip":null,"template_id":%q,"created_at":"2026-06-21T00:00:00Z"}`, name, body.TemplateID)
+	})
+	mux.HandleFunc("GET /api/providers", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		f.mu.Lock()
+		claudeSet := f.providerKeySet["claude"]
+		f.mu.Unlock()
+		fmt.Fprintf(w, `[`+
+			`{"key":"claude","display_name":"Claude Code","enabled":true,"key_set":%t,"secret_fields":[{"name":"api_key","label":"Anthropic API key","env":"ANTHROPIC_API_KEY"}]},`+
+			`{"key":"openai","display_name":"OpenAI Codex","enabled":true,"key_set":false,"secret_fields":[{"name":"api_key","label":"OpenAI API key","env":"OPENAI_API_KEY"}]},`+
+			`{"key":"multi","display_name":"Multi-field Provider","enabled":true,"key_set":false,"secret_fields":[{"name":"a","label":"A","env":"A"},{"name":"b","label":"B","env":"B"}]}`+
+			`]`, claudeSet)
+	})
+	mux.HandleFunc("PUT /api/secrets/providers/{key}", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		key := r.PathValue("key")
+		if key != "claude" && key != "openai" {
+			writeErr(w, http.StatusNotFound, "unknown_provider")
+			return
+		}
+		var body struct {
+			Fields map[string]string `json:"fields"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		if f.providerKeySet == nil {
+			f.providerKeySet = map[string]bool{}
+		}
+		f.providerKeySet[key] = true
+		f.lastSetKey = key
+		f.lastSetFields = body.Fields
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("DELETE /api/secrets/providers/{key}", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		key := r.PathValue("key")
+		f.mu.Lock()
+		if f.providerKeySet == nil {
+			f.providerKeySet = map[string]bool{}
+		}
+		f.providerKeySet[key] = false
+		f.lastDeletedKey = key
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /api/machines/{id}/start", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
@@ -755,6 +829,8 @@ func TestHelpJSONOffline(t *testing.T) {
 			"project ls", "project clone", "project ensure",
 			"git status", "git diff", "git branch", "git commit", "git push", "git pr",
 			"task run", "task ls", "task get", "task watch", "task cancel", "task send",
+			"providers ls", "providers get",
+			"secrets set", "secrets unset",
 		}
 		sort.Strings(got)
 		sort.Strings(want)
@@ -942,5 +1018,291 @@ func TestGitCommitMissingMessageExit2(t *testing.T) {
 	code, _, _ := runCLI(t, url, "tok", "git", "commit", "--machine", "m1", "--project", "hello-world")
 	if code != client.ExitUsage {
 		t.Fatalf("exit = %d, want 2", code)
+	}
+}
+
+// --- Providers / secrets (TAV-39) ---
+
+func TestProvidersList(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "providers", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "openai") || !strings.Contains(out, "api_key") {
+		t.Fatalf("unexpected table:\n%s", out)
+	}
+}
+
+func TestProvidersListJSON(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "providers", "ls", "--json")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out), "[") {
+		t.Fatalf("expected bare JSON array without pagination flags:\n%s", out)
+	}
+	if !strings.Contains(out, `"key": "claude"`) {
+		t.Fatalf("expected JSON:\n%s", out)
+	}
+}
+
+func TestProvidersGet(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "providers", "get", "claude")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "Claude Code") || !strings.Contains(out, "Key set: false") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+}
+
+func TestProvidersGetUnknownExit4(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errs := runCLI(t, url, "tok", "providers", "get", "nope")
+	if code != client.ExitNotFound {
+		t.Fatalf("exit = %d, want 4: %s", code, errs)
+	}
+}
+
+func TestSecretsSetWithField(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "secrets", "set", "--field", "api_key=sk-ant-test", "claude")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastSetKey != "claude" || cp.lastSetFields["api_key"] != "sk-ant-test" {
+		t.Fatalf("server saw key=%q fields=%v", cp.lastSetKey, cp.lastSetFields)
+	}
+	if !strings.Contains(out, "claude key set") {
+		t.Fatalf("output: %s", out)
+	}
+}
+
+func TestSecretsSetWithKeyShorthand(t *testing.T) {
+	cp, url := newCP(t)
+	code, _, _ := runCLI(t, url, "tok", "secrets", "set", "--key", "sk-openai-test", "openai")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastSetFields["api_key"] != "sk-openai-test" {
+		t.Fatalf("server saw fields=%v", cp.lastSetFields)
+	}
+}
+
+func TestSecretsSetWithStdin(t *testing.T) {
+	cp, url := newCP(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PROTEOS_URL", url)
+	t.Setenv("PROTEOS_TOKEN", "tok")
+	var out, errb bytes.Buffer
+	in := strings.NewReader("sk-ant-from-stdin\n")
+	code := app.Run(app.Env{Stdin: in, Stdout: &out, Stderr: &errb, Version: "test"}, []string{"secrets", "set", "--stdin", "claude"})
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, errb.String())
+	}
+	if cp.lastSetFields["api_key"] != "sk-ant-from-stdin" {
+		t.Fatalf("server saw fields=%v", cp.lastSetFields)
+	}
+}
+
+func TestSecretsSetKeyShorthandAmbiguousExit2(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errs := runCLI(t, url, "tok", "secrets", "set", "--key", "x", "multi")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2: %s", code, errs)
+	}
+	if !strings.Contains(errs, "declares 2 fields") {
+		t.Fatalf("errs: %s", errs)
+	}
+}
+
+func TestSecretsSetNoFieldsExit2(t *testing.T) {
+	_, url := newCP(t)
+	code, _, _ := runCLI(t, url, "tok", "secrets", "set", "claude")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+}
+
+// TestSecretsSetStdinWithoutInputExit2 covers Env{} built without Stdin (as
+// runCLI does): --stdin must fail cleanly rather than panic on a nil Reader.
+func TestSecretsSetStdinWithoutInputExit2(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errs := runCLI(t, url, "tok", "secrets", "set", "--stdin", "claude")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2: %s", code, errs)
+	}
+}
+
+func TestSecretsUnset(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "secrets", "unset", "claude")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastDeletedKey != "claude" {
+		t.Fatalf("server saw delete of %q", cp.lastDeletedKey)
+	}
+	if !strings.Contains(out, "claude key removed") {
+		t.Fatalf("output: %s", out)
+	}
+}
+
+func TestSecretsUnsetJSON(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "secrets", "unset", "--json", "claude")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, `"key_set": false`) {
+		t.Fatalf("output: %s", out)
+	}
+}
+
+// --- Machine-readable errors (TAV-39) ---
+
+func TestErrorJSONFromAPIError(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errs := runCLI(t, url, "tok", "machines", "get", "nope", "--json")
+	if code != client.ExitNotFound {
+		t.Fatalf("exit = %d, want 4", code)
+	}
+	var env struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(errs), &env); err != nil {
+		t.Fatalf("stderr not JSON: %v\n%s", err, errs)
+	}
+	if env.Error != "no_machine" {
+		t.Fatalf("error envelope = %+v", env)
+	}
+}
+
+func TestErrorJSONNoEndpoint(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PROTEOS_URL", "")
+	t.Setenv("PROTEOS_TOKEN", "")
+	var out, errb bytes.Buffer
+	code := app.Run(app.Env{Stdout: &out, Stderr: &errb, Version: "test"}, []string{"machines", "ls", "--json"})
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2: %s", code, errb.String())
+	}
+	var env struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(errb.Bytes(), &env); err != nil {
+		t.Fatalf("stderr not JSON: %v\n%s", err, errb.String())
+	}
+	if env.Error != "no_endpoint" {
+		t.Fatalf("error envelope = %+v", env)
+	}
+}
+
+func TestErrorJSONUnknownCommand(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := app.Run(app.Env{Stdout: &out, Stderr: &errb, Version: "test"}, []string{"bogus", "--json"})
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	var env struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(errb.Bytes(), &env); err != nil {
+		t.Fatalf("stderr not JSON: %v\n%s", err, errb.String())
+	}
+	if env.Error != "unknown_command" {
+		t.Fatalf("error envelope = %+v", env)
+	}
+}
+
+func TestErrorProseWithoutJSONFlag(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errs := runCLI(t, url, "tok", "machines", "get", "nope")
+	if code != client.ExitNotFound {
+		t.Fatalf("exit = %d, want 4", code)
+	}
+	if !strings.HasPrefix(errs, "proteos: ") || strings.HasPrefix(strings.TrimPrefix(errs, "proteos: "), "{") {
+		t.Fatalf("expected prose stderr, got: %s", errs)
+	}
+}
+
+// --- Pagination (TAV-39) ---
+
+func TestMachinesListPaginationTable(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "ls", "--limit", "1", "--offset", "1")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if strings.Contains(out, "m1") || !strings.Contains(out, "m2") {
+		t.Fatalf("expected only the second page, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Showing 2-2 of 2 machines") {
+		t.Fatalf("missing pagination footer:\n%s", out)
+	}
+}
+
+func TestMachinesListPaginationJSON(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "machines", "ls", "--limit", "1", "--json")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	var p struct {
+		Items   []client.Machine `json:"items"`
+		Total   int              `json:"total"`
+		Offset  int              `json:"offset"`
+		Limit   int              `json:"limit"`
+		HasMore bool             `json:"has_more"`
+	}
+	if err := json.Unmarshal([]byte(out), &p); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if len(p.Items) != 1 || p.Total != 2 || !p.HasMore || p.Limit != 1 {
+		t.Fatalf("unexpected page: %+v", p)
+	}
+}
+
+// --- Retries (TAV-39) ---
+
+func TestRetrySucceedsAfterTransientFailure(t *testing.T) {
+	cp, url := newCP(t)
+	cp.machinesFailN = 1 // one 500 before the default 3-attempt budget is exhausted
+	code, out, _ := runCLI(t, url, "tok", "machines", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d, want retry to recover", code)
+	}
+	if !strings.Contains(out, "m1") {
+		t.Fatalf("output: %s", out)
+	}
+}
+
+func TestRetryExhaustedFails(t *testing.T) {
+	cp, url := newCP(t)
+	cp.machinesFailN = 10 // always fails within the retry budget
+	code, _, errs := runCLI(t, url, "tok", "machines", "ls")
+	if code != client.ExitError {
+		t.Fatalf("exit = %d, want 1: %s", code, errs)
+	}
+}
+
+func TestNoRetryOnMutationStatusError(t *testing.T) {
+	cp, url := newCP(t)
+	cp.createFailN = 1
+	code, _, _ := runCLI(t, url, "tok", "machines", "create", "--template", "go")
+	if code != client.ExitError {
+		t.Fatalf("exit = %d, want 1 (POST 5xx must not be retried)", code)
+	}
+	if cp.createFailN != 0 {
+		t.Fatalf("createFailN = %d, want 0 (exactly one request sent)", cp.createFailN)
+	}
+	// The single failed attempt consumed the fault; a second invocation succeeds.
+	code, out, _ := runCLI(t, url, "tok", "machines", "create", "--template", "go")
+	if code != client.ExitOK {
+		t.Fatalf("second create exit = %d: %s", code, out)
 	}
 }

@@ -24,9 +24,7 @@ func runProjects(env Env, args []string) int {
 	case "ensure":
 		return projectEnsure(env, rest)
 	default:
-		fmt.Fprintf(env.Stderr, "proteos: unknown project subcommand %q\n\n", sub)
-		projectsGroupUsage(env.Stderr)
-		return client.ExitUsage
+		return unknownSubcommand(env, "project subcommand", sub, projectsGroupUsage)
 	}
 }
 
@@ -51,7 +49,7 @@ Run 'proteos project <command> -h' for that command's flags and examples.
 func projectsList(env Env, args []string) int {
 	fs := cmdFlags(env, "project ls", cmdHelp{
 		summary: "List the repositories cloned in a machine's workspace.",
-		usage:   "proteos project ls --machine <id> [--json]",
+		usage:   "proteos project ls --machine <id> [--json] [--limit N] [--offset N]",
 		examples: []string{
 			"proteos project ls --machine m-123",
 			"proteos project ls --machine m-123 --json",
@@ -60,6 +58,7 @@ func projectsList(env Env, args []string) int {
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
 	machineID := fs.String("machine", "", "machine id (required)")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
+	limit, offset := paginationFlags(fs)
 	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
@@ -75,22 +74,24 @@ func projectsList(env Env, args []string) int {
 	if err != nil {
 		return fail(env, err)
 	}
+	p := paginate(projects, *offset, *limit)
 	if *asJSON {
-		if err := printJSON(env.Stdout, projects); err != nil {
+		if err := printPageJSON(env.Stdout, p); err != nil {
 			return fail(env, err)
 		}
 		return client.ExitOK
 	}
-	if len(projects) == 0 {
+	if len(p.Items) == 0 {
 		fmt.Fprintln(env.Stdout, "No projects.")
 		return client.ExitOK
 	}
 	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tBRANCH\tDIRTY\tREMOTE")
-	for _, p := range projects {
-		fmt.Fprintf(tw, "%s\t%s\t%t\t%s\n", p.Name, p.Branch, p.Dirty, p.Remote)
+	for _, pr := range p.Items {
+		fmt.Fprintf(tw, "%s\t%s\t%t\t%s\n", pr.Name, pr.Branch, pr.Dirty, pr.Remote)
 	}
 	tw.Flush()
+	printPageFooter(env.Stdout, p, "projects")
 	return client.ExitOK
 }
 
