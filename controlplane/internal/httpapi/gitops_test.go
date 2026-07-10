@@ -161,7 +161,7 @@ func setupWorktree(t *testing.T, machineState string, ch *fakeWorktree) wtFixtur
 		Sessions:    sessions,
 		Queries:     q,
 		Audit:       audit.NewRecorder(q),
-		Machines:    machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{}),
+		Machines:    machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{}),
 		GitWorktree: ch,
 	}
 	ts := httptest.NewServer(srv.Handler())
@@ -659,7 +659,7 @@ func setupPR(t *testing.T, machineState string, revoked bool, ghURL string) wtFi
 		Queries:     q,
 		Broker:      machine.NewBroker(),
 		Audit:       audit.NewRecorder(q),
-		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, host.ID, machine.Spec{}),
+		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
 		GitWorktree: ch,
 		GitHub:      gh,
 		Tokens:      github.NewTokenSource(gh, q, sec),

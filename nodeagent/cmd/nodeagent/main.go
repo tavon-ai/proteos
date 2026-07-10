@@ -115,7 +115,8 @@ func run() error {
 func buildDriver(cfg *config.Config, store *state.Store) (driver.Driver, error) {
 	switch cfg.Driver {
 	case "dev":
-		return dev.New(store, cfg.BootDelay, cfg.StubPath, cfg.GuestAgentBin, cfg.DevGuestWebBackend), nil
+		return dev.New(store, cfg.BootDelay, cfg.StubPath, cfg.GuestAgentBin, cfg.DevGuestWebBackend).
+			WithCapacity(cfg.CapacityVcpus, cfg.CapacityMemMiB, cfg.CapacityDiskMiB), nil
 	case "firecracker":
 		return newFirecrackerDriver(cfg, store)
 	default:

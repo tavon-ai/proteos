@@ -18,6 +18,13 @@ import (
 // timing out an idle stream.
 const sseHeartbeat = 25 * time.Second
 
+// maxReplayEvents bounds how many historical events a reconnecting client can
+// replay via Last-Event-ID. A backlog larger than this falls back to a fresh
+// `snapshot` (as if newly connected) instead of streaming an unbounded number
+// of historical rows — the client's snapshot handler already treats it as the
+// authoritative current set, so no state is lost, only compacted.
+const maxReplayEvents = 500
+
 // machineEventJSON is the wire shape of a machine_events row.
 type machineEventJSON struct {
 	ID        int64           `json:"id"`
@@ -85,7 +92,7 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Subscribe BEFORE the snapshot/replay read so no event committed between
 	// the read and the live loop is dropped (the live loop dedups by event id).
-	updates, cancel := s.Broker.Subscribe()
+	updates, cancel := s.Broker.Subscribe(user.ID)
 	defer cancel()
 
 	machines, err := s.Machines.List(ctx, user.ID)
@@ -101,8 +108,14 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 
 	var lastSent int64
 	if lastID := lastEventID(r); lastID > 0 {
-		// Reconnect: replay everything after the client's last seen id.
-		lastSent = s.replayAfter(ctx, w, flusher, user.ID, byID, lastID)
+		// Reconnect: replay everything after the client's last seen id, unless
+		// the backlog exceeds the replay cap, in which case fall back to a
+		// fresh snapshot rather than streaming it unbounded.
+		var replayed bool
+		lastSent, replayed = s.replayAfter(ctx, w, flusher, user.ID, byID, lastID)
+		if !replayed {
+			lastSent = s.writeSnapshot(ctx, w, flusher, user.ID, machines)
+		}
 	} else {
 		// Fresh connection: send the snapshot (all machines + recent events).
 		lastSent = s.writeSnapshot(ctx, w, flusher, user.ID, machines)
@@ -130,9 +143,8 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 				return
 			}
-			if !sameUser(u.Machine.UserID, user.ID) {
-				continue
-			}
+			// The broker already scopes delivery to this user's subscription, so
+			// every non-shutdown update here belongs to user.
 			// A destroy carries no event row; emit a terminal `destroyed` frame so
 			// the client drops the machine (the row is already gone).
 			if u.Deleted {
@@ -159,10 +171,7 @@ func (s *Server) handleMachineEvents(w http.ResponseWriter, r *http.Request) {
 // recent events across them) and returns the highest event id it included (so
 // the live loop can skip duplicates).
 func (s *Server) writeSnapshot(ctx context.Context, w http.ResponseWriter, f http.Flusher, userID pgtype.UUID, machines []store.Machine) int64 {
-	data := snapshotData{Machines: make([]MachineSummary, 0, len(machines)), Events: []machineEventJSON{}}
-	for _, m := range machines {
-		data.Machines = append(data.Machines, s.summary(ctx, m))
-	}
+	data := snapshotData{Machines: s.summaries(ctx, machines), Events: []machineEventJSON{}}
 	var maxID int64
 	if len(machines) > 0 {
 		evs, err := s.Queries.ListUserMachineEventsRecent(ctx, store.ListUserMachineEventsRecentParams{UserID: userID, Limit: 50})
@@ -180,13 +189,18 @@ func (s *Server) writeSnapshot(ctx context.Context, w http.ResponseWriter, f htt
 	return maxID
 }
 
-// replayAfter streams every event after lastID (across all the user's machines)
-// as a `machine` event, returning the highest id sent. byID maps machine id to
-// the row whose summary is sent with each event.
-func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.Flusher, userID pgtype.UUID, byID map[pgtype.UUID]store.Machine, lastID int64) int64 {
-	evs, err := s.Queries.ListUserMachineEventsAfter(ctx, store.ListUserMachineEventsAfterParams{UserID: userID, ID: lastID})
+// replayAfter streams every event after lastID (across all the user's
+// machines) as a `machine` event, returning the highest id sent. byID maps
+// machine id to the row whose summary is sent with each event. If the backlog
+// exceeds maxReplayEvents, it sends nothing and returns ok=false so the caller
+// falls back to a fresh snapshot instead of streaming an unbounded backlog.
+func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.Flusher, userID pgtype.UUID, byID map[pgtype.UUID]store.Machine, lastID int64) (int64, bool) {
+	evs, err := s.Queries.ListUserMachineEventsAfter(ctx, store.ListUserMachineEventsAfterParams{UserID: userID, ID: lastID, Limit: maxReplayEvents + 1})
 	if err != nil {
-		return lastID
+		return lastID, true
+	}
+	if len(evs) > maxReplayEvents {
+		return lastID, false
 	}
 	maxID := lastID
 	for _, e := range evs {
@@ -202,7 +216,7 @@ func (s *Server) replayAfter(ctx context.Context, w http.ResponseWriter, f http.
 		maxID = e.ID
 	}
 	f.Flush()
-	return maxID
+	return maxID, true
 }
 
 // writeMachineEvent emits one `machine` SSE event with id: set to the row id.
@@ -243,8 +257,4 @@ func lastEventID(r *http.Request) int64 {
 		return 0
 	}
 	return n
-}
-
-func sameUser(a, b pgtype.UUID) bool {
-	return a.Valid && b.Valid && a.Bytes == b.Bytes
 }

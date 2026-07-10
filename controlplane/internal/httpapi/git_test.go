@@ -121,7 +121,7 @@ func setupGit(t *testing.T, revoked bool, machineState string) gitFixture {
 		Sessions:      sessions,
 		Queries:       q,
 		Audit:         audit.NewRecorder(q),
-		Machines:      machine.NewService(pool, nil, machine.NewBroker(), sec, host.ID, machine.Spec{}),
+		Machines:      machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
 		GitHub:        gh,
 		Tokens:        github.NewTokenSource(gh, q, sec),
 		GitChannel:    ch,

@@ -70,7 +70,7 @@ func setupMach(t *testing.T, state string) machFixture {
 	srv := &httpapi.Server{
 		Sessions: sessions,
 		Queries:  q,
-		Machines: machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), sec, host.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), sec, machine.Spec{}),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -123,7 +123,7 @@ func setupMachMulti(t *testing.T) machFixture {
 	srv := &httpapi.Server{
 		Sessions: sessions,
 		Queries:  q,
-		Machines: machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), sec, host.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), sec, machine.Spec{}),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -181,7 +181,7 @@ func TestListMachines_Empty(t *testing.T) {
 	srv := &httpapi.Server{
 		Sessions: sessions,
 		Queries:  q,
-		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), user.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{}),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

@@ -189,8 +189,7 @@ func setupFifthCP(t *testing.T, nodes *nodeclient.Client) fifthFixture {
 	sessions.SetRevocationListener(registry)
 	gw := gateway.NewProxy([]string{testWSOrigin}, nodes, registry)
 
-	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), host.ID,
-		machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
+	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
 
 	reg := providers.NewRegistry(q)
 	sec := secrets.NewMemStore()

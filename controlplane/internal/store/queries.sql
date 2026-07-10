@@ -87,6 +87,24 @@ ON CONFLICT (name) DO UPDATE
     SET agent_url = EXCLUDED.agent_url
 RETURNING *;
 
+-- name: GetHostByID :one
+-- Resolve a single host by id (TAV-37: the scheduler queries each active
+-- host's capacity by id before a machine exists to join against).
+SELECT * FROM hosts WHERE id = $1;
+
+-- name: ListActiveHosts :many
+-- Hosts eligible for scheduling new machines (TAV-37: multi-host foundation),
+-- ordered by name for stable output.
+SELECT * FROM hosts WHERE status = 'active' ORDER BY name;
+
+-- name: GetMachineHost :one
+-- Resolve the node-agent a machine is assigned to (TAV-37: multi-host
+-- foundation) so the control plane dials the right host per machine instead of
+-- a single hardcoded agent.
+SELECT h.* FROM hosts h
+JOIN machines m ON m.host_id = h.id
+WHERE m.id = $1;
+
 -- name: CreateMachine :one
 -- Create one of a user's machines in the initial 'requested' state, pinning the
 -- image refs and resource spec for the lifetime of the row. name is the display
@@ -197,10 +215,14 @@ ORDER BY sub.id ASC;
 -- name: ListUserMachineEventsAfter :many
 -- Events across ALL of a user's machines after a given id, oldest-first, for SSE
 -- Last-Event-ID replay (ids are a global sequence so cross-machine order holds).
+-- Capped by $3: the caller requests one row past its replay limit so it can
+-- detect (and fall back on) a backlog too large to replay event-by-event,
+-- rather than streaming an unbounded number of rows.
 SELECT me.* FROM machine_events me
 JOIN machines m ON m.id = me.machine_id
 WHERE m.user_id = $1 AND me.id > $2
-ORDER BY me.id ASC;
+ORDER BY me.id ASC
+LIMIT $3;
 
 -- name: CreateDisk :one
 -- Provision a machine's persistent disk at create time (1:1 with the machine).
@@ -210,6 +232,11 @@ RETURNING *;
 
 -- name: GetDiskByMachineID :one
 SELECT * FROM disks WHERE machine_id = $1;
+
+-- name: ListDisksByMachineIDs :many
+-- Batched disk lookup for a page of machines (list/SSE snapshot rendering),
+-- avoiding an N+1 GetDiskByMachineID call per machine.
+SELECT * FROM disks WHERE machine_id = ANY($1::uuid[]);
 
 -- name: SetMachineDisk :one
 -- Attach the just-created disk to the machine row.
@@ -238,6 +265,11 @@ RETURNING *;
 
 -- name: GetSnapshot :one
 SELECT * FROM snapshots WHERE machine_id = $1;
+
+-- name: ListSnapshotsByMachineIDs :many
+-- Batched snapshot lookup for a page of machines (list/SSE snapshot
+-- rendering), avoiding an N+1 GetSnapshot call per machine.
+SELECT * FROM snapshots WHERE machine_id = ANY($1::uuid[]);
 
 -- name: DeleteSnapshot :exec
 DELETE FROM snapshots WHERE machine_id = $1;

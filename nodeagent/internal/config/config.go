@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -115,6 +116,18 @@ type Config struct {
 	// the machine volume. Unused by the dev driver.
 	CryptsetupBin string
 
+	// --- TAV-37: multi-host foundation ---------------------------------------
+
+	// CapacityVcpus / CapacityMemMiB / CapacityDiskMiB (PROTEOS_AGENT_CAPACITY_
+	// VCPUS/MEM_MIB/DISK_MIB) advertise this host's total resource shape to the
+	// control plane's scheduler via GET /v1/capacity. Vcpus defaults to the
+	// host's logical CPU count; mem/disk have no reliable portable
+	// auto-detection, so they default conservatively and should be set
+	// explicitly in production.
+	CapacityVcpus   int
+	CapacityMemMiB  int
+	CapacityDiskMiB int
+
 	// MgmtIfaces (PROTEOS_AGENT_MGMT_IFACES, comma-separated) are the host
 	// interfaces allowed to reach SSH and the agent API through the firecracker
 	// driver's fail-closed nftables input chain. The token "egress" resolves to
@@ -149,6 +162,9 @@ func Load() (*Config, error) {
 		JailUIDCount:       getenvInt("PROTEOS_JAIL_UID_COUNT", 1000),
 		VolumesDir:         getenv("PROTEOS_AGENT_VOLUMES_DIR", "/var/lib/proteos/volumes"),
 		CryptsetupBin:      getenv("PROTEOS_CRYPTSETUP_BIN", "/usr/sbin/cryptsetup"),
+		CapacityVcpus:      getenvInt("PROTEOS_AGENT_CAPACITY_VCPUS", runtime.NumCPU()),
+		CapacityMemMiB:     getenvInt("PROTEOS_AGENT_CAPACITY_MEM_MIB", 8192),
+		CapacityDiskMiB:    getenvInt("PROTEOS_AGENT_CAPACITY_DISK_MIB", 102400),
 	}
 
 	if (c.TLSCert == "") != (c.TLSKey == "") {

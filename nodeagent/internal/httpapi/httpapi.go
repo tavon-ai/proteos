@@ -58,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(api.RouteGetMachine, s.auth(http.HandlerFunc(s.handleGet)))
 	mux.Handle(api.RouteListMachine, s.auth(http.HandlerFunc(s.handleList)))
 	mux.Handle(api.RouteDestroy, s.auth(http.HandlerFunc(s.handleDestroy)))
+	mux.Handle(api.RouteCapacity, s.auth(http.HandlerFunc(s.handleCapacity)))
 	mux.Handle(api.RouteGuest, s.auth(http.HandlerFunc(s.handleGuest)))
 	return requestLogger(mux)
 }
@@ -180,6 +181,23 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleCapacity(w http.ResponseWriter, r *http.Request) {
+	c, err := s.drv.Capacity(r.Context())
+	if err != nil {
+		slog.Error("capacity failed", "err", err)
+		writeError(w, http.StatusInternalServerError, api.ErrInternal)
+		return
+	}
+	writeJSON(w, http.StatusOK, api.CapacityResponse{
+		TotalVcpus:   c.TotalVcpus,
+		TotalMemMiB:  c.TotalMemMiB,
+		TotalDiskMiB: c.TotalDiskMiB,
+		UsedVcpus:    c.UsedVcpus,
+		UsedMemMiB:   c.UsedMemMiB,
+		UsedDiskMiB:  c.UsedDiskMiB,
+	})
 }
 
 // writeDriverError maps ErrUnknownMachine to 404 and anything else to 500.

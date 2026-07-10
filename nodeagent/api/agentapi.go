@@ -28,6 +28,11 @@ const (
 	RouteListMachine = "GET /v1/machines"
 	RouteDestroy     = "DELETE /v1/machines/{id}"
 
+	// RouteCapacity reports the host's total and currently-allocated resource
+	// shape (TAV-37: multi-host foundation), so the control plane's scheduler
+	// can pick a host for a new machine before ever dialing it by machine id.
+	RouteCapacity = "GET /v1/capacity"
+
 	// RouteGuest opens an opaque byte tunnel to the machine's in-guest agent
 	// (Phase 3). The control plane sends an HTTP Upgrade with UpgradeGuestProto;
 	// on 101 the connection becomes a raw bidirectional stream bridged to a guest
@@ -198,6 +203,22 @@ type ListResponse struct {
 // HealthResponse is the body of GET /healthz (200).
 type HealthResponse struct {
 	Status string `json:"status"`
+}
+
+// CapacityResponse is the body of GET /v1/capacity (200): the host's total
+// resource shape (as configured on the node-agent) and how much of it is
+// currently allocated to tracked machines (TAV-37: multi-host foundation).
+// Used* covers every machine the driver still holds real host resources for
+// (vcpus/mem: everything but stopped/error; disk: every tracked machine, since
+// a persistent disk is only released on Destroy). The control plane derives
+// available capacity as Total - Used.
+type CapacityResponse struct {
+	TotalVcpus   int `json:"total_vcpus"`
+	TotalMemMiB  int `json:"total_mem_mib"`
+	TotalDiskMiB int `json:"total_disk_mib"`
+	UsedVcpus    int `json:"used_vcpus"`
+	UsedMemMiB   int `json:"used_mem_mib"`
+	UsedDiskMiB  int `json:"used_disk_mib"`
 }
 
 // ErrorResponse is the consistent error envelope: {"error": "<code>"}.

@@ -99,7 +99,7 @@ func setupProjects(t *testing.T, machineState string, ch *fakeProjectChannel) pr
 		Sessions: sessions,
 		Queries:  q,
 		Audit:    audit.NewRecorder(q),
-		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{}),
+		Machines: machine.NewService(pool, nil, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{}),
 		Projects: ch,
 	}
 	ts := httptest.NewServer(srv.Handler())

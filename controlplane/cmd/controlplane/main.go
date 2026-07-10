@@ -99,8 +99,9 @@ func trackMachineStateMetric(ctx context.Context, b *machine.Broker, q *store.Qu
 		}
 	}
 
-	// Track subsequent state changes via the broker.
-	ch, cancel := b.Subscribe()
+	// Track subsequent state changes via the broker (all users: this is a
+	// process-wide gauge, not scoped to one dashboard).
+	ch, cancel := b.SubscribeAll()
 	defer cancel()
 	states := make(map[string]string) // machineID → current state
 	for {
@@ -222,23 +223,23 @@ func run(migrate, migrateOnly bool) error {
 	// /api/tokens management routes (browser settings page mints them).
 	patManager := token.NewManager(q)
 
-	// Phase 2: seed the single host this control plane manages, wire the
-	// node-agent client, and build the machine lifecycle (service + poller +
-	// SSE broker). The poller runs for the life of the process.
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
+	// Seed/refresh this control plane's own host row so the scheduler has at
+	// least one active host to place machines on. Additional hosts (TAV-37:
+	// multi-host foundation) are added directly to the hosts table; the
+	// scheduler (machine.Service.chooseHost) picks among whatever is active
+	// there at Create time — this seed is not otherwise referenced.
+	if _, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
 		Name:     cfg.HostName,
 		AgentUrl: cfg.NodeAgentURL,
-	})
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 	if cfg.AgentToken == "" {
 		slog.Warn("PROTEOS_AGENT_TOKEN is empty; node-agent calls will be unauthenticated and will fail")
 	}
-	nodes, err := nodeclient.NewPinned(cfg.NodeAgentURL, cfg.AgentToken, cfg.NodeCAFile)
-	if err != nil {
-		return err
-	}
+	// The registry dials each machine's own host by resolving hosts.agent_url
+	// from Postgres per call (TAV-37), rather than a single fixed node-agent.
+	nodes := nodeclient.NewRegistry(pool, cfg.AgentToken, cfg.NodeCAFile)
 	broker := machine.NewBroker()
 	go trackMachineStateMetric(ctx, broker, q)
 
@@ -275,7 +276,7 @@ func run(migrate, migrateOnly bool) error {
 	}
 	slog.Info("machine templates loaded", "count", len(catalog.Templates()), "source", tmplSource)
 
-	machineSvc := machine.NewService(pool, nodes, broker, sec, host.ID, machine.Spec{
+	machineSvc := machine.NewService(pool, nodes, broker, sec, machine.Spec{
 		Vcpus:      cfg.MachineVcpus,
 		MemMiB:     cfg.MachineMemMiB,
 		DiskMiB:    cfg.MachineDiskMiB,

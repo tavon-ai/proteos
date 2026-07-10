@@ -118,7 +118,7 @@ func setupCPLifecycle(t *testing.T, nodes *nodeclient.Client, origins []string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: nodes.BaseURL()})
+	_, err = q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: nodes.BaseURL()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func setupCPLifecycle(t *testing.T, nodes *nodeclient.Client, origins []string) 
 	}
 
 	broker := machine.NewBroker()
-	svc := machine.NewService(pool, nodes, broker, secrets.NewMemStore(), host.ID, machine.Spec{
+	svc := machine.NewService(pool, nodes, broker, secrets.NewMemStore(), machine.Spec{
 		Vcpus: 1, MemMiB: 128, DiskMiB: 1024, KernelRef: "k", RootfsRef: "r",
 	})
 	poller := machine.NewPoller(pool, nodes, broker)

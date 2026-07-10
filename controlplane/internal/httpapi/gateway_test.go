@@ -36,7 +36,11 @@ func (stubNodeClient) Stop(context.Context, string, string) error { return nil }
 func (stubNodeClient) Status(context.Context, string) (agentapi.MachineStatus, error) {
 	return agentapi.MachineStatus{}, nil
 }
-func (stubNodeClient) Destroy(context.Context, string) error { return nil }
+func (stubNodeClient) List(context.Context) ([]agentapi.MachineStatus, error) { return nil, nil }
+func (stubNodeClient) Destroy(context.Context, string) error                  { return nil }
+func (stubNodeClient) Capacity(context.Context, pgtype.UUID) (agentapi.CapacityResponse, error) {
+	return agentapi.CapacityResponse{}, nil
+}
 
 // failDialer is a gateway.GuestDialer that must never be reached (used by the
 // authz tests, where every case errors before the tunnel dial).
@@ -100,7 +104,7 @@ func setupCP(t *testing.T, dialer gateway.GuestDialer, origins []string) cpFixtu
 	sessions.SetRevocationListener(registry)
 	gw := gateway.NewProxy(origins, dialer, registry)
 
-	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), host.ID, machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
+	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
 
 	// Phase 8: wire the machine-web editor origin onto the same fixture (Domain
 	// "localhost" so m-<uuid>.localhost requests host-route to it; main-host

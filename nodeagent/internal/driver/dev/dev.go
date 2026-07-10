@@ -54,6 +54,13 @@ type DevDriver struct {
 	mu      sync.Mutex
 	procs   map[string]*exec.Cmd // machineID -> running stub child
 	booting map[string]struct{}  // machineID set for in-flight EnsureRunning calls; protected by mu
+
+	// capVcpus/capMemMiB/capDiskMiB are the host's advertised total capacity
+	// (TAV-37), set via WithCapacity. Zero (the default) reports a host with no
+	// capacity, so operators must configure it for Capacity to be meaningful.
+	capVcpus   int
+	capMemMiB  int
+	capDiskMiB int
 }
 
 // New builds a DevDriver. stubPath empty ⇒ resolve `sleep` from PATH. The stub
@@ -78,6 +85,13 @@ func New(store *state.Store, bootDelay time.Duration, stubPath, guestAgentBin, g
 		procs:           make(map[string]*exec.Cmd),
 		booting:         make(map[string]struct{}),
 	}
+}
+
+// WithCapacity sets the host's advertised total capacity (TAV-37: multi-host
+// foundation) and returns the DevDriver for chaining.
+func (d *DevDriver) WithCapacity(vcpus, memMiB, diskMiB int) *DevDriver {
+	d.capVcpus, d.capMemMiB, d.capDiskMiB = vcpus, memMiB, diskMiB
+	return d
 }
 
 // guestSockPath is the per-machine unix socket the guest agent's terminal
@@ -500,6 +514,25 @@ func (d *DevDriver) Reattach(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// Capacity reports the configured host capacity and how much of it the
+// tracked machines currently hold (TAV-37: multi-host foundation).
+func (d *DevDriver) Capacity(ctx context.Context) (driver.Capacity, error) {
+	recs, err := d.store.List()
+	if err != nil {
+		return driver.Capacity{}, err
+	}
+	out := driver.Capacity{TotalVcpus: d.capVcpus, TotalMemMiB: d.capMemMiB, TotalDiskMiB: d.capDiskMiB}
+	for _, rec := range recs {
+		out.UsedDiskMiB += rec.DiskMiB
+		if rec.State == agentapi.StateStopped || rec.State == agentapi.StateError {
+			continue // released its process/VMM; only the disk lingers
+		}
+		out.UsedVcpus += rec.Vcpus
+		out.UsedMemMiB += rec.MemMiB
+	}
+	return out, nil
 }
 
 // --- helpers ----------------------------------------------------------------

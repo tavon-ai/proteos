@@ -219,6 +219,66 @@ func TestStopUnknownMachine(t *testing.T) {
 	}
 }
 
+// TestCapacity proves GET /v1/capacity reports the configured host totals and
+// tallies Used* from tracked machines: a running machine holds vcpu/mem, a
+// stopped one only holds its disk (TAV-37: multi-host foundation).
+func TestCapacity(t *testing.T) {
+	store, err := state.NewStore(t.TempDir(), netip.MustParsePrefix("172.30.0.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drv := dev.New(store, fastBoot, "", "", "").WithCapacity(8, 16384, 102400)
+	ts := httptest.NewServer(httpapi.New(testToken, drv).Handler())
+	t.Cleanup(ts.Close)
+
+	resp := do(t, ts, http.MethodGet, "/v1/capacity", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("capacity on empty host: want 200, got %d", resp.StatusCode)
+	}
+	var c api.CapacityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c.TotalVcpus != 8 || c.TotalMemMiB != 16384 || c.TotalDiskMiB != 102400 {
+		t.Fatalf("totals = %+v, want the configured host shape", c)
+	}
+	if c.UsedVcpus != 0 || c.UsedMemMiB != 0 || c.UsedDiskMiB != 0 {
+		t.Fatalf("used on empty host = %+v, want all zero", c)
+	}
+
+	// Boot a machine with a disk: running holds vcpu+mem+disk.
+	id := "dddddddd-0000-0000-0000-000000000001"
+	ereq := api.EnsureRequest{Vcpus: 2, MemMiB: 2048, KernelRef: "k", RootfsRef: "r", DiskID: "disk-1", DiskMiB: 10240}
+	do(t, ts, http.MethodPut, "/v1/machines/"+id, ereq).Body.Close()
+	waitState(t, ts, id, api.StateRunning)
+
+	resp = do(t, ts, http.MethodGet, "/v1/capacity", nil)
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if c.UsedVcpus != 2 || c.UsedMemMiB != 2048 || c.UsedDiskMiB != 10240 {
+		t.Fatalf("used while running = %+v, want vcpus=2 mem=2048 disk=10240", c)
+	}
+
+	// Stop (poweroff, no snapshot): vcpu/mem released, disk lingers.
+	do(t, ts, http.MethodPost, "/v1/machines/"+id+"/stop", api.StopRequest{Mode: api.StopModePoweroff}).Body.Close()
+	waitState(t, ts, id, api.StateStopped)
+
+	resp = do(t, ts, http.MethodGet, "/v1/capacity", nil)
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c.UsedVcpus != 0 || c.UsedMemMiB != 0 {
+		t.Fatalf("used vcpu/mem after stop = %+v, want zero", c)
+	}
+	if c.UsedDiskMiB != 10240 {
+		t.Fatalf("used disk after stop = %d, want 10240 (disk survives until destroy)", c.UsedDiskMiB)
+	}
+}
+
 // TestReattachAfterRestart proves the agent re-adopts a live VM after a restart:
 // boot via one driver, then build a *fresh* driver over the same on-disk store
 // (as a restarted agent would) and confirm the machine is still running.

@@ -51,6 +51,9 @@ func (f *fakeGuestDriver) Status(_ context.Context, id string) (driver.Status, e
 func (f *fakeGuestDriver) Destroy(context.Context, string) error         { return nil }
 func (f *fakeGuestDriver) List(context.Context) ([]driver.Status, error) { return nil, nil }
 func (f *fakeGuestDriver) Reattach(context.Context) error                { return nil }
+func (f *fakeGuestDriver) Capacity(context.Context) (driver.Capacity, error) {
+	return driver.Capacity{}, nil
+}
 func (f *fakeGuestDriver) DialGuest(ctx context.Context, _ string, port uint32) (net.Conn, error) {
 	f.lastPort.set(port)
 	if f.dialErr != nil {
