@@ -1,9 +1,15 @@
 name: CLI Release
 
-# Manually cut a release of the proteos CLI: build the binary for every
-# supported platform, stamp the chosen version into it, and publish a GitHub
-# release with the binaries (plus checksums) attached.
+# Build the proteos CLI binary for every supported platform, stamp the chosen
+# version into it, and publish a GitHub release with the binaries (plus
+# checksums) attached.
+#
+# Triggered either by pushing a tag matching v* (e.g., v1.2.3) or manually via
+# workflow_dispatch (useful for pre-releases and hotfixes from a branch).
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -37,16 +43,25 @@ jobs:
           # cli/go.sum.
           cache-dependency-path: go.work.sum
 
-      - name: Validate version
+      - name: Determine version
+        env:
+          # Tag push → use the tag name; manual dispatch → use the input.
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
         run: |
-          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::version '${{ inputs.version }}' must look like v1.2.3 (optionally with a -suffix)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::version is empty – cannot release"
             exit 1
           fi
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version '$VERSION' must look like v1.2.3 (optionally with a -suffix)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_ENV"
+          echo "prerelease=${{ inputs.prerelease || '' }}" >> "$GITHUB_ENV"
 
       - name: Build binaries
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.VERSION }}
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -73,8 +88,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.version }}" \
-            --title "proteos CLI ${{ inputs.version }}" \
+          gh release create "${{ env.VERSION }}" \
+            --title "proteos CLI ${{ env.VERSION }}" \
             --generate-notes \
-            ${{ inputs.prerelease && '--prerelease' || '' }} \
+            --target "${{ github.sha }}" \
+            ${{ env.prerelease == 'true' && '--prerelease' || '' }} \
             dist/proteos-* dist/checksums.txt
