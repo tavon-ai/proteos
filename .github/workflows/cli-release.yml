@@ -44,6 +44,7 @@ jobs:
           cache-dependency-path: go.work.sum
 
       - name: Determine version
+        id: version
         env:
           # Tag push → use the tag name; manual dispatch → use the input.
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
@@ -56,12 +57,11 @@ jobs:
             echo "::error::version '$VERSION' must look like v1.2.3 (optionally with a -suffix)"
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_ENV"
-          echo "prerelease=${{ inputs.prerelease || '' }}" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build binaries
         env:
-          VERSION: ${{ env.VERSION }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -87,10 +87,17 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          # Empty on tag pushes (no inputs) and when the box is unchecked.
+          PRERELEASE_FLAG: ${{ inputs.prerelease == true && '--prerelease' || '' }}
         run: |
-          gh release create "${{ env.VERSION }}" \
-            --title "proteos CLI ${{ env.VERSION }}" \
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::resolved version is empty – refusing to create a release"
+            exit 1
+          fi
+          gh release create "$VERSION" \
+            --title "proteos CLI $VERSION" \
             --generate-notes \
             --target "${{ github.sha }}" \
-            ${{ env.prerelease == 'true' && '--prerelease' || '' }} \
+            $PRERELEASE_FLAG \
             dist/proteos-* dist/checksums.txt

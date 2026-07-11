@@ -822,22 +822,26 @@ func TestHelpJSONIncludesBuildIdentity(t *testing.T) {
 	}
 }
 
+// helpJSONCommand mirrors one command of `proteos --help-json` for tests.
+type helpJSONCommand struct {
+	Path  string `json:"path"`
+	Group string `json:"group"`
+	Name  string `json:"name"`
+	Flags []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"flags"`
+}
+
 // helpJSONTree mirrors the shape of `proteos --help-json` for tests.
 type helpJSONTree struct {
 	Program string `json:"program"`
 	Version string `json:"version"`
 	Groups  []struct {
-		Name     string `json:"name"`
-		Commands []struct {
-			Path  string `json:"path"`
-			Group string `json:"group"`
-			Name  string `json:"name"`
-			Flags []struct {
-				Name string `json:"name"`
-				Type string `json:"type"`
-			} `json:"flags"`
-		} `json:"commands"`
+		Name     string            `json:"name"`
+		Commands []helpJSONCommand `json:"commands"`
 	} `json:"groups"`
+	Commands []helpJSONCommand `json:"commands"`
 }
 
 // TestHelpJSONOffline proves --help-json works with no endpoint, no token, and
@@ -867,7 +871,14 @@ func TestHelpJSONOffline(t *testing.T) {
 				got = append(got, c.Path)
 			}
 		}
+		for _, c := range tree.Commands {
+			if c.Group != "" {
+				t.Errorf("top-level command %q has group %q, want none", c.Path, c.Group)
+			}
+			got = append(got, c.Path)
+		}
 		want := []string{
+			"version", "help", "help-json",
 			"auth login", "auth status", "auth logout",
 			"machines ls", "machines get", "machines create", "machines start", "machines stop",
 			"templates ls",
@@ -897,27 +908,26 @@ func TestHelpJSONMatchesCommandHelp(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &tree); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
+	all := tree.Commands
 	for _, g := range tree.Groups {
-		for _, c := range g.Commands {
-			if len(c.Flags) == 0 {
-				continue // e.g. `auth logout` takes no flags and has no -h path
-			}
-			args := append(strings.Fields(c.Path), "-h")
-			code, _, errs := runArgs(t, args...)
-			if code != client.ExitOK {
-				t.Errorf("%q -h exit = %d, want 0 (not dispatchable?)", c.Path, code)
-				continue
-			}
-			got := flagNamesFromHelp(errs)
-			var want []string
-			for _, f := range c.Flags {
-				want = append(want, f.Name)
-			}
-			sort.Strings(got)
-			sort.Strings(want)
-			if strings.Join(got, ",") != strings.Join(want, ",") {
-				t.Errorf("%q flags drift between -h and --help-json.\n  -h: %v\njson: %v", c.Path, got, want)
-			}
+		all = append(all, g.Commands...)
+	}
+	for _, c := range all {
+		args := append(strings.Fields(c.Path), "-h")
+		code, _, errs := runArgs(t, args...)
+		if code != client.ExitOK {
+			t.Errorf("%q -h exit = %d, want 0 (not dispatchable?)", c.Path, code)
+			continue
+		}
+		got := flagNamesFromHelp(errs)
+		var want []string
+		for _, f := range c.Flags {
+			want = append(want, f.Name)
+		}
+		sort.Strings(got)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%q flags drift between -h and --help-json.\n  -h: %v\njson: %v", c.Path, got, want)
 		}
 	}
 }
