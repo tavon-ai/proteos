@@ -23,7 +23,7 @@ func runAuth(env Env, args []string) int {
 	case "status":
 		return authStatus(env, rest)
 	case "logout":
-		return authLogout(env)
+		return authLogout(env, rest)
 	default:
 		return unknownSubcommand(env, "auth subcommand", sub, authGroupUsage)
 	}
@@ -137,7 +137,18 @@ func authStatus(env Env, args []string) int {
 	return client.ExitOK
 }
 
-func authLogout(env Env) int {
+// authLogout removes the stored credentials. It registers no flags, but still
+// goes through cmdFlags/parse so -h prints help (instead of logging out) and
+// --help-json can introspect it like every other leaf.
+func authLogout(env Env, args []string) int {
+	fs := cmdFlags(env, "auth logout", cmdHelp{
+		summary: "Remove the stored credentials.",
+		long:    "Deletes ~/.config/proteos/credentials.json. PROTEOS_TOKEN/PROTEOS_URL, if set,\nare untouched — unset those in your shell.",
+		usage:   "proteos auth logout",
+	})
+	if ok, code := parse(env, fs, args); !ok {
+		return code
+	}
 	if err := config.Delete(); err != nil {
 		return fail(env, err)
 	}
