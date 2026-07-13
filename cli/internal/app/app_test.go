@@ -32,6 +32,8 @@ type fakeCP struct {
 	cloned          bool   // set by POST /api/git/clone (then projects show up)
 	lastCloneName   string // full_name from the last clone request
 	lastCloneURL    string // url from the last clone request (clone-by-URL)
+	gitHostLinked   bool   // whether the fake git host has a PAT saved
+	lastHostToken   string // token from the last set-token request
 	lastCommitMsg   string // message from the last git commit request
 
 	lastCreateName     string // name from the last POST /api/machines
@@ -220,6 +222,54 @@ func (f *fakeCP) handler() http.Handler {
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprint(w, `{"op_id":"op1"}`)
 	})
+	mux.HandleFunc("GET /api/git/hosts", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		f.mu.Lock()
+		linked := f.gitHostLinked
+		f.mu.Unlock()
+		if linked {
+			fmt.Fprint(w, `{"hosts":[{"host":"codeberg.example","linked":true,"login":"ivan"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"hosts":[{"host":"codeberg.example","linked":false}]}`)
+	})
+	mux.HandleFunc("PUT /api/git/hosts/{host}/token", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		if r.PathValue("host") != "codeberg.example" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"unknown_host"}`)
+			return
+		}
+		var body struct {
+			Token string `json:"token"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.lastHostToken = body.Token
+		f.mu.Unlock()
+		if body.Token != "pat-ok" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"bad_token"}`)
+			return
+		}
+		f.mu.Lock()
+		f.gitHostLinked = true
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"host":"codeberg.example","linked":true,"login":"ivan"}`)
+	})
+	mux.HandleFunc("DELETE /api/git/hosts/{host}/token", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		f.mu.Lock()
+		f.gitHostLinked = false
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /api/machines/{id}/git/status", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
 			return
@@ -372,11 +422,22 @@ func writeErr(w http.ResponseWriter, status int, code string) {
 // runCLI executes the CLI in-process with a temp config dir + env auth.
 func runCLI(t *testing.T, url, token string, args ...string) (int, string, string) {
 	t.Helper()
+	return runCLIStdin(t, url, token, "", args...)
+}
+
+// runCLIStdin is runCLI with stdin content (e.g. a PAT for git hosts
+// set-token). An empty stdin leaves Env.Stdin nil, matching runCLI.
+func runCLIStdin(t *testing.T, url, token, stdin string, args ...string) (int, string, string) {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("PROTEOS_URL", url)
 	t.Setenv("PROTEOS_TOKEN", token)
 	var out, errb bytes.Buffer
-	code := app.Run(app.Env{Stdout: &out, Stderr: &errb, Version: "test"}, args)
+	env := app.Env{Stdout: &out, Stderr: &errb, Version: "test"}
+	if stdin != "" {
+		env.Stdin = strings.NewReader(stdin)
+	}
+	code := app.Run(env, args)
 	return code, out.String(), errb.String()
 }
 
@@ -1144,6 +1205,75 @@ func TestProjectCloneForbiddenHost(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "PROTEOS_GIT_PUBLIC_HOSTS") {
 		t.Fatalf("stderr should name the operator setting:\n%s", errOut)
+	}
+}
+
+// --- Gitea/Forgejo phase 2: git hosts PAT commands ----------------------------
+
+func TestGitHostsList(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "git", "hosts", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "codeberg.example") || strings.Contains(out, "saved") {
+		t.Fatalf("hosts output should list the host, unlinked:\n%s", out)
+	}
+}
+
+func TestGitHostsSetToken(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLIStdin(t, url, "tok", "pat-ok\n", "git", "hosts", "set-token", "codeberg.example")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if cp.lastHostToken != "pat-ok" {
+		t.Fatalf("server saw token %q", cp.lastHostToken)
+	}
+	if !strings.Contains(out, "account: ivan") {
+		t.Fatalf("set-token output:\n%s", out)
+	}
+	// The list now shows the link.
+	_, lsOut, _ := runCLI(t, url, "tok", "git", "hosts", "ls")
+	if !strings.Contains(lsOut, "saved") || !strings.Contains(lsOut, "ivan") {
+		t.Fatalf("hosts output after set-token:\n%s", lsOut)
+	}
+}
+
+func TestGitHostsSetTokenRejected(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLIStdin(t, url, "tok", "pat-wrong\n", "git", "hosts", "set-token", "codeberg.example")
+	if code == client.ExitOK {
+		t.Fatal("bad token should fail")
+	}
+	if !strings.Contains(errOut, "bad_token") {
+		t.Fatalf("stderr should carry bad_token:\n%s", errOut)
+	}
+}
+
+func TestGitHostsSetTokenNoStdin(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLIStdin(t, url, "tok", "", "git", "hosts", "set-token", "codeberg.example")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want usage error", code)
+	}
+	if !strings.Contains(errOut, "stdin") {
+		t.Fatalf("stderr should explain the stdin requirement:\n%s", errOut)
+	}
+}
+
+func TestGitHostsRmToken(t *testing.T) {
+	cp, url := newCP(t)
+	cp.gitHostLinked = true
+	code, out, _ := runCLI(t, url, "tok", "git", "hosts", "rm-token", "codeberg.example")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "token removed") {
+		t.Fatalf("rm-token output:\n%s", out)
+	}
+	if cp.gitHostLinked {
+		t.Fatal("server should have unlinked the host")
 	}
 }
 

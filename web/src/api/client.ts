@@ -265,6 +265,15 @@ export interface ReposResponse {
 // host must be on the server's public-host allowlist).
 export type CloneTarget = { full_name: string; url?: never } | { url: string; full_name?: never };
 
+// GitHost is one row of GET /api/git/hosts (Gitea/Forgejo phase 2): an
+// operator-allowlisted additional git host and whether the user has a PAT
+// saved for it. The token is write-only — only the host login is readable.
+export interface GitHost {
+  host: string;
+  linked: boolean;
+  login?: string;
+}
+
 // CloneStarted is the 202 body of POST /api/git/clone; completion arrives as a
 // git.clone machine event over the SSE stream.
 export interface CloneStarted {
@@ -677,6 +686,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(target),
     }),
+
+  // Git-host PATs (Gitea/Forgejo phase 2). The token is validated against the
+  // host then stored — never returned. setGitHostToken throws ApiError 400
+  // bad_token when the host rejects it, 404 unknown_host when the host is not
+  // allowlisted, 502 githost_unavailable when unreachable.
+  listGitHosts: () => request<{ hosts: GitHost[] }>('/api/git/hosts').then((r) => r.hosts),
+  setGitHostToken: (host: string, token: string) =>
+    request<GitHost>(`/api/git/hosts/${encodeURIComponent(host)}/token`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }),
+  deleteGitHostToken: (host: string) =>
+    request<void>(`/api/git/hosts/${encodeURIComponent(host)}/token`, { method: 'DELETE' }),
 
   // Worktree review (GR1): read a project's git status / unified diff. project is
   // the repo's /workspace directory name. 400 bad_project if it is not a listable

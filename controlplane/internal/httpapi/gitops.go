@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/gitea"
+	"github.com/tavon-ai/proteos/controlplane/internal/githost"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
@@ -303,9 +308,12 @@ type prResponse struct {
 }
 
 // handleGitPR opens a pull request from Head into Base (GR5) — the only git hop
-// that is a CP→GitHub call, not a guest verb. owner/repo come from the project's
-// origin remote; Base defaults to the repo's default branch. The user's OAuth
-// token authorizes the call (same path as repo listing).
+// that is a CP→provider API call, not a guest verb. owner/repo come from the
+// project's origin remote, and the remote's host picks the provider: the auth
+// host goes to GitHub with the user's OAuth token; an allowlisted public host
+// goes to that host's /api/v1 with the user's stored PAT (Gitea/Forgejo phase
+// 2); anything else is refused — owner/repo alone would silently address the
+// wrong provider's repository.
 func (s *Server) handleGitPR(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
@@ -339,38 +347,63 @@ func (s *Server) handleGitPR(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "bad_remote")
 		return
 	}
-	// PRs are a CP→GitHub API call, so they only exist for projects whose
-	// origin is the authenticated host. A project cloned from a public host
-	// (Gitea/Forgejo phase 1) must be refused here — owner/repo alone would
-	// silently address the wrong (GitHub) repository. This check is the
-	// provider-dispatch point once phase 2 adds non-GitHub API clients.
-	if !strings.EqualFold(remoteHost, s.GitHost) {
+
+	uid := uuidString(user.ID)
+	var pr prResponse
+	var base string
+	switch {
+	case strings.EqualFold(remoteHost, s.GitHost):
+		pr, base, ok = s.createGitHubPR(w, r, uid, owner, repo, req)
+	case slices.Contains(s.GitPublicHosts, remoteHost) && s.GiteaFor != nil && s.Secrets != nil:
+		pr, base, ok = s.createGiteaPR(w, r, user.ID, remoteHost, owner, repo, req)
+	default:
 		writeError(w, http.StatusUnprocessableEntity, "unsupported_host")
 		return
 	}
+	if !ok {
+		return // the provider branch already wrote the error
+	}
 
-	uid := uuidString(user.ID)
+	s.Audit.Record(r.Context(), audit.Entry{
+		UserID:   uid,
+		Actor:    audit.UserActor(uid),
+		Action:   audit.ActionGitPRCreate,
+		Target:   req.Project,
+		Metadata: map[string]any{"number": pr.Number, "head": req.Head, "base": base, "host": remoteHost},
+	})
+	// Surface the PR over SSE too, so the desktop activity log and any other
+	// session learn it landed (best-effort; the response is the primary carrier).
+	s.emitMachineEvent(r.Context(), machineID, audit.ActionGitPRCreate, map[string]any{
+		"number": pr.Number, "url": pr.PRURL, "project": req.Project,
+	})
+	writeJSON(w, http.StatusOK, pr)
+}
+
+// createGitHubPR is the auth-host provider branch of handleGitPR: resolve the
+// user's OAuth token, default the base branch, create the PR. On failure it
+// writes the HTTP error and returns ok=false.
+func (s *Server) createGitHubPR(w http.ResponseWriter, r *http.Request, uid, owner, repo string, req prRequest) (pr prResponse, base string, ok bool) {
 	cred, err := s.Tokens.Token(r.Context(), uid)
 	if errors.Is(err, github.ErrReconnectGitHub) {
 		writeError(w, http.StatusConflict, "reconnect_github")
-		return
+		return prResponse{}, "", false
 	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "github_unavailable")
-		return
+		return prResponse{}, "", false
 	}
 
-	base := req.Base
+	base = req.Base
 	if base == "" {
 		rp, err := s.GitHub.GetRepo(r.Context(), cred.AccessToken, owner, repo)
 		if err != nil || rp.DefaultBranch == "" {
 			writeError(w, http.StatusBadGateway, "github_unavailable")
-			return
+			return prResponse{}, "", false
 		}
 		base = rp.DefaultBranch
 	}
 
-	pr, err := s.GitHub.CreatePR(r.Context(), cred.AccessToken, owner, repo, req.Head, base, req.Title, req.Body)
+	created, err := s.GitHub.CreatePR(r.Context(), cred.AccessToken, owner, repo, req.Head, base, req.Title, req.Body)
 	if err != nil {
 		switch {
 		case errors.Is(err, github.ErrNoPRCommits):
@@ -380,22 +413,62 @@ func (s *Server) handleGitPR(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeError(w, http.StatusBadGateway, "github_unavailable")
 		}
-		return
+		return prResponse{}, "", false
+	}
+	return prResponse{PRURL: created.HTMLURL, Number: created.Number}, base, true
+}
+
+// createGiteaPR is the public-host provider branch of handleGitPR (Gitea/
+// Forgejo phase 2): resolve the user's stored PAT for the host, default the
+// base branch via /api/v1, create the PR. On failure it writes the HTTP error
+// and returns ok=false.
+func (s *Server) createGiteaPR(w http.ResponseWriter, r *http.Request, userID pgtype.UUID, host, owner, repo string, req prRequest) (pr prResponse, base string, ok bool) {
+	_, token, err := githost.NewPATSource(s.Queries, s.Secrets).HostCredential(r.Context(), uuidString(userID), host)
+	if errors.Is(err, githost.ErrNoLink) {
+		// PR creation is an authenticated API call even on public repos.
+		writeError(w, http.StatusConflict, "githost_token_required")
+		return prResponse{}, "", false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal")
+		return prResponse{}, "", false
+	}
+	client := s.GiteaFor(host)
+
+	base = req.Base
+	if base == "" {
+		rp, err := client.GetRepo(r.Context(), token, owner, repo)
+		switch {
+		case errors.Is(err, gitea.ErrBadToken):
+			writeError(w, http.StatusConflict, "githost_token_invalid")
+			return prResponse{}, "", false
+		case errors.Is(err, gitea.ErrNotFound):
+			writeError(w, http.StatusUnprocessableEntity, "bad_remote")
+			return prResponse{}, "", false
+		case err != nil || rp.DefaultBranch == "":
+			writeError(w, http.StatusBadGateway, "githost_unavailable")
+			return prResponse{}, "", false
+		}
+		base = rp.DefaultBranch
 	}
 
-	s.Audit.Record(r.Context(), audit.Entry{
-		UserID:   uid,
-		Actor:    audit.UserActor(uid),
-		Action:   audit.ActionGitPRCreate,
-		Target:   req.Project,
-		Metadata: map[string]any{"number": pr.Number, "head": req.Head, "base": base},
-	})
-	// Surface the PR over SSE too, so the desktop activity log and any other
-	// session learn it landed (best-effort; the response is the primary carrier).
-	s.emitMachineEvent(r.Context(), machineID, audit.ActionGitPRCreate, map[string]any{
-		"number": pr.Number, "url": pr.HTMLURL, "project": req.Project,
-	})
-	writeJSON(w, http.StatusOK, prResponse{PRURL: pr.HTMLURL, Number: pr.Number})
+	created, err := client.CreatePR(r.Context(), token, owner, repo, req.Head, base, req.Title, req.Body)
+	if err != nil {
+		switch {
+		case errors.Is(err, gitea.ErrNoPRCommits):
+			writeError(w, http.StatusUnprocessableEntity, "no_commits")
+		case errors.Is(err, gitea.ErrPRAlreadyExists):
+			writeError(w, http.StatusConflict, "pr_exists")
+		case errors.Is(err, gitea.ErrBadToken):
+			writeError(w, http.StatusConflict, "githost_token_invalid")
+		case errors.Is(err, gitea.ErrNotFound):
+			writeError(w, http.StatusUnprocessableEntity, "bad_remote")
+		default:
+			writeError(w, http.StatusBadGateway, "githost_unavailable")
+		}
+		return prResponse{}, "", false
+	}
+	return prResponse{PRURL: created.HTMLURL, Number: created.Number}, base, true
 }
 
 // resolveProjectRemote returns the origin remote URL of a listable project, with

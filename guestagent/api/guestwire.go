@@ -527,9 +527,11 @@ const (
 	// on stderr and exits non-zero so git stops cleanly.
 	ErrCodeReconnectGitHub = "reconnect_github"
 	// ErrCodeForbiddenHost: the credential request named a host/protocol the
-	// control plane will not mint a credential for. Only the configured auth
-	// host (PROTEOS_GIT_HOST, default github.com) over https gets credentials;
-	// allowlisted public hosts are anonymous clone only.
+	// control plane will not mint a credential for. Over https, the configured
+	// auth host (PROTEOS_GIT_HOST, default github.com) always gets credentials,
+	// and an allowlisted public host does when the user has saved a PAT for it
+	// (Gitea/Forgejo phase 2); everything else — including a public host with
+	// no PAT — is refused.
 	ErrCodeForbiddenHost = "forbidden_host"
 	// ErrCodeUnavailable: a transient failure (token store unreachable, no owner
 	// resolvable, etc.). The helper exits non-zero; git reports the failure.
@@ -602,7 +604,7 @@ type GitCloneDonePayload struct {
 
 // GitCredentialRequest is the body of a guest → CP git.credential req.
 type GitCredentialRequest struct {
-	Host     string `json:"host"`     // must be the configured auth host (PROTEOS_GIT_HOST); public hosts are never credentialed
+	Host     string `json:"host"`     // the auth host (PROTEOS_GIT_HOST) or an allowlisted public host the user has a PAT for
 	Protocol string `json:"protocol"` // must be https
 }
 

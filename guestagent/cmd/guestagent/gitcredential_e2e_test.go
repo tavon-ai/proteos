@@ -189,6 +189,81 @@ func publicReadGate(next http.Handler) http.Handler {
 	})
 }
 
+// TestGitCredentialHelper_PublicHostPATPush is the Gitea/Forgejo phase 2 guest
+// acceptance: against the same public-repo shape (anonymous reads, auth-gated
+// receive-pack), a stored per-host PAT — resolved by the CP as login+PAT Basic
+// auth — makes the push land, and the PAT never touches disk in the guest.
+func TestGitCredentialHelper_PublicHostPATPush(t *testing.T) {
+	gitBin, backend := gitTools(t)
+	helperBin := buildGuestagent(t)
+	const pat = "gitea-pat-s3cr3t-value"
+
+	root := t.TempDir()
+	upstream := filepath.Join(root, "repo.git")
+	runGit(t, gitBin, "", "init", "--bare", upstream)
+	runGit(t, gitBin, upstream, "config", "http.receivepack", "true")
+
+	srv := httptest.NewServer(publicWriteAuthGate("ivan", pat, &cgi.Handler{
+		Path: backend,
+		Env: []string{
+			"GIT_PROJECT_ROOT=" + root,
+			"GIT_HTTP_EXPORT_ALL=1",
+		},
+	}))
+	t.Cleanup(srv.Close)
+	repoURL := srv.URL + "/repo.git"
+
+	// The resolver returns the Gitea Basic pair (login as username, PAT as
+	// password) — what the CP mints for a linked public host.
+	sock := tmpSock(t)
+	startLocalSock(t, sock, stubResolver{username: "ivan", password: pat})
+
+	home := t.TempDir()
+	writeGitConfig(t, home, helperBin)
+	env := append(os.Environ(),
+		"HOME="+home,
+		"PROTEOS_AGENT_SOCK="+sock,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+
+	// Clone stays anonymous (no 401 on reads, so the helper is never invoked).
+	work := filepath.Join(t.TempDir(), "clone")
+	runGitEnv(t, gitBin, "", env, "clone", repoURL, work)
+
+	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("hello PAT push\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitEnv(t, gitBin, work, env, "add", "README.md")
+	runGitEnv(t, gitBin, work, env, "commit", "-m", "phase2: PAT push")
+	runGitEnv(t, gitBin, work, env, "push", "origin", "HEAD:refs/heads/main")
+
+	out := runGit(t, gitBin, upstream, "log", "--format=%s", "-1", "main")
+	if !strings.Contains(out, "phase2: PAT push") {
+		t.Fatalf("push did not land: %q", out)
+	}
+
+	// The PAT must never have been written to disk anywhere in the guest.
+	assertNoToken(t, home, pat)
+	assertNoToken(t, work, pat)
+}
+
+// publicWriteAuthGate serves reads anonymously and requires the login:PAT
+// Basic pair for receive-pack — a public Gitea repo the user can push to.
+func publicWriteAuthGate(login, pat string, next http.Handler) http.Handler {
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(login+":"+pat))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isPush := strings.Contains(r.URL.Path, "git-receive-pack") ||
+			r.URL.Query().Get("service") == "git-receive-pack"
+		if isPush && r.Header.Get("Authorization") != want {
+			w.Header().Set("WWW-Authenticate", `Basic realm="proteos"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // TestGitCredentialHelper_RevokedFails proves a revoked grant makes the helper
 // exit non-zero with reconnect_github on stderr (so git stops cleanly).
 func TestGitCredentialHelper_RevokedFails(t *testing.T) {

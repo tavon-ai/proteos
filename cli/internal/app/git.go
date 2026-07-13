@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -27,6 +28,8 @@ func runGit(env Env, args []string) int {
 		return gitPush(env, rest)
 	case "pr":
 		return gitPR(env, rest)
+	case "hosts", "host":
+		return runGitHosts(env, rest)
 	default:
 		return unknownSubcommand(env, "git subcommand", sub, gitGroupUsage)
 	}
@@ -47,8 +50,9 @@ Commands:
   commit -m <msg>  Stage and commit changes (all, or the given paths)
   push             Push a branch to origin
   pr               Open a pull request
+  hosts            Manage tokens for additional git hosts (Gitea/Forgejo)
 
-Every command needs --machine <id> and --project <name>.
+Every command except 'hosts' needs --machine <id> and --project <name>.
 Run 'proteos git <command> -h' for that command's flags and examples.
 `)
 }
@@ -309,6 +313,18 @@ func gitPR(env Env, args []string) int {
 		Project: *project, Title: *title, Body: *body, Head: *head, Base: *base,
 	})
 	if err != nil {
+		// The two PAT codes name a fix the user can apply; the raw code alone
+		// is a dead end.
+		if ae, ok := errors.AsType[*client.APIError](err); ok {
+			switch ae.Code {
+			case "githost_token_required":
+				writeErrorMsg(env, ae.Code, "no token saved for this project's git host — add one with: proteos git hosts set-token <host>")
+				return client.ExitError
+			case "githost_token_invalid":
+				writeErrorMsg(env, ae.Code, "the host rejected your saved token (revoked or expired) — save a fresh one with: proteos git hosts set-token <host>")
+				return client.ExitError
+			}
+		}
 		return fail(env, err)
 	}
 	if *asJSON {

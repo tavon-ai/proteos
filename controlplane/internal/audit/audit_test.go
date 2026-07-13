@@ -39,6 +39,8 @@ func TestActionConstants(t *testing.T) {
 		ActionGitCredential: "git.credential",
 		ActionGitPRMerge:    "git.pr.merge",
 		ActionGitPRComment:  "git.pr.comment",
+		ActionGitHostTokenSet:    "git.host.token.set",
+		ActionGitHostTokenDelete: "git.host.token.delete",
 		ActorSystemInjector: "system:injector",
 	}
 	for got, want := range cases {

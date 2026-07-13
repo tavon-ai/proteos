@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // ErrNotFound is returned by Get/Delete when no secret exists at the path.
@@ -67,6 +68,24 @@ func SelfCheck(s Store) error {
 func UserGitHubPath(userID string) string {
 	return fmt.Sprintf("secret/users/%s/github", userID)
 }
+
+// UserGitHostPath returns the canonical secret path for a user's Personal
+// Access Token on an additional git host (Gitea/Forgejo phase 2). host is the
+// lowercased host[:port] allowlist form; ':' is sanitized to '_' so a port
+// stays one path segment. Fields: {token, login} — login is the user's account
+// name on that host, captured at save time because git-over-https Basic auth
+// needs it as the username. Lives under the user subtree, so the user-scoped
+// OpenBao policy covers it with no policy change.
+func UserGitHostPath(userID, host string) string {
+	return fmt.Sprintf("secret/users/%s/githosts/%s", userID, strings.ReplaceAll(host, ":", "_"))
+}
+
+// Field names under UserGitHostPath. Shared by the PAT API (writer) and the
+// guest credential broker (reader).
+const (
+	GitHostFieldToken = "token"
+	GitHostFieldLogin = "login"
+)
 
 // UserProviderPath returns the canonical secret path for a user's API key for
 // the given provider (e.g. claude). The fields under this path are named by the
