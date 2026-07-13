@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/githost"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
@@ -42,16 +45,27 @@ type GuestDialer interface {
 	DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error)
 }
 
+// HostCredentialSource resolves a user's stored credential for one of the
+// additional public git hosts (Gitea/Forgejo phase 2). *githost.PATSource
+// satisfies it; an interface keeps the manager unit-testable.
+type HostCredentialSource interface {
+	// HostCredential returns the Basic-auth pair (login, PAT) for host, or
+	// githost.ErrNoLink when the user has not stored one.
+	HostCredential(ctx context.Context, userID, host string) (username, password string, err error)
+}
+
 // Manager maintains one control channel per running machine and serves guest →
 // CP requests through a single authorization choke point.
 type Manager struct {
-	dialer  GuestDialer
-	broker  *machine.Broker
-	q       *store.Queries
-	tokens  *github.TokenSource
-	audit   *audit.Recorder
-	tasks   *taskevents.Hub // AT2 live agent-event fan-out (may be nil)
-	gitHost string
+	dialer      GuestDialer
+	broker      *machine.Broker
+	q           *store.Queries
+	tokens      *github.TokenSource
+	audit       *audit.Recorder
+	tasks       *taskevents.Hub // AT2 live agent-event fan-out (may be nil)
+	gitHost     string
+	hostCreds   HostCredentialSource // per-host PATs (may be nil ⇒ public hosts stay anonymous)
+	publicHosts []string             // lowercased host[:port] allowlist (PROTEOS_GIT_PUBLIC_HOSTS)
 
 	baseCtx context.Context
 
@@ -60,12 +74,14 @@ type Manager struct {
 	conns       map[string]*conn              // machineID → live connection (nil while redialing)
 }
 
-// New wires a Manager. gitHost is the only host credentials are minted for
-// (config PROTEOS_GIT_HOST, default github.com); clones may additionally
-// target the PROTEOS_GIT_PUBLIC_HOSTS allowlist, anonymously.
+// New wires a Manager. gitHost is the host GitHub App tokens are minted for
+// (config PROTEOS_GIT_HOST, default github.com). publicHosts is the
+// PROTEOS_GIT_PUBLIC_HOSTS allowlist: clones target it anonymously, and when
+// hostCreds is non-nil a stored per-user PAT is minted for those hosts too
+// (Gitea/Forgejo phase 2) — nil keeps them anonymous-only.
 // tasks is the AT2 agent-event fan-out the headless run streams into (nil ⇒ live
 // events are simply not relayed; agent.done still records the final result).
-func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *github.TokenSource, rec *audit.Recorder, tasks *taskevents.Hub, gitHost string) *Manager {
+func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *github.TokenSource, rec *audit.Recorder, tasks *taskevents.Hub, gitHost string, hostCreds HostCredentialSource, publicHosts []string) *Manager {
 	if gitHost == "" {
 		gitHost = "github.com"
 	}
@@ -77,6 +93,8 @@ func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *g
 		audit:       rec,
 		tasks:       tasks,
 		gitHost:     gitHost,
+		hostCreds:   hostCreds,
+		publicHosts: publicHosts,
 		supervisors: map[string]context.CancelFunc{},
 		conns:       map[string]*conn{},
 	}
@@ -317,41 +335,65 @@ func (m *Manager) makeHandler(machineID, userID string) reqHandler {
 	}
 }
 
-// handleCredential is the authorization choke point for git.credential: validate
-// the host/protocol, resolve the owner's token, audit, and return the credential.
+// handleCredential is the authorization choke point for git.credential:
+// validate the host/protocol, resolve the owner's credential for that host,
+// audit, and return it. The auth host gets the GitHub App token; an
+// allowlisted public host gets the user's stored login+PAT (Gitea/Forgejo
+// phase 2); everything else — including a public host with no PAT — is
+// refused with forbidden_host.
 func (m *Manager) handleCredential(ctx context.Context, userID string, payload json.RawMessage) (json.RawMessage, *guestwire.ControlErrorPayload) {
 	var req guestwire.GitCredentialRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable, Message: "bad payload"}
 	}
-	if req.Host != m.gitHost || req.Protocol != "https" {
-		slog.Warn("guestctl: credential refused for host", "host", req.Host, "protocol", req.Protocol)
+	host := strings.ToLower(req.Host)
+	if req.Protocol != "https" {
+		slog.Warn("guestctl: credential refused for protocol", "host", req.Host, "protocol", req.Protocol)
 		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeForbiddenHost}
 	}
 
-	cred, err := m.tokens.Token(ctx, userID)
-	if errors.Is(err, github.ErrReconnectGitHub) {
-		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeReconnectGitHub}
-	}
-	if err != nil {
-		slog.Error("guestctl: token resolve failed", "err", err)
-		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable}
+	var resp guestwire.GitCredentialResponse
+	switch {
+	case host == m.gitHost:
+		cred, err := m.tokens.Token(ctx, userID)
+		if errors.Is(err, github.ErrReconnectGitHub) {
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeReconnectGitHub}
+		}
+		if err != nil {
+			slog.Error("guestctl: token resolve failed", "err", err)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable}
+		}
+		resp = guestwire.GitCredentialResponse{Username: "x-access-token", Password: cred.AccessToken}
+		if !cred.Expiry.IsZero() {
+			resp.Expiry = cred.Expiry.UTC().Format(time.RFC3339)
+		}
+
+	case m.hostCreds != nil && slices.Contains(m.publicHosts, host):
+		login, pat, err := m.hostCreds.HostCredential(ctx, userID, host)
+		if errors.Is(err, githost.ErrNoLink) {
+			// Anonymous clones never reach here (no 401 challenge); this is a
+			// push or private fetch by a user with no PAT for the host.
+			slog.Warn("guestctl: credential refused, no PAT for host", "host", host)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeForbiddenHost}
+		}
+		if err != nil {
+			slog.Error("guestctl: host credential resolve failed", "host", host, "err", err)
+			return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeUnavailable}
+		}
+		// PATs carry no expiry — git may cache the pair for the process lifetime.
+		resp = guestwire.GitCredentialResponse{Username: login, Password: pat}
+
+	default:
+		slog.Warn("guestctl: credential refused for host", "host", req.Host, "protocol", req.Protocol)
+		return nil, &guestwire.ControlErrorPayload{Code: guestwire.ErrCodeForbiddenHost}
 	}
 
 	m.audit.Record(ctx, audit.Entry{
 		UserID: userID,
 		Actor:  audit.UserActor(userID),
 		Action: audit.ActionGitCredential,
-		Target: req.Host,
+		Target: host,
 	})
-
-	resp := guestwire.GitCredentialResponse{
-		Username: "x-access-token",
-		Password: cred.AccessToken,
-	}
-	if !cred.Expiry.IsZero() {
-		resp.Expiry = cred.Expiry.UTC().Format(time.RFC3339)
-	}
 	return mustJSON(resp), nil
 }
 

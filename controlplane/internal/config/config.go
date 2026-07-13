@@ -53,9 +53,10 @@ type Config struct {
 
 	// GitPublicHosts (PROTEOS_GIT_PUBLIC_HOSTS, CSV) are additional git hosts
 	// clone-by-URL may target — e.g. Gitea/Forgejo instances like codeberg.org
-	// or git.example.com:3000. Anonymous clone only: no credentials are ever
-	// minted for these hosts, so private fetches and pushes to them fail at the
-	// git layer. Empty (the default) disables clone-by-URL for non-GitHost URLs.
+	// or git.example.com:3000. Public repos clone anonymously; a per-user PAT
+	// saved via /api/git/hosts (phase 2) additionally unlocks private repos,
+	// pushes, and PR creation on that host. Empty (the default) disables
+	// clone-by-URL for non-GitHost URLs.
 	GitPublicHosts []string
 
 	// StateSigningKey is the HMAC key used to sign the short-lived OAuth state

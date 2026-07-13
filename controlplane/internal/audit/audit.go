@@ -37,6 +37,10 @@ const (
 	ActionGitClone      = "git.clone"      // a user cloned a repo into a machine
 	ActionGitCredential = "git.credential" // the credential handler minted a git token
 
+	// Gitea/Forgejo phase 2 git-host PATs. Target is the host — never the token.
+	ActionGitHostTokenSet    = "git.host.token.set"    // a user saved a PAT for an additional git host
+	ActionGitHostTokenDelete = "git.host.token.delete" // a user removed a PAT for an additional git host
+
 	// GR2–GR5 git mutations. Target is the project name — never a token.
 	ActionGitBranch   = "git.branch" // a user created/checked out a branch in a project
 	ActionGitCommit   = "git.commit" // a user committed changes in a project

@@ -44,6 +44,15 @@ type Disk struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type GitHostLink struct {
+	UserID    pgtype.UUID        `json:"user_id"`
+	Host      string             `json:"host"`
+	Metadata  []byte             `json:"metadata"`
+	SecretRef string             `json:"secret_ref"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GithubLink struct {
 	UserID    pgtype.UUID        `json:"user_id"`
 	Metadata  []byte             `json:"metadata"`
