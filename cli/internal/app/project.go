@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -97,14 +98,17 @@ func projectsList(env Env, args []string) int {
 
 func projectClone(env Env, args []string) int {
 	fs := cmdFlags(env, "project clone", cmdHelp{
-		summary: "Clone owner/repo into a machine's workspace.",
+		summary: "Clone a repo into a machine's workspace.",
 		long: "The clone is asynchronous: by default the command returns once the clone is\n" +
 			"dispatched. With --wait it polls until the repo appears in the project list\n" +
-			"(or the timeout fires). Use 'proteos repo ls' to find the full name.",
-		usage: "proteos project clone --machine <id> [--wait] <owner/repo>",
+			"(or the timeout fires). Use 'proteos repo ls' to find a GitHub full name, or\n" +
+			"pass an https URL to clone a public repo from one of the server's allowed\n" +
+			"git hosts (e.g. a Gitea/Forgejo instance).",
+		usage: "proteos project clone --machine <id> [--wait] <owner/repo | https://host/owner/repo>",
 		examples: []string{
 			"proteos project clone --machine m-123 octocat/hello-world",
 			"proteos project clone --machine m-123 --wait octocat/hello-world",
+			"proteos project clone --machine m-123 https://codeberg.org/forgejo/forgejo",
 		},
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
@@ -129,7 +133,7 @@ func projectClone(env Env, args []string) int {
 
 func projectEnsure(env Env, args []string) int {
 	fs := cmdFlags(env, "project ensure", cmdHelp{
-		summary: "Clone owner/repo into a machine only if it is not already present.",
+		summary: "Clone a repo into a machine only if it is not already present.",
 		long: "The agent-friendly step before 'task run': it lists the machine's projects,\n" +
 			"and if the repo is already there it returns immediately; otherwise it clones\n" +
 			"and waits until the repo appears. Idempotent — safe to call every time.",
@@ -180,6 +184,13 @@ func projectEnsure(env Env, args []string) int {
 func cloneAndMaybeWait(env Env, c *client.Client, machineID, fullName string, wait bool, timeout time.Duration, asJSON bool) int {
 	opID, err := c.Clone(ctx(), machineID, fullName)
 	if err != nil {
+		// forbidden_host names an operator setting; the raw code alone is a
+		// dead end for the user.
+		if ae, ok := errors.AsType[*client.APIError](err); ok && ae.Code == "forbidden_host" {
+			writeErrorMsg(env, ae.Code,
+				"this ProteOS server does not allow cloning from that git host — ask the operator to add it to PROTEOS_GIT_PUBLIC_HOSTS")
+			return client.ExitError
+		}
 		return fail(env, err)
 	}
 	name := repoDir(fullName)
@@ -237,11 +248,13 @@ func findProject(projects []client.Project, name string) (client.Project, bool) 
 	return client.Project{}, false
 }
 
-// repoDir is the workspace directory name for a repo full-name — the part after
-// the last '/' (mirrors the control plane's clone destination).
-func repoDir(fullName string) string {
-	if i := strings.LastIndex(fullName, "/"); i >= 0 {
-		return fullName[i+1:]
+// repoDir is the workspace directory name for a clone ref — the last path
+// segment of an owner/repo full-name or an https URL, with any ".git" suffix
+// dropped (mirrors the control plane's clone destination).
+func repoDir(ref string) string {
+	s := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(ref), "/"), ".git")
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		return s[i+1:]
 	}
-	return fullName
+	return s
 }
