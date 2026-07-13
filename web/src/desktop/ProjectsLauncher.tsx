@@ -260,7 +260,10 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
               pending={clone.isPending}
               grantsUrl={data?.grants_url}
               onClone={() =>
-                onClone(ref.display, ref.url ? { url: ref.url } : { full_name: ref.fullName as string })
+                onClone(
+                  ref.display,
+                  ref.url ? { url: ref.url } : { full_name: ref.fullName as string },
+                )
               }
             />
           ))}
