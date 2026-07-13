@@ -408,6 +408,7 @@ func run(migrate, migrateOnly bool) error {
 		srv.Tokens = tokenSrc
 		srv.GitChannel = guestCtl
 		srv.GitHost = cfg.GitHost
+		srv.GitPublicHosts = cfg.GitPublicHosts
 		srv.GitHubAppSlug = cfg.GitHubAppSlug
 		// Phase 9: the same control-channel manager backs projects.list + kv.*.
 		srv.Projects = guestCtl

@@ -23,11 +23,15 @@ import (
 type stubResolver struct {
 	username, password string
 	reconnect          bool
+	forbidden          bool
 }
 
 func (s stubResolver) Credential(_ context.Context, _, _ string) (guestwire.GitCredentialResponse, error) {
 	if s.reconnect {
 		return guestwire.GitCredentialResponse{}, &codeErr{guestwire.ErrCodeReconnectGitHub}
+	}
+	if s.forbidden {
+		return guestwire.GitCredentialResponse{}, &codeErr{guestwire.ErrCodeForbiddenHost}
 	}
 	return guestwire.GitCredentialResponse{
 		Username: s.username,
@@ -109,6 +113,80 @@ func TestGitCredentialHelper_CloneCommitPush(t *testing.T) {
 	// 8. The token must never have been written to disk anywhere in the guest.
 	assertNoToken(t, home, token)
 	assertNoToken(t, work, token)
+}
+
+// TestGitCredentialHelper_PublicHostAnonymousClone is the Gitea/Forgejo phase 1
+// guest acceptance: against a host that serves reads anonymously (a public
+// repo), git clone never invokes the credential helper and succeeds with no
+// token; git push does trigger the helper, which the CP refuses for a
+// non-auth host (forbidden_host) — surfaced as the anonymous-clone-only
+// message, and the push fails.
+func TestGitCredentialHelper_PublicHostAnonymousClone(t *testing.T) {
+	gitBin, backend := gitTools(t)
+	helperBin := buildGuestagent(t)
+
+	root := t.TempDir()
+	upstream := filepath.Join(root, "repo.git")
+	runGit(t, gitBin, "", "init", "--bare", upstream)
+	runGit(t, gitBin, upstream, "config", "http.receivepack", "true")
+
+	srv := httptest.NewServer(publicReadGate(&cgi.Handler{
+		Path: backend,
+		Env: []string{
+			"GIT_PROJECT_ROOT=" + root,
+			"GIT_HTTP_EXPORT_ALL=1",
+		},
+	}))
+	t.Cleanup(srv.Close)
+	repoURL := srv.URL + "/repo.git"
+
+	// The resolver refuses every host — the CP's stance on public hosts. The
+	// clone below still succeeding proves it never needed a credential.
+	sock := tmpSock(t)
+	startLocalSock(t, sock, stubResolver{forbidden: true})
+
+	home := t.TempDir()
+	writeGitConfig(t, home, helperBin)
+	env := append(os.Environ(),
+		"HOME="+home,
+		"PROTEOS_AGENT_SOCK="+sock,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+
+	work := filepath.Join(t.TempDir(), "clone")
+	runGitEnv(t, gitBin, "", env, "clone", repoURL, work)
+
+	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("hello public host\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitEnv(t, gitBin, work, env, "add", "README.md")
+	runGitEnv(t, gitBin, work, env, "commit", "-m", "phase1: public host")
+
+	cmd := exec.Command(gitBin, "push", "origin", "HEAD:refs/heads/main")
+	cmd.Dir = work
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("push to a public host succeeded; want a credential refusal:\n%s", out)
+	}
+	if !strings.Contains(string(out), "anonymous clone only") {
+		t.Fatalf("push failure should carry the anonymous-clone-only message, got:\n%s", out)
+	}
+}
+
+// publicReadGate requires auth only for receive-pack (pushes); reads are
+// anonymous — the shape of a public repo on a Gitea/Forgejo host.
+func publicReadGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "git-receive-pack") ||
+			r.URL.Query().Get("service") == "git-receive-pack" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="proteos"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // TestGitCredentialHelper_RevokedFails proves a revoked grant makes the helper

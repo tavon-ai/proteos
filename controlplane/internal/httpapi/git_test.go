@@ -124,9 +124,10 @@ func setupGit(t *testing.T, revoked bool, machineState string) gitFixture {
 		Machines:      machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
 		GitHub:        gh,
 		Tokens:        github.NewTokenSource(gh, q, sec),
-		GitChannel:    ch,
-		GitHost:       "github.com",
-		GitHubAppSlug: "proteos-dev",
+		GitChannel:     ch,
+		GitHost:        "github.com",
+		GitPublicHosts: []string{"codeberg.example"},
+		GitHubAppSlug:  "proteos-dev",
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -235,6 +236,80 @@ func TestGitClone_202NotListable(t *testing.T) {
 	}
 	if fx.ch.lastDest != "/workspace/public" {
 		t.Fatalf("clone dest = %q", fx.ch.lastDest)
+	}
+}
+
+// Clone-by-URL targets an allowlisted public host (Gitea/Forgejo phase 1): the
+// dispatched URL is rebuilt from validated parts and carries no token.
+func TestGitClone_202ByURL(t *testing.T) {
+	fx := setupGit(t, false, string(machine.StateRunning))
+	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"https://codeberg.example/octocat/hello"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	if !fx.ch.cloneCalled {
+		t.Fatal("clone was not dispatched to the channel")
+	}
+	if fx.ch.lastURL != "https://codeberg.example/octocat/hello.git" {
+		t.Fatalf("clone url = %q", fx.ch.lastURL)
+	}
+	if fx.ch.lastDest != "/workspace/hello" {
+		t.Fatalf("clone dest = %q", fx.ch.lastDest)
+	}
+}
+
+// A full URL for the auth host itself is also accepted by the url path.
+func TestGitClone_202ByURLAuthHost(t *testing.T) {
+	fx := setupGit(t, false, string(machine.StateRunning))
+	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"https://github.com/octocat/hello.git"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	if fx.ch.lastURL != "https://github.com/octocat/hello.git" {
+		t.Fatalf("clone url = %q", fx.ch.lastURL)
+	}
+}
+
+func TestGitClone_400ForbiddenHost(t *testing.T) {
+	fx := setupGit(t, false, string(machine.StateRunning))
+	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"https://evil.example/octocat/hello"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "forbidden_host" {
+		t.Fatalf("error = %q, want forbidden_host", code)
+	}
+	if fx.ch.cloneCalled {
+		t.Fatal("clone must not be dispatched for a forbidden host")
+	}
+}
+
+func TestGitClone_400BadURL(t *testing.T) {
+	fx := setupGit(t, false, string(machine.StateRunning))
+	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"http://codeberg.example/octocat/hello"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "bad_url" {
+		t.Fatalf("error = %q, want bad_url", code)
+	}
+}
+
+// full_name and url are mutually exclusive; both (or neither) is a bad request.
+func TestGitClone_400BothFullNameAndURL(t *testing.T) {
+	fx := setupGit(t, false, string(machine.StateRunning))
+	resp := fx.do(t, http.MethodPost, "/api/git/clone",
+		`{"full_name":"octocat/hello","url":"https://codeberg.example/octocat/hello"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "bad_request" {
+		t.Fatalf("error = %q, want bad_request", code)
 	}
 }
 

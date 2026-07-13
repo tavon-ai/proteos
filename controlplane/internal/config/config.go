@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -45,10 +46,17 @@ type Config struct {
 	// user can choose which repos ProteOS may access (Phase 7 decision #7).
 	GitHubAppSlug string
 
-	// GitHost is the git host the credential handler will mint credentials for and
-	// the only host clones target (Phase 7). Defaults to github.com; overridden
-	// only by the e2e harness to point at its local git server.
+	// GitHost is the git host the credential handler will mint credentials for
+	// (Phase 7). Defaults to github.com; overridden only by the e2e harness to
+	// point at its local git server.
 	GitHost string
+
+	// GitPublicHosts (PROTEOS_GIT_PUBLIC_HOSTS, CSV) are additional git hosts
+	// clone-by-URL may target — e.g. Gitea/Forgejo instances like codeberg.org
+	// or git.example.com:3000. Anonymous clone only: no credentials are ever
+	// minted for these hosts, so private fetches and pushes to them fail at the
+	// git layer. Empty (the default) disables clone-by-URL for non-GitHost URLs.
+	GitPublicHosts []string
 
 	// StateSigningKey is the HMAC key used to sign the short-lived OAuth state
 	// cookie. Must be non-empty in any environment that runs the OAuth flow.
@@ -210,6 +218,7 @@ func Load() (*Config, error) {
 		GitHubClientSecret:  os.Getenv("GITHUB_APP_CLIENT_SECRET"),
 		GitHubAppSlug:       os.Getenv("GITHUB_APP_SLUG"),
 		GitHost:             getenv("PROTEOS_GIT_HOST", "github.com"),
+		GitPublicHosts:      splitList(os.Getenv("PROTEOS_GIT_PUBLIC_HOSTS")),
 		SecretsBackend:      getenv("PROTEOS_SECRETS_BACKEND", "file"),
 		SecretsFile:         getenv("PROTEOS_SECRETS_FILE", ".data/secrets.json"),
 		OpenBaoAddr:         getenv("PROTEOS_OPENBAO_ADDR", "http://127.0.0.1:8200"),
@@ -248,6 +257,12 @@ func Load() (*Config, error) {
 	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {
 		return nil, fmt.Errorf("PROTEOS_PREVIEW_PORT_MIN/MAX invalid range: %d..%d", c.PreviewPortMin, c.PreviewPortMax)
 	}
+
+	publicHosts, err := normalizeGitHosts(c.GitPublicHosts)
+	if err != nil {
+		return nil, err
+	}
+	c.GitPublicHosts = publicHosts
 
 	// TAV-27: the agent channel carries volume keys — refuse a plaintext URL
 	// unless it stays on this host (loopback dev stacks) or dev explicitly
@@ -305,6 +320,24 @@ func (c *Config) checkAgentURL(url, label string) error {
 		return fmt.Errorf("%s %q is plain HTTP to a non-loopback host (the channel carries volume keys): use https with PROTEOS_NODE_CA_FILE, or set PROTEOS_NODE_AGENT_INSECURE_HTTP=1 for dev-only plain HTTP", label, url)
 	}
 	return nil
+}
+
+// gitHostRe accepts a bare hostname with an optional port — no scheme, path,
+// or userinfo, so an allowlist entry can only ever name a host.
+var gitHostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
+
+// normalizeGitHosts validates PROTEOS_GIT_PUBLIC_HOSTS entries as host[:port]
+// and lowercases them for case-insensitive comparison in the clone handler.
+// A bad entry fails startup rather than silently narrowing the allowlist.
+func normalizeGitHosts(hosts []string) ([]string, error) {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if !gitHostRe.MatchString(h) {
+			return nil, fmt.Errorf("PROTEOS_GIT_PUBLIC_HOSTS: %q is not a bare host[:port] (schemes, paths, and credentials are not allowed)", h)
+		}
+		out = append(out, strings.ToLower(h))
+	}
+	return out, nil
 }
 
 // loadAdditionalHosts parses PROTEOS_HOSTS (a JSON array of {"name","url"}),

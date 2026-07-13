@@ -527,7 +527,9 @@ const (
 	// on stderr and exits non-zero so git stops cleanly.
 	ErrCodeReconnectGitHub = "reconnect_github"
 	// ErrCodeForbiddenHost: the credential request named a host/protocol the
-	// control plane will not mint a credential for (only github.com/https).
+	// control plane will not mint a credential for. Only the configured auth
+	// host (PROTEOS_GIT_HOST, default github.com) over https gets credentials;
+	// allowlisted public hosts are anonymous clone only.
 	ErrCodeForbiddenHost = "forbidden_host"
 	// ErrCodeUnavailable: a transient failure (token store unreachable, no owner
 	// resolvable, etc.). The helper exits non-zero; git reports the failure.
@@ -600,7 +602,7 @@ type GitCloneDonePayload struct {
 
 // GitCredentialRequest is the body of a guest → CP git.credential req.
 type GitCredentialRequest struct {
-	Host     string `json:"host"`     // must be the configured git host (github.com)
+	Host     string `json:"host"`     // must be the configured auth host (PROTEOS_GIT_HOST); public hosts are never credentialed
 	Protocol string `json:"protocol"` // must be https
 }
 
