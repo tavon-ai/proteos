@@ -366,8 +366,8 @@ function CloneRow({
       )}
       {grantFailure && !github && (
         <p className="muted clone-hint">
-          ProteOS can&apos;t access this repo. Only public repos can be cloned from this host —
-          check that the repo exists and is public.
+          ProteOS can&apos;t access this repo. If it&apos;s private, add a token for this host in
+          Settings → Git hosting; if it&apos;s public, check the repo path.
         </p>
       )}
     </li>

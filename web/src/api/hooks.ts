@@ -169,6 +169,42 @@ export function useProviderMutations() {
   return { setKey, deleteKey };
 }
 
+// gitHostsKey is the query cache key for the allowlisted git hosts + link state.
+const gitHostsKey = ['git-hosts'] as const;
+
+// useGitHosts loads the additional git hosts (Gitea/Forgejo phase 2) with the
+// user's PAT link state. Empty when the operator has configured none — the
+// Settings section hides itself then.
+export function useGitHosts() {
+  return useQuery({
+    queryKey: gitHostsKey,
+    queryFn: api.listGitHosts,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useGitHostMutations exposes set/delete of a host's write-only PAT. Both
+// invalidate the git-hosts query so the linked/login state re-renders from the
+// server (the token itself is never held client-side).
+export function useGitHostMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: gitHostsKey });
+
+  const setToken = useMutation({
+    mutationFn: ({ host, token }: { host: string; token: string }) =>
+      api.setGitHostToken(host, token),
+    onSuccess: invalidate,
+  });
+  const deleteToken = useMutation({
+    mutationFn: (host: string) => api.deleteGitHostToken(host),
+    onSuccess: invalidate,
+  });
+  return { setToken, deleteToken };
+}
+
 // profileItemsKey is the query cache key for the user's portable-profile items.
 const profileItemsKey = ['profile-items'] as const;
 

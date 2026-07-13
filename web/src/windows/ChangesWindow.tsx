@@ -457,9 +457,15 @@ function prErrorMessage(error: unknown): string {
         return 'A pull request for this branch already exists.';
       case 'reconnect_github':
         return 'GitHub access expired — reconnect in Settings.';
+      case 'githost_token_required':
+        return "No token saved for this project's git host — add one in Settings → Git hosting.";
+      case 'githost_token_invalid':
+        return 'The git host rejected your saved token — replace it in Settings → Git hosting.';
+      case 'unsupported_host':
+        return "This project's git host is not enabled on this server.";
       case 'no_remote':
       case 'bad_remote':
-        return 'This project has no GitHub remote.';
+        return 'This project has no usable git remote.';
     }
   }
   return 'Could not open the pull request.';
