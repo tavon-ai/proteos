@@ -260,6 +260,11 @@ export interface ReposResponse {
   grants_url: string;
 }
 
+// CloneTarget is the body of POST /api/git/clone: exactly one of full_name (a
+// GitHub repo, cloned from the server's auth host) or url (clone-by-URL — the
+// host must be on the server's public-host allowlist).
+export type CloneTarget = { full_name: string; url?: never } | { url: string; full_name?: never };
+
 // CloneStarted is the 202 body of POST /api/git/clone; completion arrives as a
 // git.clone machine event over the SSE stream.
 export interface CloneStarted {
@@ -662,13 +667,15 @@ export const api = {
 
   // Git operations (Phase 7). listRepos may throw ApiError 409 reconnect_github
   // when the GitHub grant is revoked; cloneRepo returns an op_id and the clone
-  // completes asynchronously (watch git.clone machine events).
+  // completes asynchronously (watch git.clone machine events). The target is
+  // either { full_name } (GitHub) or { url } (clone-by-URL — 400 forbidden_host
+  // when the host is not on the server's allowlist, 400 bad_url when malformed).
   listRepos: () => request<ReposResponse>('/api/git/repos'),
-  cloneRepo: (machineID: string, fullName: string) =>
+  cloneRepo: (machineID: string, target: CloneTarget) =>
     request<CloneStarted>(`/api/git/clone?machine=${encodeURIComponent(machineID)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ full_name: fullName }),
+      body: JSON.stringify(target),
     }),
 
   // Worktree review (GR1): read a project's git status / unified diff. project is

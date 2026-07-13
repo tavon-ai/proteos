@@ -6,6 +6,7 @@ import {
   machineEventsUrl,
   SessionExpiredError,
   taskEventsUrl,
+  type CloneTarget,
   type CreateMachineInput,
   type CreateTaskInput,
   type MachineDestroyedData,
@@ -345,10 +346,11 @@ export function useInvalidateProjects() {
 
 // useCloneRepo dispatches a clone into the given machine. It returns the op_id
 // immediately (202); completion arrives as a git.clone machine event. On a stale
-// grant the mutation rejects with ApiError 409 reconnect_github.
+// grant the mutation rejects with ApiError 409 reconnect_github; clone-by-URL
+// targets may reject with 400 forbidden_host / bad_url.
 export function useCloneRepo(machineId: string | null) {
   return useMutation({
-    mutationFn: (fullName: string) => api.cloneRepo(machineId as string, fullName),
+    mutationFn: (target: CloneTarget) => api.cloneRepo(machineId as string, target),
   });
 }
 

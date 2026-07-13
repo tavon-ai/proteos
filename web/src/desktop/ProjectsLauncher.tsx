@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api/client';
-import type { MachineEvent, MachineState, Project, Repo } from '../api/client';
+import { api, ApiError } from '../api/client';
+import type { CloneTarget, MachineEvent, MachineState, Project, Repo } from '../api/client';
 import {
   reconnectRequired,
   useCloneRepo,
@@ -11,7 +11,8 @@ import {
 import { GitHubStatus } from '../components/GitHubStatus';
 import { useWindowManager } from './windowManagerContext';
 import { openChanges, openEditor, openTasks, openTerminal } from './openers';
-import { parseRepoRef } from './repoRef';
+import { parseCloneRef } from './repoRef';
+import type { CloneRef } from './repoRef';
 import { looksLikeGrantFailure } from './cloneFailure';
 
 // ProjectsLauncher is the desktop's primary surface (decision #1): each cloned
@@ -152,10 +153,13 @@ interface CloneState {
 function CloneForm({ machineId, events }: { machineId: string | null; events: MachineEvent[] }) {
   const { data, isLoading, error, refetch, isFetching } = useRepos();
   const clone = useCloneRepo(machineId);
+  // Clone rows are keyed by the ref's display label — "owner/repo" for GitHub,
+  // "host/owner/repo" for clone-by-URL — so same-named repos on different
+  // hosts stay distinct.
   const [clones, setClones] = useState<Record<string, CloneState>>({});
   // Repos added by URL that aren't in the granted list. Kept newest-first so a
   // just-added repo shows at the top; deduped against the granted set on render.
-  const [adHoc, setAdHoc] = useState<string[]>([]);
+  const [adHoc, setAdHoc] = useState<CloneRef[]>([]);
   const [urlInput, setUrlInput] = useState('');
   const [urlError, setUrlError] = useState(false);
 
@@ -180,16 +184,16 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
     });
   }, [events]);
 
-  const onClone = (fullName: string) => {
-    clone.mutate(fullName, {
+  const onClone = (display: string, target: CloneTarget) => {
+    clone.mutate(target, {
       onSuccess: (res) =>
-        setClones((prev) => ({ ...prev, [fullName]: { opId: res.op_id, status: 'cloning' } })),
+        setClones((prev) => ({ ...prev, [display]: { opId: res.op_id, status: 'cloning' } })),
     });
   };
 
   const onAddUrl = () => {
-    const fullName = parseRepoRef(urlInput);
-    if (!fullName) {
+    const ref = parseCloneRef(urlInput);
+    if (!ref) {
       setUrlError(true);
       return;
     }
@@ -197,13 +201,18 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
     setUrlInput('');
     // Surface the row (deduped) even if it's already in the granted list, then
     // kick off the clone through the shared op_id state machine.
-    setAdHoc((prev) => (prev.includes(fullName) ? prev : [fullName, ...prev]));
-    onClone(fullName);
+    setAdHoc((prev) => (prev.some((r) => r.display === ref.display) ? prev : [ref, ...prev]));
+    onClone(ref.display, ref.url ? { url: ref.url } : { full_name: ref.fullName as string });
   };
 
   const reconnect = reconnectRequired(error) || reconnectRequired(clone.error);
+  // A clone-by-URL target whose host the server does not allow (or a URL the
+  // server could not parse) rejects synchronously — surface it by the input.
+  const hostRefused =
+    clone.error instanceof ApiError &&
+    (clone.error.code === 'forbidden_host' || clone.error.code === 'bad_url');
   const granted = new Set((data?.repos ?? []).map((repo) => repo.full_name));
-  const adHocRepos = adHoc.filter((name) => !granted.has(name));
+  const adHocRepos = adHoc.filter((ref) => !granted.has(ref.display));
 
   return (
     <div className="clone-form">
@@ -211,7 +220,7 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
         <input
           type="text"
           className="clone-url-input"
-          placeholder="Add a GitHub repo by URL or owner/repo"
+          placeholder="Add a repo by URL (any allowed git host) or GitHub owner/repo"
           value={urlInput}
           onChange={(e) => {
             setUrlInput(e.target.value);
@@ -231,19 +240,28 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
       </div>
       {urlError && (
         <p className="muted clone-url-error">
-          Enter a GitHub repo as a URL (https://github.com/owner/repo) or owner/repo.
+          Enter a repo as a URL (https://host/owner/repo) or a GitHub owner/repo.
+        </p>
+      )}
+      {hostRefused && (
+        <p className="muted clone-url-error">
+          This ProteOS server doesn&apos;t allow cloning from that git host. Ask your operator to
+          add it to the allowed public hosts.
         </p>
       )}
       {adHocRepos.length > 0 && (
         <ul className="clone-list">
-          {adHocRepos.map((fullName) => (
+          {adHocRepos.map((ref) => (
             <CloneRow
-              key={fullName}
-              repo={{ full_name: fullName, private: false, default_branch: '', pushed_at: '' }}
-              clone={clones[fullName]}
+              key={ref.display}
+              repo={{ full_name: ref.display, private: false, default_branch: '', pushed_at: '' }}
+              github={!ref.url}
+              clone={clones[ref.display]}
               pending={clone.isPending}
               grantsUrl={data?.grants_url}
-              onClone={() => onClone(fullName)}
+              onClone={() =>
+                onClone(ref.display, ref.url ? { url: ref.url } : { full_name: ref.fullName as string })
+              }
             />
           ))}
         </ul>
@@ -278,7 +296,7 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
               clone={clones[repo.full_name]}
               pending={clone.isPending}
               grantsUrl={data?.grants_url}
-              onClone={() => onClone(repo.full_name)}
+              onClone={() => onClone(repo.full_name, { full_name: repo.full_name })}
             />
           ))}
         </ul>
@@ -296,21 +314,24 @@ function CloneForm({ machineId, events }: { machineId: string | null; events: Ma
 
 function CloneRow({
   repo,
+  github = true,
   clone,
   pending,
   grantsUrl,
   onClone,
 }: {
   repo: Repo;
+  github?: boolean;
   clone: CloneState | undefined;
   pending: boolean;
   grantsUrl?: string;
   onClone: () => void;
 }) {
   const cloning = clone?.status === 'cloning';
-  // An access failure means the repo is private and not shared with ProteOS (or
-  // public and mistyped). Point the user at the grants page rather than the raw
-  // git error, which is only the tooltip.
+  // An access failure on a GitHub repo means it is private and not shared with
+  // ProteOS (or public and mistyped) — point the user at the grants page rather
+  // than the raw git error, which is only the tooltip. Public-host repos have
+  // no grants flow: they are anonymous clone only, so the hint is different.
   const grantFailure = clone?.status === 'failed' && looksLikeGrantFailure(clone.detail ?? '');
   return (
     <li className="clone-row">
@@ -327,7 +348,7 @@ function CloneRow({
           {cloning ? 'Cloning…' : clone?.status === 'done' ? 'Clone again' : 'Clone'}
         </button>
       </span>
-      {grantFailure && (
+      {grantFailure && github && (
         <p className="muted clone-hint">
           ProteOS can&apos;t access this repo. If it&apos;s private,{' '}
           {grantsUrl ? (
@@ -338,6 +359,12 @@ function CloneRow({
             'share it with ProteOS'
           )}
           ; if it&apos;s public, check the name.
+        </p>
+      )}
+      {grantFailure && !github && (
+        <p className="muted clone-hint">
+          ProteOS can&apos;t access this repo. Only public repos can be cloned from this host —
+          check that the repo exists and is public.
         </p>
       )}
     </li>
