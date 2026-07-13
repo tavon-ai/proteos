@@ -662,6 +662,7 @@ func setupPR(t *testing.T, machineState string, revoked bool, ghURL string) wtFi
 		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
 		GitWorktree: ch,
 		GitHub:      gh,
+		GitHost:     "github.com",
 		Tokens:      github.NewTokenSource(gh, q, sec),
 	}
 	ts := httptest.NewServer(srv.Handler())
@@ -685,6 +686,27 @@ func TestGitPR_200(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if body.PRURL != "https://github.com/octocat/hello/pull/7" || body.Number != 7 {
 		t.Fatalf("unexpected pr body: %+v", body)
+	}
+}
+
+// A project cloned from a public (non-GitHub) host must be refused before any
+// GitHub API call — owner/repo alone would address the wrong repository. The
+// fake GitHub server would happily create the PR (returning 200), so a missing
+// guard fails this test on status.
+func TestGitPR_422UnsupportedHost(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{"number":7,"html_url":"x"}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	fx.ch.projects = []guestwire.Project{
+		{Name: "alpha", Path: "/workspace/alpha", Remote: "https://codeberg.org/octocat/hello.git"},
+	}
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "unsupported_host" {
+		t.Fatalf("error = %q, want unsupported_host", code)
 	}
 }
 

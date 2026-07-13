@@ -31,6 +31,7 @@ type fakeCP struct {
 	projectsPresent bool   // GET /api/projects returns hello-world when true
 	cloned          bool   // set by POST /api/git/clone (then projects show up)
 	lastCloneName   string // full_name from the last clone request
+	lastCloneURL    string // url from the last clone request (clone-by-URL)
 	lastCommitMsg   string // message from the last git commit request
 
 	lastCreateName     string // name from the last POST /api/machines
@@ -201,11 +202,20 @@ func (f *fakeCP) handler() http.Handler {
 		}
 		var body struct {
 			FullName string `json:"full_name"`
+			URL      string `json:"url"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		// Mirror the control plane's allowlist behavior for URL clones so the
+		// CLI's forbidden_host handling is exercisable.
+		if body.URL != "" && !strings.HasPrefix(body.URL, "https://codeberg.example/") {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"forbidden_host"}`)
+			return
+		}
 		f.mu.Lock()
 		f.cloned = true
 		f.lastCloneName = body.FullName
+		f.lastCloneURL = body.URL
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprint(w, `{"op_id":"op1"}`)
@@ -1102,6 +1112,38 @@ func TestProjectCloneDispatch(t *testing.T) {
 	}
 	if !strings.Contains(out, "dispatched") {
 		t.Fatalf("clone output:\n%s", out)
+	}
+}
+
+// A URL-shaped ref is sent as {url} rather than {full_name} — the clone-by-URL
+// path for allowlisted public hosts (Gitea/Forgejo phase 1).
+func TestProjectCloneDispatchByURL(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "project", "clone", "--machine", "m1", "https://codeberg.example/octocat/hello")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastCloneURL != "https://codeberg.example/octocat/hello" {
+		t.Fatalf("server saw clone url %q", cp.lastCloneURL)
+	}
+	if cp.lastCloneName != "" {
+		t.Fatalf("full_name must be empty for a URL clone, got %q", cp.lastCloneName)
+	}
+	if !strings.Contains(out, "dispatched") {
+		t.Fatalf("clone output:\n%s", out)
+	}
+}
+
+// A host outside the server's allowlist surfaces the operator-actionable
+// message rather than the bare forbidden_host code.
+func TestProjectCloneForbiddenHost(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLI(t, url, "tok", "project", "clone", "--machine", "m1", "https://evil.example/octocat/hello")
+	if code != client.ExitError {
+		t.Fatalf("exit = %d, want %d", code, client.ExitError)
+	}
+	if !strings.Contains(errOut, "PROTEOS_GIT_PUBLIC_HOSTS") {
+		t.Fatalf("stderr should name the operator setting:\n%s", errOut)
 	}
 }
 

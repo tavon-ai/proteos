@@ -103,7 +103,7 @@ func credentialErrMessage(code string) string {
 	case guestwire.ErrCodeReconnectGitHub:
 		return "proteos: your GitHub connection is no longer valid — reconnect GitHub in the ProteOS dashboard, then retry."
 	case guestwire.ErrCodeForbiddenHost:
-		return "proteos: ProteOS only provides credentials for github.com over https."
+		return "proteos: ProteOS only provides credentials for the configured git host over https — public hosts are anonymous clone only (no pushes or private fetches)."
 	default:
 		return "proteos: a git credential is temporarily unavailable; try again shortly."
 	}

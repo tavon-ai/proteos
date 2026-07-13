@@ -78,13 +78,17 @@ type Server struct {
 
 	// Phase 7: git operations. GitHub (REST client), Tokens (per-user token
 	// lifecycle), and GitChannel (the guest control channel) back /api/git/*.
-	// When any is nil the git routes are disabled. GitHost is the only host clones
-	// target; GitHubAppSlug builds the grants URL the Repos panel links to.
-	GitHub        *github.Client
-	Tokens        *github.TokenSource
-	GitChannel    GitChannel
-	GitHost       string
-	GitHubAppSlug string
+	// When any is nil the git routes are disabled. GitHost is the authenticated
+	// host (credentials minted, repos listed, PRs created); GitPublicHosts are
+	// additional hosts clone-by-URL may target, anonymous clone only (Gitea/
+	// Forgejo phase 1). GitHubAppSlug builds the grants URL the Repos panel
+	// links to.
+	GitHub         *github.Client
+	Tokens         *github.TokenSource
+	GitChannel     GitChannel
+	GitHost        string
+	GitPublicHosts []string
+	GitHubAppSlug  string
 
 	// Phase 9: the project/desktop control-channel surface (projects.list, kv.*).
 	// *guestctl.Manager satisfies it. Nil disables /api/projects and

@@ -334,9 +334,18 @@ func (s *Server) handleGitPR(w http.ResponseWriter, r *http.Request) {
 		writeError(w, projectErrorStatus(code), code)
 		return
 	}
-	owner, repo, ok := parseOwnerRepo(remote)
+	remoteHost, owner, repo, ok := parseRemote(remote)
 	if !ok {
 		writeError(w, http.StatusUnprocessableEntity, "bad_remote")
+		return
+	}
+	// PRs are a CP→GitHub API call, so they only exist for projects whose
+	// origin is the authenticated host. A project cloned from a public host
+	// (Gitea/Forgejo phase 1) must be refused here — owner/repo alone would
+	// silently address the wrong (GitHub) repository. This check is the
+	// provider-dispatch point once phase 2 adds non-GitHub API clients.
+	if !strings.EqualFold(remoteHost, s.GitHost) {
+		writeError(w, http.StatusUnprocessableEntity, "unsupported_host")
 		return
 	}
 
@@ -414,30 +423,36 @@ func (s *Server) resolveProjectRemote(ctx context.Context, machineID, name strin
 	return "", "bad_project"
 }
 
-// parseOwnerRepo extracts owner/repo from a git remote URL (https or scp-like),
-// validating the result against the same owner/repo shape clone enforces.
-func parseOwnerRepo(remote string) (owner, repo string, ok bool) {
+// parseRemote extracts host and owner/repo from a git remote URL (https or
+// scp-like), validating owner/repo against the same shape clone enforces. The
+// host lets callers dispatch per-provider (or refuse — a Gitea-cloned project
+// must never be routed to the GitHub API); userinfo is stripped, a port is
+// kept. host is "" for a remote with no host part (e.g. a local path).
+func parseRemote(remote string) (host, owner, repo string, ok bool) {
 	s := strings.TrimSpace(remote)
 	s = strings.TrimSuffix(s, ".git")
 	if i := strings.Index(s, "://"); i >= 0 {
-		rest := s[i+3:] // host/owner/repo...
+		rest := s[i+3:] // [user@]host/owner/repo...
 		if k := strings.Index(rest, "/"); k >= 0 {
-			s = rest[k+1:]
+			host, s = rest[:k], rest[k+1:]
+		}
+		if at := strings.LastIndex(host, "@"); at >= 0 {
+			host = host[at+1:]
 		}
 	} else if at := strings.Index(s, "@"); at >= 0 {
 		if colon := strings.Index(s, ":"); colon > at { // git@host:owner/repo
-			s = s[colon+1:]
+			host, s = s[at+1:colon], s[colon+1:]
 		}
 	}
 	parts := strings.Split(strings.Trim(s, "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	owner, repo = parts[0], parts[1]
-	if !fullNameRe.MatchString(owner + "/" + repo) {
-		return "", "", false
+	if !validFullName(owner + "/" + repo) {
+		return "", "", "", false
 	}
-	return owner, repo, true
+	return strings.ToLower(host), owner, repo, true
 }
 
 // emitMachineEvent records a CP-side machine event and publishes it to the SSE

@@ -60,8 +60,9 @@ type Manager struct {
 	conns       map[string]*conn              // machineID → live connection (nil while redialing)
 }
 
-// New wires a Manager. gitHost is the only host credentials are minted for and
-// the only host clones target (config PROTEOS_GIT_HOST, default github.com).
+// New wires a Manager. gitHost is the only host credentials are minted for
+// (config PROTEOS_GIT_HOST, default github.com); clones may additionally
+// target the PROTEOS_GIT_PUBLIC_HOSTS allowlist, anonymously.
 // tasks is the AT2 agent-event fan-out the headless run streams into (nil ⇒ live
 // events are simply not relayed; agent.done still records the final result).
 func New(dialer GuestDialer, broker *machine.Broker, q *store.Queries, tokens *github.TokenSource, rec *audit.Recorder, tasks *taskevents.Hub, gitHost string) *Manager {

@@ -1,6 +1,9 @@
 package client
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Project is one cloned repository under /workspace on a machine, as returned by
 // GET /api/projects. It mirrors the control-plane/guest Project shape.
@@ -27,18 +30,26 @@ func (c *Client) ListProjects(ctx context.Context, machineID string) ([]Project,
 }
 
 type cloneRequest struct {
-	FullName string `json:"full_name"`
+	FullName string `json:"full_name,omitempty"`
+	URL      string `json:"url,omitempty"`
 }
 
 type cloneResponse struct {
 	OpID string `json:"op_id"`
 }
 
-// Clone dispatches an asynchronous clone of owner/repo into a machine's
-// workspace. It returns an op id immediately; the clone completes in the
-// background (observe by polling ListProjects until the repo appears).
-func (c *Client) Clone(ctx context.Context, machineID, fullName string) (string, error) {
+// Clone dispatches an asynchronous clone into a machine's workspace. ref is
+// either owner/repo (cloned from the server's GitHub host) or a full
+// https://host/owner/repo URL targeting one of the server's allowlisted
+// public hosts — anything containing "://" is sent as a URL. It returns an op
+// id immediately; the clone completes in the background (observe by polling
+// ListProjects until the repo appears).
+func (c *Client) Clone(ctx context.Context, machineID, ref string) (string, error) {
 	var r cloneResponse
-	err := c.Do(ctx, "POST", "/api/git/clone?machine="+machineID, cloneRequest{FullName: fullName}, &r)
+	body := cloneRequest{FullName: ref}
+	if strings.Contains(ref, "://") {
+		body = cloneRequest{URL: ref}
+	}
+	err := c.Do(ctx, "POST", "/api/git/clone?machine="+machineID, body, &r)
 	return r.OpID, err
 }
