@@ -9,15 +9,17 @@ import './mobile.css';
 
 // MobileApp is the purpose-built phone shell: two screens (Review + Machines)
 // behind a bottom tab bar. It exists for one dominant flow — a Telegram link
-// deep-links straight to a PR at /m/:machineId/pr/:number?repo=owner/name —
-// with Machines as the secondary glance-and-toggle surface. Everything else
-// the desktop does is deliberately absent here.
+// deep-links straight to a PR at /m/:machineId/pr/:prNumber — with Machines as
+// the secondary glance-and-toggle surface. Everything else the desktop does
+// is deliberately absent here. An optional ?repo=owner/name query param can
+// short-circuit the repo lookup ReviewScreen otherwise does from the machine's
+// projects.
 export function MobileApp({ me }: { me: Me }) {
-  const { machineId, number } = useParams();
+  const { machineId, prNumber: prNumberParam } = useParams();
   const [params] = useSearchParams();
   const repo = params.get('repo') ?? '';
-  const prNumber = Number(number ?? 0);
-  const hasReviewContext = !!repo && prNumber > 0;
+  const prNumber = Number(prNumberParam ?? 0);
+  const hasReviewContext = prNumber > 0;
 
   // Deep links land on Review; opening /m bare lands on Machines.
   const [tab, setTab] = useState<MobileTab>(hasReviewContext ? 'review' : 'machines');
@@ -46,6 +48,7 @@ export function MobileApp({ me }: { me: Me }) {
           <ReviewScreen
             repo={repo}
             number={prNumber}
+            machineId={machineId ?? null}
             machine={machine}
             avatarUrl={me.user.avatar_url}
             onBack={back}
