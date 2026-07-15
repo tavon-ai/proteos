@@ -692,11 +692,12 @@ rust_arch() {
 # install_rust MNT [CHANNEL] — fetch rustup-init from static.rust-lang.org,
 # verify its sha256, copy it into the image, and run it via chroot to install
 # the Rust toolchain system-wide into /usr/local/rustup (RUSTUP_HOME) and
-# /usr/local/cargo (CARGO_HOME). Symlinks rustc/cargo/rustup onto /usr/local/bin
-# so they are on PATH without requiring a profile.d entry. Needs the chroot binds
-# (rustup-init fetches the toolchain at build time). CHANNEL is "stable", "beta",
-# "nightly", or a pinned version like "1.87.0" (default: stable). Sets RUST_VERSION
-# to the concrete installed version. Sets RUSTUP_SHA256.
+# /usr/local/cargo (CARGO_HOME), plus the rustfmt and clippy components.
+# Symlinks rustc/cargo/rustup onto /usr/local/bin so they are on PATH without
+# requiring a profile.d entry. Needs the chroot binds (rustup-init fetches the
+# toolchain at build time). CHANNEL is "stable", "beta", "nightly", or a pinned
+# version like "1.87.0" (default: stable). Sets RUST_VERSION to the concrete
+# installed version. Sets RUSTUP_SHA256.
 install_rust() {
   local mnt="$1" channel="${2:-stable}"
   local arch target
@@ -742,6 +743,17 @@ install_rust() {
     || die "rustup-init failed (channel: $channel)"
 
   sudo rm -f "$mnt/tmp/rustup-init"
+
+  # rustfmt/clippy ship as optional rustup components, not part of the
+  # minimal profile above; cargo-fmt/cargo-clippy fail with "is not
+  # installed for the toolchain" until these are added explicitly.
+  log "adding rustfmt and clippy components"
+  sudo chroot "$mnt" /usr/bin/env \
+    PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    rustup component add rustfmt clippy \
+    || die "rustup component add rustfmt clippy failed"
 
   # Symlink the three key binaries onto /usr/local/bin so they are immediately
   # on PATH; install_shell_env exports RUSTUP_HOME (proxies need it to resolve
