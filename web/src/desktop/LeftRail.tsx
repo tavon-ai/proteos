@@ -107,12 +107,7 @@ const SECTIONS: Section[] = [
     needsMachine: false,
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <path
-          d="M5 4h14v16H5z"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinejoin="round"
-        />
+        <path d="M5 4h14v16H5z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
         <path
           d="M8 9h8M8 13h8M8 17h4"
           stroke="currentColor"
