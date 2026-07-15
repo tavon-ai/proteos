@@ -13,7 +13,7 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"PROTEOS_ADDR", "DATABASE_URL", "PROTEOS_BASE_URL",
 		"GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "GITHUB_APP_SLUG",
-		"PROTEOS_GIT_HOST", "PROTEOS_SECRETS_BACKEND", "PROTEOS_SECRETS_FILE",
+		"PROTEOS_GIT_HOST", "PROTEOS_GIT_PUBLIC_HOSTS", "PROTEOS_SECRETS_BACKEND", "PROTEOS_SECRETS_FILE",
 		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_PREFIX", "PROTEOS_OPENBAO_ROLE_ID",
 		"PROTEOS_OPENBAO_SECRET_ID_FILE", "ALLOWED_GITHUB_LOGINS", "PROTEOS_COOKIE_SECURE",
 		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN", "PROTEOS_NODE_AGENT_INSECURE_HTTP",
@@ -150,6 +150,37 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if len(c.AllowedGitHubLogins) != 2 || c.AllowedGitHubLogins[0] != "alice" || c.AllowedGitHubLogins[1] != "bob" {
 		t.Errorf("AllowedGitHubLogins = %v, want [alice bob] (trimmed, empties dropped)", c.AllowedGitHubLogins)
+	}
+}
+
+// Gitea/Forgejo phase 1: PROTEOS_GIT_PUBLIC_HOSTS is a CSV of bare host[:port]
+// entries, lowercased on load; anything URL-shaped fails startup loudly.
+func TestLoadGitPublicHosts(t *testing.T) {
+	clearEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.GitPublicHosts) != 0 {
+		t.Errorf("GitPublicHosts = %v, want empty by default", c.GitPublicHosts)
+	}
+
+	clearEnv(t)
+	t.Setenv("PROTEOS_GIT_PUBLIC_HOSTS", "Codeberg.org, git.example.com:3000 ,")
+	c, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.GitPublicHosts) != 2 || c.GitPublicHosts[0] != "codeberg.org" || c.GitPublicHosts[1] != "git.example.com:3000" {
+		t.Errorf("GitPublicHosts = %v, want [codeberg.org git.example.com:3000] (lowercased, trimmed, empties dropped)", c.GitPublicHosts)
+	}
+
+	for _, bad := range []string{"https://codeberg.org", "codeberg.org/gitea", "user@codeberg.org", "codeberg.org:port"} {
+		clearEnv(t)
+		t.Setenv("PROTEOS_GIT_PUBLIC_HOSTS", bad)
+		if _, err := Load(); err == nil {
+			t.Errorf("Load with PROTEOS_GIT_PUBLIC_HOSTS=%q succeeded; want bare-host validation error", bad)
+		}
 	}
 }
 

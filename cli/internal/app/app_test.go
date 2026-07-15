@@ -31,6 +31,9 @@ type fakeCP struct {
 	projectsPresent bool   // GET /api/projects returns hello-world when true
 	cloned          bool   // set by POST /api/git/clone (then projects show up)
 	lastCloneName   string // full_name from the last clone request
+	lastCloneURL    string // url from the last clone request (clone-by-URL)
+	gitHostLinked   bool   // whether the fake git host has a PAT saved
+	lastHostToken   string // token from the last set-token request
 	lastCommitMsg   string // message from the last git commit request
 
 	lastCreateName     string // name from the last POST /api/machines
@@ -201,14 +204,71 @@ func (f *fakeCP) handler() http.Handler {
 		}
 		var body struct {
 			FullName string `json:"full_name"`
+			URL      string `json:"url"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		// Mirror the control plane's allowlist behavior for URL clones so the
+		// CLI's forbidden_host handling is exercisable.
+		if body.URL != "" && !strings.HasPrefix(body.URL, "https://codeberg.example/") {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"forbidden_host"}`)
+			return
+		}
 		f.mu.Lock()
 		f.cloned = true
 		f.lastCloneName = body.FullName
+		f.lastCloneURL = body.URL
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprint(w, `{"op_id":"op1"}`)
+	})
+	mux.HandleFunc("GET /api/git/hosts", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		f.mu.Lock()
+		linked := f.gitHostLinked
+		f.mu.Unlock()
+		if linked {
+			fmt.Fprint(w, `{"hosts":[{"host":"codeberg.example","linked":true,"login":"ivan"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"hosts":[{"host":"codeberg.example","linked":false}]}`)
+	})
+	mux.HandleFunc("PUT /api/git/hosts/{host}/token", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		if r.PathValue("host") != "codeberg.example" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"unknown_host"}`)
+			return
+		}
+		var body struct {
+			Token string `json:"token"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.lastHostToken = body.Token
+		f.mu.Unlock()
+		if body.Token != "pat-ok" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"bad_token"}`)
+			return
+		}
+		f.mu.Lock()
+		f.gitHostLinked = true
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"host":"codeberg.example","linked":true,"login":"ivan"}`)
+	})
+	mux.HandleFunc("DELETE /api/git/hosts/{host}/token", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		f.mu.Lock()
+		f.gitHostLinked = false
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/machines/{id}/git/status", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {
@@ -362,11 +422,22 @@ func writeErr(w http.ResponseWriter, status int, code string) {
 // runCLI executes the CLI in-process with a temp config dir + env auth.
 func runCLI(t *testing.T, url, token string, args ...string) (int, string, string) {
 	t.Helper()
+	return runCLIStdin(t, url, token, "", args...)
+}
+
+// runCLIStdin is runCLI with stdin content (e.g. a PAT for git hosts
+// set-token). An empty stdin leaves Env.Stdin nil, matching runCLI.
+func runCLIStdin(t *testing.T, url, token, stdin string, args ...string) (int, string, string) {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("PROTEOS_URL", url)
 	t.Setenv("PROTEOS_TOKEN", token)
 	var out, errb bytes.Buffer
-	code := app.Run(app.Env{Stdout: &out, Stderr: &errb, Version: "test"}, args)
+	env := app.Env{Stdout: &out, Stderr: &errb, Version: "test"}
+	if stdin != "" {
+		env.Stdin = strings.NewReader(stdin)
+	}
+	code := app.Run(env, args)
 	return code, out.String(), errb.String()
 }
 
@@ -822,22 +893,26 @@ func TestHelpJSONIncludesBuildIdentity(t *testing.T) {
 	}
 }
 
+// helpJSONCommand mirrors one command of `proteos --help-json` for tests.
+type helpJSONCommand struct {
+	Path  string `json:"path"`
+	Group string `json:"group"`
+	Name  string `json:"name"`
+	Flags []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"flags"`
+}
+
 // helpJSONTree mirrors the shape of `proteos --help-json` for tests.
 type helpJSONTree struct {
 	Program string `json:"program"`
 	Version string `json:"version"`
 	Groups  []struct {
-		Name     string `json:"name"`
-		Commands []struct {
-			Path  string `json:"path"`
-			Group string `json:"group"`
-			Name  string `json:"name"`
-			Flags []struct {
-				Name string `json:"name"`
-				Type string `json:"type"`
-			} `json:"flags"`
-		} `json:"commands"`
+		Name     string            `json:"name"`
+		Commands []helpJSONCommand `json:"commands"`
 	} `json:"groups"`
+	Commands []helpJSONCommand `json:"commands"`
 }
 
 // TestHelpJSONOffline proves --help-json works with no endpoint, no token, and
@@ -867,7 +942,14 @@ func TestHelpJSONOffline(t *testing.T) {
 				got = append(got, c.Path)
 			}
 		}
+		for _, c := range tree.Commands {
+			if c.Group != "" {
+				t.Errorf("top-level command %q has group %q, want none", c.Path, c.Group)
+			}
+			got = append(got, c.Path)
+		}
 		want := []string{
+			"version", "help", "help-json",
 			"auth login", "auth status", "auth logout",
 			"machines ls", "machines get", "machines create", "machines start", "machines stop",
 			"templates ls",
@@ -897,27 +979,26 @@ func TestHelpJSONMatchesCommandHelp(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &tree); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
+	all := tree.Commands
 	for _, g := range tree.Groups {
-		for _, c := range g.Commands {
-			if len(c.Flags) == 0 {
-				continue // e.g. `auth logout` takes no flags and has no -h path
-			}
-			args := append(strings.Fields(c.Path), "-h")
-			code, _, errs := runArgs(t, args...)
-			if code != client.ExitOK {
-				t.Errorf("%q -h exit = %d, want 0 (not dispatchable?)", c.Path, code)
-				continue
-			}
-			got := flagNamesFromHelp(errs)
-			var want []string
-			for _, f := range c.Flags {
-				want = append(want, f.Name)
-			}
-			sort.Strings(got)
-			sort.Strings(want)
-			if strings.Join(got, ",") != strings.Join(want, ",") {
-				t.Errorf("%q flags drift between -h and --help-json.\n  -h: %v\njson: %v", c.Path, got, want)
-			}
+		all = append(all, g.Commands...)
+	}
+	for _, c := range all {
+		args := append(strings.Fields(c.Path), "-h")
+		code, _, errs := runArgs(t, args...)
+		if code != client.ExitOK {
+			t.Errorf("%q -h exit = %d, want 0 (not dispatchable?)", c.Path, code)
+			continue
+		}
+		got := flagNamesFromHelp(errs)
+		var want []string
+		for _, f := range c.Flags {
+			want = append(want, f.Name)
+		}
+		sort.Strings(got)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%q flags drift between -h and --help-json.\n  -h: %v\njson: %v", c.Path, got, want)
 		}
 	}
 }
@@ -1092,6 +1173,107 @@ func TestProjectCloneDispatch(t *testing.T) {
 	}
 	if !strings.Contains(out, "dispatched") {
 		t.Fatalf("clone output:\n%s", out)
+	}
+}
+
+// A URL-shaped ref is sent as {url} rather than {full_name} — the clone-by-URL
+// path for allowlisted public hosts (Gitea/Forgejo phase 1).
+func TestProjectCloneDispatchByURL(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "project", "clone", "--machine", "m1", "https://codeberg.example/octocat/hello")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if cp.lastCloneURL != "https://codeberg.example/octocat/hello" {
+		t.Fatalf("server saw clone url %q", cp.lastCloneURL)
+	}
+	if cp.lastCloneName != "" {
+		t.Fatalf("full_name must be empty for a URL clone, got %q", cp.lastCloneName)
+	}
+	if !strings.Contains(out, "dispatched") {
+		t.Fatalf("clone output:\n%s", out)
+	}
+}
+
+// A host outside the server's allowlist surfaces the operator-actionable
+// message rather than the bare forbidden_host code.
+func TestProjectCloneForbiddenHost(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLI(t, url, "tok", "project", "clone", "--machine", "m1", "https://evil.example/octocat/hello")
+	if code != client.ExitError {
+		t.Fatalf("exit = %d, want %d", code, client.ExitError)
+	}
+	if !strings.Contains(errOut, "PROTEOS_GIT_PUBLIC_HOSTS") {
+		t.Fatalf("stderr should name the operator setting:\n%s", errOut)
+	}
+}
+
+// --- Gitea/Forgejo phase 2: git hosts PAT commands ----------------------------
+
+func TestGitHostsList(t *testing.T) {
+	_, url := newCP(t)
+	code, out, _ := runCLI(t, url, "tok", "git", "hosts", "ls")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "codeberg.example") || strings.Contains(out, "saved") {
+		t.Fatalf("hosts output should list the host, unlinked:\n%s", out)
+	}
+}
+
+func TestGitHostsSetToken(t *testing.T) {
+	cp, url := newCP(t)
+	code, out, _ := runCLIStdin(t, url, "tok", "pat-ok\n", "git", "hosts", "set-token", "codeberg.example")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if cp.lastHostToken != "pat-ok" {
+		t.Fatalf("server saw token %q", cp.lastHostToken)
+	}
+	if !strings.Contains(out, "account: ivan") {
+		t.Fatalf("set-token output:\n%s", out)
+	}
+	// The list now shows the link.
+	_, lsOut, _ := runCLI(t, url, "tok", "git", "hosts", "ls")
+	if !strings.Contains(lsOut, "saved") || !strings.Contains(lsOut, "ivan") {
+		t.Fatalf("hosts output after set-token:\n%s", lsOut)
+	}
+}
+
+func TestGitHostsSetTokenRejected(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLIStdin(t, url, "tok", "pat-wrong\n", "git", "hosts", "set-token", "codeberg.example")
+	if code == client.ExitOK {
+		t.Fatal("bad token should fail")
+	}
+	if !strings.Contains(errOut, "bad_token") {
+		t.Fatalf("stderr should carry bad_token:\n%s", errOut)
+	}
+}
+
+func TestGitHostsSetTokenNoStdin(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLIStdin(t, url, "tok", "", "git", "hosts", "set-token", "codeberg.example")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want usage error", code)
+	}
+	if !strings.Contains(errOut, "stdin") {
+		t.Fatalf("stderr should explain the stdin requirement:\n%s", errOut)
+	}
+}
+
+func TestGitHostsRmToken(t *testing.T) {
+	cp, url := newCP(t)
+	cp.gitHostLinked = true
+	code, out, _ := runCLI(t, url, "tok", "git", "hosts", "rm-token", "codeberg.example")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(out, "token removed") {
+		t.Fatalf("rm-token output:\n%s", out)
+	}
+	if cp.gitHostLinked {
+		t.Fatal("server should have unlinked the host")
 	}
 }
 

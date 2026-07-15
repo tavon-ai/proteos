@@ -12,6 +12,7 @@ import (
 
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/tavon-ai/proteos/controlplane/internal/gitea"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
 	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
@@ -662,6 +663,7 @@ func setupPR(t *testing.T, machineState string, revoked bool, ghURL string) wtFi
 		Machines:    machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
 		GitWorktree: ch,
 		GitHub:      gh,
+		GitHost:     "github.com",
 		Tokens:      github.NewTokenSource(gh, q, sec),
 	}
 	ts := httptest.NewServer(srv.Handler())
@@ -685,6 +687,215 @@ func TestGitPR_200(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if body.PRURL != "https://github.com/octocat/hello/pull/7" || body.Number != 7 {
 		t.Fatalf("unexpected pr body: %+v", body)
+	}
+}
+
+// A project whose origin host is neither the auth host nor on the public-host
+// allowlist must be refused before any provider API call — owner/repo alone
+// would address the wrong repository. The fake GitHub server would happily
+// create the PR (returning 200), so a missing guard fails this test on status.
+func TestGitPR_422UnsupportedHost(t *testing.T) {
+	gh := fakePRServer(t, http.StatusCreated, `{"number":7,"html_url":"x"}`)
+	fx := setupPR(t, string(machine.StateRunning), false, gh)
+	fx.ch.projects = []guestwire.Project{
+		{Name: "alpha", Path: "/workspace/alpha", Remote: "https://codeberg.org/octocat/hello.git"},
+	}
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "unsupported_host" {
+		t.Fatalf("error = %q, want unsupported_host", code)
+	}
+}
+
+// --- Gitea/Forgejo phase 2: PR dispatch to a public host ---------------------
+
+// fakeGiteaPRServer serves the two /api/v1 endpoints the gitea PR branch
+// touches, gated on the PAT "pat-xyz".
+func fakeGiteaPRServer(t *testing.T, pullStatus int, pullBody string) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	authed := func(r *http.Request) bool { return r.Header.Get("Authorization") == "token pat-xyz" }
+	mux.HandleFunc("GET /repos/octocat/hello", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"token is required"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"full_name":"octocat/hello","default_branch":"main"}`))
+	})
+	mux.HandleFunc("POST /repos/octocat/hello/pulls", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"token is required"}`))
+			return
+		}
+		w.WriteHeader(pullStatus)
+		_, _ = w.Write([]byte(pullBody))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts.URL
+}
+
+// setupGiteaPR wires the PR endpoint for a project cloned from an allowlisted
+// public host. The GitHub client points at a tripwire that fails the test if
+// any call reaches it — proving public-host PRs never touch the GitHub API.
+// pat is the token seeded into the user's link ("" ⇒ no link at all).
+func setupGiteaPR(t *testing.T, pat, giteaURL string) wtFixture {
+	t.Helper()
+	ctx := context.Background()
+	pool, q := testutil.Postgres(t)
+
+	host, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "local", AgentUrl: "http://127.0.0.1:9090"})
+	if err != nil {
+		t.Fatalf("host: %v", err)
+	}
+	user, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 9, Login: "octocat", Email: "o@example.com"})
+	if err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	if pat != "" {
+		ref := secrets.UserGitHostPath(uid, "codeberg.example")
+		if err := sec.Put(ref, map[string]string{
+			secrets.GitHostFieldToken: pat,
+			secrets.GitHostFieldLogin: "ivan",
+		}); err != nil {
+			t.Fatalf("seed host secret: %v", err)
+		}
+		meta, _ := json.Marshal(map[string]any{"login": "ivan"})
+		if _, err := q.UpsertGitHostLink(ctx, store.UpsertGitHostLinkParams{
+			UserID: user.ID, Host: "codeberg.example", Metadata: meta, SecretRef: ref,
+		}); err != nil {
+			t.Fatalf("seed host link: %v", err)
+		}
+	}
+
+	mc, err := q.CreateMachine(ctx, store.CreateMachineParams{UserID: user.ID, HostID: host.ID, KernelRef: "k", RootfsRef: "r", ResourceSpec: []byte(`{}`)})
+	if err != nil {
+		t.Fatalf("machine: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE machines SET state=$1 WHERE id=$2", string(machine.StateRunning), mc.ID); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	sessions := session.NewManager(q, time.Hour)
+	token, err := sessions.Create(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
+	tripwire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("GitHub API must not be called for a public-host PR (got %s %s)", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(tripwire.Close)
+
+	gh := github.NewClient(github.Config{ClientID: "id", ClientSecret: "s", APIBaseURL: tripwire.URL})
+	ch := &fakeWorktree{projects: []guestwire.Project{
+		{Name: "alpha", Path: "/workspace/alpha", Remote: "https://codeberg.example/octocat/hello.git"},
+	}}
+
+	srv := &httpapi.Server{
+		Sessions:       sessions,
+		Queries:        q,
+		Broker:         machine.NewBroker(),
+		Audit:          audit.NewRecorder(q),
+		Machines:       machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
+		Secrets:        sec,
+		GitWorktree:    ch,
+		GitHub:         gh,
+		GitHost:        "github.com",
+		GitPublicHosts: []string{"codeberg.example"},
+		GiteaFor:       func(string) *gitea.Client { return gitea.New(giteaURL) },
+		Tokens:         github.NewTokenSource(gh, q, sec),
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return wtFixture{url: ts.URL, token: token, mid: machine.UUIDString(mc.ID), ch: ch}
+}
+
+func TestGitPR_Gitea200(t *testing.T) {
+	gt := fakeGiteaPRServer(t, http.StatusCreated,
+		`{"number":3,"html_url":"https://codeberg.example/octocat/hello/pulls/3"}`)
+	fx := setupGiteaPR(t, "pat-xyz", gt)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"My change","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		PRURL  string `json:"pr_url"`
+		Number int    `json:"number"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.PRURL != "https://codeberg.example/octocat/hello/pulls/3" || body.Number != 3 {
+		t.Fatalf("unexpected pr body: %+v", body)
+	}
+}
+
+func TestGitPR_Gitea409TokenRequired(t *testing.T) {
+	gt := fakeGiteaPRServer(t, http.StatusCreated, `{"number":3,"html_url":"x"}`)
+	fx := setupGiteaPR(t, "", gt) // no PAT stored
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "githost_token_required" {
+		t.Fatalf("error = %q, want githost_token_required", code)
+	}
+}
+
+func TestGitPR_Gitea409TokenInvalid(t *testing.T) {
+	gt := fakeGiteaPRServer(t, http.StatusCreated, `{"number":3,"html_url":"x"}`)
+	fx := setupGiteaPR(t, "pat-revoked", gt) // stored, but the host rejects it
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "githost_token_invalid" {
+		t.Fatalf("error = %q, want githost_token_invalid", code)
+	}
+}
+
+func TestGitPR_Gitea409Exists(t *testing.T) {
+	gt := fakeGiteaPRServer(t, http.StatusConflict,
+		`{"message":"pull request already exists for these targets"}`)
+	fx := setupGiteaPR(t, "pat-xyz", gt)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "pr_exists" {
+		t.Fatalf("error = %q, want pr_exists", code)
+	}
+}
+
+func TestGitPR_Gitea422NoCommits(t *testing.T) {
+	gt := fakeGiteaPRServer(t, http.StatusConflict,
+		`{"message":"no commits between branches"}`)
+	fx := setupGiteaPR(t, "pat-xyz", gt)
+	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
+		`{"project":"alpha","title":"T","head":"feature/x"}`, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "no_commits" {
+		t.Fatalf("error = %q, want no_commits", code)
 	}
 }
 

@@ -262,7 +262,7 @@ func setupRPCChannel(t *testing.T) (*guestctl.Manager, *rpcFakeGuest, string) {
 	tokens := github.NewTokenSource(gh, q, sec)
 	broker := machine.NewBroker()
 	hub := taskevents.New(taskevents.DefaultBufferSize, taskevents.DefaultRetention)
-	mgr := guestctl.New(rpcDialer{addr: addr}, broker, q, tokens, audit.NewRecorder(q), hub, "github.com")
+	mgr := guestctl.New(rpcDialer{addr: addr}, broker, q, tokens, audit.NewRecorder(q), hub, "github.com", nil, nil)
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

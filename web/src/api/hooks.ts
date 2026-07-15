@@ -6,6 +6,7 @@ import {
   machineEventsUrl,
   SessionExpiredError,
   taskEventsUrl,
+  type CloneTarget,
   type CreateMachineInput,
   type CreateTaskInput,
   type MachineDestroyedData,
@@ -166,6 +167,42 @@ export function useProviderMutations() {
     onSuccess: invalidate,
   });
   return { setKey, deleteKey };
+}
+
+// gitHostsKey is the query cache key for the allowlisted git hosts + link state.
+const gitHostsKey = ['git-hosts'] as const;
+
+// useGitHosts loads the additional git hosts (Gitea/Forgejo phase 2) with the
+// user's PAT link state. Empty when the operator has configured none — the
+// Settings section hides itself then.
+export function useGitHosts() {
+  return useQuery({
+    queryKey: gitHostsKey,
+    queryFn: api.listGitHosts,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useGitHostMutations exposes set/delete of a host's write-only PAT. Both
+// invalidate the git-hosts query so the linked/login state re-renders from the
+// server (the token itself is never held client-side).
+export function useGitHostMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: gitHostsKey });
+
+  const setToken = useMutation({
+    mutationFn: ({ host, token }: { host: string; token: string }) =>
+      api.setGitHostToken(host, token),
+    onSuccess: invalidate,
+  });
+  const deleteToken = useMutation({
+    mutationFn: (host: string) => api.deleteGitHostToken(host),
+    onSuccess: invalidate,
+  });
+  return { setToken, deleteToken };
 }
 
 // profileItemsKey is the query cache key for the user's portable-profile items.
@@ -345,10 +382,11 @@ export function useInvalidateProjects() {
 
 // useCloneRepo dispatches a clone into the given machine. It returns the op_id
 // immediately (202); completion arrives as a git.clone machine event. On a stale
-// grant the mutation rejects with ApiError 409 reconnect_github.
+// grant the mutation rejects with ApiError 409 reconnect_github; clone-by-URL
+// targets may reject with 400 forbidden_host / bad_url.
 export function useCloneRepo(machineId: string | null) {
   return useMutation({
-    mutationFn: (fullName: string) => api.cloneRepo(machineId as string, fullName),
+    mutationFn: (target: CloneTarget) => api.cloneRepo(machineId as string, target),
   });
 }
 
