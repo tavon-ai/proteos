@@ -9,6 +9,7 @@ import {
   type CloneTarget,
   type CreateMachineInput,
   type CreateTaskInput,
+  type LogSource,
   type MachineDestroyedData,
   type MachineEvent,
   type MachineEventData,
@@ -723,4 +724,15 @@ export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
   }, [qc]);
 
   return events;
+}
+
+// useLogs polls GET /api/logs for the Logs page (TAV-108): API + UI application
+// logs, filtered to one source or "all". A short poll (there is no SSE stream
+// for logs) keeps the view live while the window is open.
+export function useLogs(source: LogSource | 'all') {
+  return useQuery({
+    queryKey: ['logs', source],
+    queryFn: () => api.listLogs(source === 'all' ? undefined : source, 1000),
+    refetchInterval: 5_000,
+  });
 }
