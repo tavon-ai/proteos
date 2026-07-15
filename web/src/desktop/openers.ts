@@ -147,6 +147,13 @@ export function openLogs(wm: WindowManagerContext): void {
   wm.open({ id: 'logs', kind: 'logs', title: 'Activity', dedupeKey: 'logs' });
 }
 
+// openAppLogs opens the Proteos application logs window (TAV-108): API + UI
+// logs, distinct from the machine-activity feed above. Global window (no
+// machine scope), one singleton like Settings/Activity.
+export function openAppLogs(wm: WindowManagerContext): void {
+  wm.open({ id: 'app-logs', kind: 'applogs', title: 'Logs', dedupeKey: 'applogs' });
+}
+
 export function openProjects(wm: WindowManagerContext, machineId: string): void {
   wm.open({
     id: `projects-${machineId}`,

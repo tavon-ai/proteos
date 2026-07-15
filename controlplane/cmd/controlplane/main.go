@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tavon-ai/proteos/controlplane/internal/applog"
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
 	"github.com/tavon-ai/proteos/controlplane/internal/config"
@@ -41,7 +42,12 @@ func main() {
 	migrateSecretsFlag := flag.String("migrate-secrets", "", "one-shot: copy a dev FileStore JSON dump into the configured backend, then exit")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})))
+	// logStore (TAV-108) is a bounded in-memory capture of the process's own log
+	// lines, backing GET /api/logs. Wrapping the real JSON handler with it adds
+	// capture as a side effect — stdout output is unchanged.
+	logStore := applog.NewStore(applogCapacity)
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})
+	slog.SetDefault(slog.New(applog.NewHandler(jsonHandler, logStore, "api")))
 	cpmetrics.Register()
 
 	if *migrateSecretsFlag != "" {
@@ -52,11 +58,16 @@ func main() {
 		return
 	}
 
-	if err := run(*migrateFlag, *migrateOnlyFlag); err != nil {
+	if err := run(*migrateFlag, *migrateOnlyFlag, logStore); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
+
+// applogCapacity bounds the in-memory log ring buffer (TAV-108): recent enough
+// to be useful for a live-debugging session, small enough to stay a rounding
+// error against normal process memory.
+const applogCapacity = 2000
 
 // logLevel reads PROTEOS_LOG_LEVEL ("debug", "info", "warn", "error";
 // case-insensitive) and returns the corresponding slog.Level. It defaults to
@@ -167,7 +178,7 @@ func openSecrets(cfg *config.Config) (secrets.Store, error) {
 	})
 }
 
-func run(migrate, migrateOnly bool) error {
+func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -402,6 +413,7 @@ func run(migrate, migrateOnly bool) error {
 		Audit:      auditRec,
 		Profile:    profileStore,
 		Injector:   inject,
+		Logs:       logStore,
 	}
 	if guestCtl != nil {
 		srv.GitHub = ghClient

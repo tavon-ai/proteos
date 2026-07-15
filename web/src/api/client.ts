@@ -475,6 +475,24 @@ export interface DesktopResponse {
   layout: unknown | null;
 }
 
+// LogSource distinguishes the control plane's own request/lifecycle logs
+// ("api") from warn/error lines reported by browser sessions ("ui"). Never
+// includes Firecracker/guest logs — those are a separate per-machine concern.
+export type LogSource = 'api' | 'ui';
+
+// LogEntry is one line of GET /api/logs (TAV-108).
+export interface LogEntry {
+  time: string;
+  level: string;
+  source: LogSource;
+  message: string;
+  fields?: Record<string, string>;
+}
+
+export interface LogsResponse {
+  entries: LogEntry[];
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? 'GET';
   let res: Response;
@@ -788,7 +806,33 @@ export const api = {
         body: JSON.stringify({ prompt }),
       },
     ),
+
+  // Proteos application logs (TAV-108): the control plane's own logs plus
+  // browser-reported UI errors — never Firecracker/machine logs. source omitted
+  // ⇒ both; limit caps the count (server default 500, max 2000).
+  listLogs: (source?: LogSource, limit?: number) => {
+    const params = new URLSearchParams();
+    if (source) params.set('source', source);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return request<LogsResponse>(`/api/logs${qs ? `?${qs}` : ''}`);
+  },
+  // Reports one browser-side log record so it shows up alongside the server's
+  // own logs. Best-effort — see lib/uiLogReporter.ts, which is the only caller.
+  reportUILog: (level: string, message: string, fields?: Record<string, string>) =>
+    request<void>('/api/logs/ui', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level, message, fields }),
+    }),
 };
+
+// logsExportUrl is the GET URL that downloads captured logs as a plain-text
+// attachment (TAV-108's Export button). Not a request() call — the body is a
+// text stream, not JSON; same pattern as projectDownloadUrl.
+export function logsExportUrl(source?: LogSource): string {
+  return `/api/logs/export${source ? `?source=${encodeURIComponent(source)}` : ''}`;
+}
 
 // taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),
 // consumed by useTaskEvents via the browser EventSource API (cookie auth, no

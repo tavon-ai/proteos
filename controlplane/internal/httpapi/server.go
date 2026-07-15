@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/tavon-ai/proteos/controlplane/internal/applog"
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
 	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
@@ -105,6 +106,11 @@ type Server struct {
 	// AT2: the live agent-task event fan-out the task SSE endpoint subscribes to.
 	// Nil disables GET /api/machines/{id}/tasks/{tid}/events.
 	TaskEvents *taskevents.Hub
+
+	// Logs backs the desktop's Logs page (TAV-108): a bounded in-memory capture
+	// of the control plane's own log lines plus browser-reported UI errors.
+	// Nil disables GET /api/logs, GET /api/logs/export, and POST /api/logs/ui.
+	Logs *applog.Store
 
 	// Rate limiters — initialized by Handler(). All are nil-safe (nil = disabled).
 	authRL    *Limiter // login + OAuth callback, per client IP: 10 req/min burst
@@ -283,6 +289,15 @@ func (s *Server) Handler() http.Handler {
 	// dispatch stack (which needs the provider/secret/worktree surfaces).
 	if s.TaskEvents != nil {
 		mux.Handle("GET /api/machines/{id}/tasks/{tid}/events", s.requireAuth(http.HandlerFunc(s.handleTaskEvents)))
+	}
+
+	// Application logs (TAV-108): the desktop's Logs page. Reads are auth-only;
+	// the UI-report endpoint mutates the shared store so it also requires the
+	// CSRF header (cookie-authed browser callers). Enabled only when wired.
+	if s.Logs != nil {
+		mux.Handle("GET /api/logs", s.requireAuth(http.HandlerFunc(s.handleListLogs)))
+		mux.Handle("GET /api/logs/export", s.requireAuth(http.HandlerFunc(s.handleExportLogs)))
+		mux.Handle("POST /api/logs/ui", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleReportUILog))))
 	}
 
 	// Terminal gateway (Phase 3). requireAuth handles the 401; the Origin check
