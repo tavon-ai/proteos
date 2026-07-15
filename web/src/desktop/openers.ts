@@ -154,6 +154,13 @@ export function openAppLogs(wm: WindowManagerContext): void {
   wm.open({ id: 'app-logs', kind: 'applogs', title: 'Logs', dedupeKey: 'applogs' });
 }
 
+// openSessions opens the coding agent Sessions window (TAV-107): a global view
+// of headless agent runs (past and in-progress) across every machine the user
+// owns. Global window (no machine scope), one singleton like Logs/Settings.
+export function openSessions(wm: WindowManagerContext): void {
+  wm.open({ id: 'sessions', kind: 'sessions', title: 'Sessions', dedupeKey: 'sessions' });
+}
+
 export function openProjects(wm: WindowManagerContext, machineId: string): void {
   wm.open({
     id: `projects-${machineId}`,

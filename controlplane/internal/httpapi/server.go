@@ -303,6 +303,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/machines/{id}/tasks/{tid}/messages", s.requireAuth(s.csrfHeader(s.userLimit(s.taskRL, http.HandlerFunc(s.handleSendMessage)))))
 	}
 
+	// Coding agent sessions (TAV-107): the desktop's Sessions page, a global
+	// read-only view over a user's agent_tasks rows across every machine they
+	// own (unlike the per-machine Tasks window above). Both GETs, so no CSRF
+	// header is required. Needs only Queries, which is always wired.
+	mux.Handle("GET /api/sessions", s.requireAuth(http.HandlerFunc(s.handleListSessions)))
+	mux.Handle("GET /api/sessions/export", s.requireAuth(http.HandlerFunc(s.handleExportSessions)))
+
 	// AT2: live agent-event SSE for one task. A GET stream (no CSRF — like the
 	// machine SSE; EventSource cannot set headers and it is read-only). It only
 	// reads the task row + the event hub, so it is wired independently of the

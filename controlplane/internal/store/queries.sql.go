@@ -845,6 +845,66 @@ func (q *Queries) ListAgentTasksByMachine(ctx context.Context, machineID pgtype.
 	return items, nil
 }
 
+const listAgentTasksByUser = `-- name: ListAgentTasksByUser :many
+SELECT
+    agent_tasks.id, agent_tasks.machine_id, agent_tasks.user_id, agent_tasks.provider, agent_tasks.project, agent_tasks.prompt, agent_tasks.status, agent_tasks.agent_session_id, agent_tasks.usage, agent_tasks.result_summary, agent_tasks.error, agent_tasks.created_at, agent_tasks.started_at, agent_tasks.ended_at,
+    m.name AS machine_name
+FROM agent_tasks
+JOIN machines m ON m.id = agent_tasks.machine_id
+WHERE agent_tasks.user_id = $1
+ORDER BY agent_tasks.created_at DESC
+LIMIT $2
+`
+
+type ListAgentTasksByUserParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	Limit  int32       `json:"limit"`
+}
+
+type ListAgentTasksByUserRow struct {
+	AgentTask   AgentTask `json:"agent_task"`
+	MachineName string    `json:"machine_name"`
+}
+
+// A user's coding agent sessions across every machine, newest first, capped by
+// $2 (TAV-107 Sessions page). Joins the owning machine's display name so the
+// page can show where a session ran without a second round trip.
+func (q *Queries) ListAgentTasksByUser(ctx context.Context, arg ListAgentTasksByUserParams) ([]ListAgentTasksByUserRow, error) {
+	rows, err := q.db.Query(ctx, listAgentTasksByUser, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentTasksByUserRow{}
+	for rows.Next() {
+		var i ListAgentTasksByUserRow
+		if err := rows.Scan(
+			&i.AgentTask.ID,
+			&i.AgentTask.MachineID,
+			&i.AgentTask.UserID,
+			&i.AgentTask.Provider,
+			&i.AgentTask.Project,
+			&i.AgentTask.Prompt,
+			&i.AgentTask.Status,
+			&i.AgentTask.AgentSessionID,
+			&i.AgentTask.Usage,
+			&i.AgentTask.ResultSummary,
+			&i.AgentTask.Error,
+			&i.AgentTask.CreatedAt,
+			&i.AgentTask.StartedAt,
+			&i.AgentTask.EndedAt,
+			&i.MachineName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDisksByMachineIDs = `-- name: ListDisksByMachineIDs :many
 SELECT id, machine_id, size_mib, created_at FROM disks WHERE machine_id = ANY($1::uuid[])
 `

@@ -327,6 +327,19 @@ SELECT * FROM agent_tasks WHERE id = $1;
 -- A machine's tasks, newest first.
 SELECT * FROM agent_tasks WHERE machine_id = $1 ORDER BY created_at DESC;
 
+-- name: ListAgentTasksByUser :many
+-- A user's coding agent sessions across every machine, newest first, capped by
+-- $2 (TAV-107 Sessions page). Joins the owning machine's display name so the
+-- page can show where a session ran without a second round trip.
+SELECT
+    sqlc.embed(agent_tasks),
+    m.name AS machine_name
+FROM agent_tasks
+JOIN machines m ON m.id = agent_tasks.machine_id
+WHERE agent_tasks.user_id = $1
+ORDER BY agent_tasks.created_at DESC
+LIMIT $2;
+
 -- name: MarkAgentTaskRunning :exec
 -- Move a queued task to running once the run is dispatched.
 UPDATE agent_tasks

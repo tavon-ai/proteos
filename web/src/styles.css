@@ -1524,6 +1524,12 @@ body {
 .rail-settings .rail-accent {
   background: #a371f7;
 }
+.rail-sessions.rail-item-active {
+  background: rgba(47, 129, 247, 0.14);
+}
+.rail-sessions .rail-accent {
+  background: #2f81f7;
+}
 .rail-bottom {
   margin-top: auto;
   display: flex;
@@ -2165,6 +2171,111 @@ body {
 }
 .applogs-field {
   margin-right: 0.6rem;
+}
+
+/* Sessions window (TAV-107): coding agent sessions across every machine. */
+.sessions-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.sessions-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.sessions-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+.sessions-tab {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.sessions-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.sessions-empty {
+  padding: 1rem;
+}
+.sessions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.sessions-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0.2rem;
+  border-bottom: 1px solid var(--border);
+}
+.sessions-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.sessions-status {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.sessions-running {
+  color: var(--accent);
+}
+.sessions-done {
+  color: #2e9e5b;
+}
+.sessions-failed {
+  color: var(--error);
+}
+.sessions-queued {
+  color: var(--muted);
+}
+.sessions-canceled {
+  color: var(--muted);
+}
+.sessions-row-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.sessions-row-prompt {
+  margin: 0;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sessions-row-summary {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sessions-row-error {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--error);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .placeholder-body {
