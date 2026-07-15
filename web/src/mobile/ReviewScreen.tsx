@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, type MachineSummary, type PRDetail, type PRState } from '../api/client';
-import { useCommentPR, useMergePR, usePR, usePRChecks, usePRFiles } from '../api/hooks';
+import {
+  ApiError,
+  type MachineSummary,
+  type PRDetail,
+  type PRState,
+  type Project,
+} from '../api/client';
+import {
+  useCommentPR,
+  useMergePR,
+  usePR,
+  usePRChecks,
+  usePRFiles,
+  useProjects,
+} from '../api/hooks';
 import { parsePatch } from './diff';
 import { BranchIcon, ChatIcon, CheckIcon, ChevronLeftIcon, CloseIcon } from './icons';
 
@@ -9,30 +22,59 @@ import { BranchIcon, ChatIcon, CheckIcon, ChevronLeftIcon, CloseIcon } from './i
 export function ReviewScreen({
   repo,
   number,
+  machineId,
   machine,
   avatarUrl,
   onBack,
 }: {
   repo: string;
   number: number;
+  machineId: string | null;
   machine: MachineSummary | null;
   avatarUrl: string;
   onBack: () => void;
 }) {
-  const hasContext = !!repo && number > 0;
-  const pr = usePR(repo, number, hasContext);
-  const files = usePRFiles(repo, number, hasContext);
-  const checks = usePRChecks(repo, number, hasContext);
+  const hasNumber = number > 0;
+  // The deep link's ?repo= query param is the fast path; when it's absent (the
+  // plain /m/:machineId/pr/:number shape) fall back to resolving the repo from
+  // the machine's cloned projects. This requires the machine to be running.
+  const needsRepoLookup = hasNumber && !repo;
+  const projects = useProjects(machineId, needsRepoLookup);
+  const resolvedRepo = repo || repoFullNameFromProjects(projects.data?.projects) || '';
+  const hasContext = !!resolvedRepo && hasNumber;
+
+  const pr = usePR(resolvedRepo, number, hasContext);
+  const files = usePRFiles(resolvedRepo, number, hasContext);
+  const checks = usePRChecks(resolvedRepo, number, hasContext);
   const [selected, setSelected] = useState(0);
   const [commenting, setCommenting] = useState(false);
 
-  if (!hasContext) {
+  if (!hasNumber) {
     return (
       <div className="m-screen">
         <div className="m-body m-centered">
           <p className="m-empty">
             No pull request selected. Open a review link to land here directly.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (needsRepoLookup && !resolvedRepo) {
+    if (projects.error) {
+      return (
+        <div className="m-screen">
+          <div className="m-body m-centered">
+            <p className="m-empty">{projectsErrorMessage(projects.error)}</p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="m-screen">
+        <div className="m-body m-centered">
+          <span className="m-spinner" role="status" aria-label="Loading" />
         </div>
       </div>
     );
@@ -93,7 +135,7 @@ export function ReviewScreen({
         </div>
         <h1 className="m-pr-title">{detail.title}</h1>
         <div className="m-pr-repo">
-          {repo} · {detail.head}
+          {resolvedRepo} · {detail.head}
         </div>
       </header>
 
@@ -134,9 +176,14 @@ export function ReviewScreen({
         {current && <DiffView patch={current.patch} />}
       </div>
 
-      <MergeBar detail={detail} repo={repo} number={number} onComment={() => setCommenting(true)} />
+      <MergeBar
+        detail={detail}
+        repo={resolvedRepo}
+        number={number}
+        onComment={() => setCommenting(true)}
+      />
       {commenting && (
-        <CommentSheet repo={repo} number={number} onClose={() => setCommenting(false)} />
+        <CommentSheet repo={resolvedRepo} number={number} onClose={() => setCommenting(false)} />
       )}
     </div>
   );
@@ -327,6 +374,24 @@ function CommentSheet({
       </form>
     </div>
   );
+}
+
+// repoFullNameFromProjects derives an "owner/repo" full name from the first
+// cloned project's git remote (https://github.com/owner/repo(.git) or
+// git@github.com:owner/repo(.git)). Used when a deep link omits ?repo= and the
+// repo must be resolved from the machine it names instead.
+function repoFullNameFromProjects(projects: Project[] | undefined): string | null {
+  const remote = projects?.[0]?.remote;
+  if (!remote) return null;
+  const match = remote.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+function projectsErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 409) {
+    return 'Start the machine to load this pull request.';
+  }
+  return "Could not determine this pull request's repository.";
 }
 
 function prErrorMessage(error: unknown): string {
