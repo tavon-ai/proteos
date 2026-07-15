@@ -6,6 +6,7 @@ import { TokensPanel } from '../components/TokensPanel';
 import { DownloadsPanel } from '../components/DownloadsPanel';
 import { WallpaperPanel } from '../components/WallpaperPanel';
 import { GitHubStatus } from '../components/GitHubStatus';
+import { GitHostsPanel } from '../components/GitHostsPanel';
 import { reconnectRequired, useRepos } from '../api/hooks';
 
 type Tab = 'providers' | 'claude' | 'gitssh' | 'github' | 'tokens' | 'downloads' | 'wallpaper';
@@ -50,7 +51,7 @@ export function SettingsWindow() {
           className={tab === 'github' ? 'settings-tab active' : 'settings-tab'}
           onClick={() => setTab('github')}
         >
-          GitHub
+          Git hosting
         </button>
         <button
           role="tab"
@@ -94,24 +95,28 @@ function GitHubTab() {
   const { data, error } = useRepos();
   const reconnect = reconnectRequired(error);
   return (
-    <section className="github-tab">
-      <div className="repos-head">
-        <h2>GitHub</h2>
-        <GitHubStatus reconnect={reconnect} />
-      </div>
-      {!reconnect && (
-        <p className="muted">
-          ProteOS clones and pushes using your GitHub identity. Tokens are fetched on demand and
-          never written to disk inside the machine.
-        </p>
-      )}
-      {data?.grants_url && (
-        <p className="muted">
-          <a href={data.grants_url} target="_blank" rel="noreferrer">
-            Choose which repositories ProteOS can access ↗
-          </a>
-        </p>
-      )}
-    </section>
+    <>
+      <section className="github-tab">
+        <div className="repos-head">
+          <h2>GitHub</h2>
+          <GitHubStatus reconnect={reconnect} />
+        </div>
+        {!reconnect && (
+          <p className="muted">
+            ProteOS clones and pushes using your GitHub identity. Tokens are fetched on demand and
+            never written to disk inside the machine.
+          </p>
+        )}
+        {data?.grants_url && (
+          <p className="muted">
+            <a href={data.grants_url} target="_blank" rel="noreferrer">
+              Choose which repositories ProteOS can access ↗
+            </a>
+          </p>
+        )}
+      </section>
+      {/* Additional git hosts (Gitea/Forgejo): hidden when none are configured. */}
+      <GitHostsPanel />
+    </>
   );
 }

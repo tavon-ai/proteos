@@ -20,6 +20,8 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
 	"github.com/tavon-ai/proteos/controlplane/internal/config"
 	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
+	"github.com/tavon-ai/proteos/controlplane/internal/gitea"
+	"github.com/tavon-ai/proteos/controlplane/internal/githost"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
 	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
@@ -394,7 +396,8 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		// control channel per running machine, serving on-demand git.credential
 		// requests through its single authorization choke point.
 		tokenSrc = github.NewTokenSource(ghClient, q, sec)
-		guestCtl = guestctl.New(nodes, broker, q, tokenSrc, auditRec, taskHub, cfg.GitHost)
+		guestCtl = guestctl.New(nodes, broker, q, tokenSrc, auditRec, taskHub, cfg.GitHost,
+			githost.NewPATSource(q, sec), cfg.GitPublicHosts)
 		go guestCtl.Run(ctx)
 	}
 
@@ -420,7 +423,12 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		srv.Tokens = tokenSrc
 		srv.GitChannel = guestCtl
 		srv.GitHost = cfg.GitHost
+		srv.GitPublicHosts = cfg.GitPublicHosts
 		srv.GitHubAppSlug = cfg.GitHubAppSlug
+		// Gitea/Forgejo phase 2: per-host API clients for the PAT routes.
+		srv.GiteaFor = func(host string) *gitea.Client {
+			return gitea.New(gitea.APIBaseForHost(host))
+		}
 		// Phase 9: the same control-channel manager backs projects.list + kv.*.
 		srv.Projects = guestCtl
 		// GR1: and the worktree-review git status/diff surface.

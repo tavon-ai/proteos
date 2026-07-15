@@ -165,6 +165,20 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	return i, err
 }
 
+const deleteGitHostLink = `-- name: DeleteGitHostLink :exec
+DELETE FROM git_host_links WHERE user_id = $1 AND host = $2
+`
+
+type DeleteGitHostLinkParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	Host   string      `json:"host"`
+}
+
+func (q *Queries) DeleteGitHostLink(ctx context.Context, arg DeleteGitHostLinkParams) error {
+	_, err := q.db.Exec(ctx, deleteGitHostLink, arg.UserID, arg.Host)
+	return err
+}
+
 const deleteGitIdentity = `-- name: DeleteGitIdentity :execrows
 DELETE FROM user_git_identity WHERE user_id = $1
 `
@@ -293,6 +307,29 @@ func (q *Queries) GetDiskByMachineID(ctx context.Context, machineID pgtype.UUID)
 		&i.MachineID,
 		&i.SizeMib,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getGitHostLink = `-- name: GetGitHostLink :one
+SELECT user_id, host, metadata, secret_ref, created_at, updated_at FROM git_host_links WHERE user_id = $1 AND host = $2
+`
+
+type GetGitHostLinkParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	Host   string      `json:"host"`
+}
+
+func (q *Queries) GetGitHostLink(ctx context.Context, arg GetGitHostLinkParams) (GitHostLink, error) {
+	row := q.db.QueryRow(ctx, getGitHostLink, arg.UserID, arg.Host)
+	var i GitHostLink
+	err := row.Scan(
+		&i.UserID,
+		&i.Host,
+		&i.Metadata,
+		&i.SecretRef,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -828,6 +865,37 @@ func (q *Queries) ListDisksByMachineIDs(ctx context.Context, dollar_1 []pgtype.U
 			&i.MachineID,
 			&i.SizeMib,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGitHostLinks = `-- name: ListGitHostLinks :many
+SELECT user_id, host, metadata, secret_ref, created_at, updated_at FROM git_host_links WHERE user_id = $1 ORDER BY host
+`
+
+func (q *Queries) ListGitHostLinks(ctx context.Context, userID pgtype.UUID) ([]GitHostLink, error) {
+	rows, err := q.db.Query(ctx, listGitHostLinks, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GitHostLink{}
+	for rows.Next() {
+		var i GitHostLink
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Host,
+			&i.Metadata,
+			&i.SecretRef,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1638,6 +1706,45 @@ func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineState
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+	)
+	return i, err
+}
+
+const upsertGitHostLink = `-- name: UpsertGitHostLink :one
+INSERT INTO git_host_links (user_id, host, metadata, secret_ref, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (user_id, host) DO UPDATE
+    SET metadata = EXCLUDED.metadata,
+        secret_ref = EXCLUDED.secret_ref,
+        updated_at = now()
+RETURNING user_id, host, metadata, secret_ref, created_at, updated_at
+`
+
+type UpsertGitHostLinkParams struct {
+	UserID    pgtype.UUID `json:"user_id"`
+	Host      string      `json:"host"`
+	Metadata  []byte      `json:"metadata"`
+	SecretRef string      `json:"secret_ref"`
+}
+
+// Gitea/Forgejo phase 2: save/replace a user's PAT link for one additional git
+// host. metadata carries only non-sensitive hints (login); the token lives in
+// the secrets store at secret_ref.
+func (q *Queries) UpsertGitHostLink(ctx context.Context, arg UpsertGitHostLinkParams) (GitHostLink, error) {
+	row := q.db.QueryRow(ctx, upsertGitHostLink,
+		arg.UserID,
+		arg.Host,
+		arg.Metadata,
+		arg.SecretRef,
+	)
+	var i GitHostLink
+	err := row.Scan(
+		&i.UserID,
+		&i.Host,
+		&i.Metadata,
+		&i.SecretRef,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

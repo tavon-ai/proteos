@@ -17,6 +17,7 @@ import (
 	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/tavon-ai/proteos/controlplane/internal/githost"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
@@ -206,6 +207,23 @@ func setupManager(t *testing.T) (*guestctl.Manager, *machine.Broker, *fakeGuest,
 	gh := github.NewClient(github.Config{ClientID: "id", ClientSecret: "s"})
 	tokens := github.NewTokenSource(gh, q, sec)
 
+	// Gitea/Forgejo phase 2: a PAT link for one public host, so credential tests
+	// can cover the per-host path. "unlinked.example" is allowlisted but has no
+	// PAT — the refusal case.
+	if err := sec.Put(secrets.UserGitHostPath(uid, "codeberg.example"), map[string]string{
+		secrets.GitHostFieldToken: "pat-xyz",
+		secrets.GitHostFieldLogin: "ivan",
+	}); err != nil {
+		t.Fatalf("seed host secret: %v", err)
+	}
+	hostMeta, _ := json.Marshal(map[string]any{"login": "ivan"})
+	if _, err := q.UpsertGitHostLink(context.Background(), store.UpsertGitHostLinkParams{
+		UserID: user.ID, Host: "codeberg.example", Metadata: hostMeta,
+		SecretRef: secrets.UserGitHostPath(uid, "codeberg.example"),
+	}); err != nil {
+		t.Fatalf("seed host link: %v", err)
+	}
+
 	fg := newFakeGuest()
 	ts := httptest.NewServer(fg.handler())
 	t.Cleanup(ts.Close)
@@ -213,7 +231,8 @@ func setupManager(t *testing.T) (*guestctl.Manager, *machine.Broker, *fakeGuest,
 
 	broker := machine.NewBroker()
 	hub := taskevents.New(taskevents.DefaultBufferSize, taskevents.DefaultRetention)
-	mgr := guestctl.New(tcpDialer{addr: addr}, broker, q, tokens, audit.NewRecorder(q), hub, "github.com")
+	mgr := guestctl.New(tcpDialer{addr: addr}, broker, q, tokens, audit.NewRecorder(q), hub, "github.com",
+		githost.NewPATSource(q, sec), []string{"codeberg.example", "unlinked.example"})
 	return mgr, broker, fg, mc, q, hub
 }
 
@@ -367,6 +386,30 @@ func TestControlChannel_ConfigureCredentialClone(t *testing.T) {
 	_ = json.Unmarshal(bad.Payload, &ep)
 	if ep.Code != guestwire.ErrCodeForbiddenHost {
 		t.Fatalf("foreign host: expected forbidden_host, got %q", ep.Code)
+	}
+
+	// 3b. A linked public host mints the stored login+PAT pair, expiry-free
+	// (Gitea/Forgejo phase 2).
+	pub := fg.guestRequest(t, guestwire.OpGitCredential, guestwire.GitCredentialRequest{Host: "codeberg.example", Protocol: "https"})
+	if pub.Kind != guestwire.ControlResp {
+		t.Fatalf("public host: expected resp, got %s (%s)", pub.Kind, pub.Payload)
+	}
+	var pubCred guestwire.GitCredentialResponse
+	_ = json.Unmarshal(pub.Payload, &pubCred)
+	if pubCred.Username != "ivan" || pubCred.Password != "pat-xyz" || pubCred.Expiry != "" {
+		t.Fatalf("unexpected public-host credential: %+v", pubCred)
+	}
+
+	// 3c. An allowlisted host with no stored PAT is refused, same code as a
+	// foreign host — anonymous clone stays the only capability.
+	nolink := fg.guestRequest(t, guestwire.OpGitCredential, guestwire.GitCredentialRequest{Host: "unlinked.example", Protocol: "https"})
+	if nolink.Kind != guestwire.ControlErr {
+		t.Fatalf("unlinked host: expected err frame, got %s", nolink.Kind)
+	}
+	var np guestwire.ControlErrorPayload
+	_ = json.Unmarshal(nolink.Payload, &np)
+	if np.Code != guestwire.ErrCodeForbiddenHost {
+		t.Fatalf("unlinked host: expected forbidden_host, got %q", np.Code)
 	}
 
 	// 4. Unknown op from the guest gets an error frame.

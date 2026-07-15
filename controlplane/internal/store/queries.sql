@@ -79,6 +79,27 @@ RETURNING *;
 -- name: GetGitHubLink :one
 SELECT * FROM github_links WHERE user_id = $1;
 
+-- name: UpsertGitHostLink :one
+-- Gitea/Forgejo phase 2: save/replace a user's PAT link for one additional git
+-- host. metadata carries only non-sensitive hints (login); the token lives in
+-- the secrets store at secret_ref.
+INSERT INTO git_host_links (user_id, host, metadata, secret_ref, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (user_id, host) DO UPDATE
+    SET metadata = EXCLUDED.metadata,
+        secret_ref = EXCLUDED.secret_ref,
+        updated_at = now()
+RETURNING *;
+
+-- name: GetGitHostLink :one
+SELECT * FROM git_host_links WHERE user_id = $1 AND host = $2;
+
+-- name: ListGitHostLinks :many
+SELECT * FROM git_host_links WHERE user_id = $1 ORDER BY host;
+
+-- name: DeleteGitHostLink :exec
+DELETE FROM git_host_links WHERE user_id = $1 AND host = $2;
+
 -- name: UpsertHostByName :one
 -- Seed/refresh a host by its unique name at control-plane startup.
 INSERT INTO hosts (name, agent_url)

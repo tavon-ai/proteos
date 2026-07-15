@@ -11,6 +11,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
 	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
+	"github.com/tavon-ai/proteos/controlplane/internal/gitea"
 	"github.com/tavon-ai/proteos/controlplane/internal/github"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 	"github.com/tavon-ai/proteos/controlplane/internal/profile"
@@ -79,13 +80,22 @@ type Server struct {
 
 	// Phase 7: git operations. GitHub (REST client), Tokens (per-user token
 	// lifecycle), and GitChannel (the guest control channel) back /api/git/*.
-	// When any is nil the git routes are disabled. GitHost is the only host clones
-	// target; GitHubAppSlug builds the grants URL the Repos panel links to.
-	GitHub        *github.Client
-	Tokens        *github.TokenSource
-	GitChannel    GitChannel
-	GitHost       string
-	GitHubAppSlug string
+	// When any is nil the git routes are disabled. GitHost is the authenticated
+	// host (credentials minted, repos listed, PRs created); GitPublicHosts are
+	// additional hosts clone-by-URL may target, anonymous clone only (Gitea/
+	// Forgejo phase 1). GitHubAppSlug builds the grants URL the Repos panel
+	// links to.
+	GitHub         *github.Client
+	Tokens         *github.TokenSource
+	GitChannel     GitChannel
+	GitHost        string
+	GitPublicHosts []string
+	GitHubAppSlug  string
+
+	// GiteaFor returns the API client for one allowlisted public host (Gitea/
+	// Forgejo phase 2) — main.go defaults it to https://<host>/api/v1; tests
+	// point it at a local fake. Nil disables the /api/git/hosts PAT routes.
+	GiteaFor func(host string) *gitea.Client
 
 	// Phase 9: the project/desktop control-channel surface (projects.list, kv.*).
 	// *guestctl.Manager satisfies it. Nil disables /api/projects and
@@ -218,6 +228,16 @@ func (s *Server) Handler() http.Handler {
 	if s.GitHub != nil && s.Tokens != nil && s.GitChannel != nil {
 		mux.Handle("GET /api/git/repos", s.requireAuth(http.HandlerFunc(s.handleGitRepos)))
 		mux.Handle("POST /api/git/clone", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleGitClone))))
+	}
+
+	// Git-host PATs (Gitea/Forgejo phase 2): per-user tokens for the additional
+	// hosts on the allowlist. Same write-only shape as the provider-keys API —
+	// the token is validated then stored, never returned; only the host login
+	// is readable. Mutations require the CSRF header.
+	if s.Secrets != nil && s.Queries != nil && s.GiteaFor != nil {
+		mux.Handle("GET /api/git/hosts", s.requireAuth(http.HandlerFunc(s.handleGitHosts)))
+		mux.Handle("PUT /api/git/hosts/{host}/token", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetGitHostToken))))
+		mux.Handle("DELETE /api/git/hosts/{host}/token", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteGitHostToken))))
 	}
 
 	// PR review (mobile review loop): read a pull request's summary, files, and

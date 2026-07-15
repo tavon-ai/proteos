@@ -12,11 +12,12 @@ export function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<RootGate />} />
-      {/* Mobile shell (purpose-built phone UI). /m/:machineId/pr/:number is the
-          Telegram deep-link target; /m bare lands on the Machines tab. */}
+      {/* Mobile shell (purpose-built phone UI). /m/:machineId/pr/:prNumber is
+          the deep-link target — it opens directly on the Review tab with that
+          PR loaded; /m bare lands on the Machines tab. */}
       <Route path="/m" element={<RequireAuth render={(me) => <MobileApp me={me} />} />} />
       <Route
-        path="/m/:machineId/pr/:number"
+        path="/m/:machineId/pr/:prNumber"
         element={<RequireAuth render={(me) => <MobileApp me={me} />} />}
       />
       <Route path="*" element={<Navigate to="/" replace />} />
