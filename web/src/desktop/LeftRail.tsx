@@ -2,20 +2,27 @@ import { useRef, useState } from 'react';
 import type { Me } from '../api/client';
 import { useSelectedMachine } from './selectedMachineStore';
 import { useWindowManager } from './windowManagerContext';
-import { openHomeAgent, openHomeTerminal, openLogs, openProjects, openSettings } from './openers';
+import {
+  openAppLogs,
+  openHomeAgent,
+  openHomeTerminal,
+  openLogs,
+  openProjects,
+  openSettings,
+} from './openers';
 import { focusedWindow, type WindowState } from './windowState';
 import { useClickOutside } from './useClickOutside';
 
 // LeftRail is the desktop's primary navigation: a persistent 76px column of
-// labeled icon buttons (Projects/Terminal/Agents/Activity, then Settings and
-// the account avatar pinned to the bottom). Clicking an item opens or focuses
-// that window kind for the active machine via the shared openers; the item
-// matching the focused window's kind is highlighted with the section's
+// labeled icon buttons (Projects/Terminal/Agents/Activity/Logs, then Settings
+// and the account avatar pinned to the bottom). Clicking an item opens or
+// focuses that window kind for the active machine via the shared openers; the
+// item matching the focused window's kind is highlighted with the section's
 // dock-kind color. Labels are always visible, so there are no tooltips.
 
 // Each rail section: the window kinds that light it up, and how to open it.
 // Projects/Terminal/Agents act on the ACTIVE machine (disabled when none);
-// Activity and Settings are global windows.
+// Activity, Logs, and Settings are global windows.
 interface Section {
   key: string;
   label: string;
@@ -93,6 +100,23 @@ const SECTIONS: Section[] = [
       </svg>
     ),
   },
+  {
+    key: 'applogs',
+    label: 'Logs',
+    kinds: ['applogs'],
+    needsMachine: false,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path d="M5 4h14v16H5z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+        <path
+          d="M8 9h8M8 13h8M8 17h4"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
 ];
 
 const SETTINGS_ICON = (
@@ -143,6 +167,9 @@ export function LeftRail({
         break;
       case 'activity':
         openLogs(wm);
+        break;
+      case 'applogs':
+        openAppLogs(wm);
         break;
     }
   };

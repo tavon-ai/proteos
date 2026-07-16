@@ -17,6 +17,7 @@ type WindowKind =
   | 'changes'
   | 'tasks'
   | 'logs'
+  | 'applogs'
   | 'settings'
   | 'projects'
   | 'placeholder';
@@ -82,6 +83,7 @@ const DEFAULT_SIZE: Record<WindowKind, { width: number; height: number }> = {
   changes: { width: 760, height: 560 },
   tasks: { width: 860, height: 580 },
   logs: { width: 560, height: 420 },
+  applogs: { width: 760, height: 540 },
   settings: { width: 640, height: 540 },
   projects: { width: 600, height: 480 },
   placeholder: { width: 480, height: 320 },
@@ -195,6 +197,7 @@ function dedupeKeyOf(w: WindowState): string | undefined {
       return `projects|${w.machineId ?? ''}`;
     case 'settings':
     case 'logs':
+    case 'applogs':
       return w.kind;
     default:
       return undefined;
