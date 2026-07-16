@@ -1,0 +1,60 @@
+# E2E smoke stack (TAV-40): builds the production controlplane + web images
+# from the working tree and boots the minimal Postgres + API + SPA slice — no
+# OpenBao, no node-agent, dummy OAuth. Its only job is to prove the shipped
+# images wire together: migrations apply, /healthz answers, nginx serves the
+# SPA, and the /api reverse proxy reaches the control plane.
+#
+#   task smoke            # build + boot + probe + tear down
+#   docker compose -f deploy/app-stack/compose.smoke.yaml up --build -d
+#
+# Probes live in deploy/app-stack/smoke.sh; CI runs them on every PR (the
+# `smoke` job in .github/workflows/ci.yml).
+
+name: proteos-smoke
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: proteos
+      POSTGRES_PASSWORD: proteos
+      POSTGRES_DB: proteos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proteos -d proteos"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  controlplane:
+    build:
+      # Repo root: the control plane build needs go.work + the sibling modules.
+      context: ../..
+      dockerfile: deploy/app-stack/controlplane.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PROTEOS_ADDR: ":8080"
+      DATABASE_URL: "postgres://proteos:proteos@postgres:5432/proteos?sslmode=disable"
+      PROTEOS_BASE_URL: "http://localhost:8080"
+      # Dummy OAuth: the server serves /healthz and 401s the API without a real
+      # GitHub App; the smoke only proves wiring, not login.
+      GITHUB_APP_CLIENT_ID: smoke-client-id
+      GITHUB_APP_CLIENT_SECRET: smoke-client-secret
+      PROTEOS_STATE_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      PROTEOS_AGENT_TOKEN: smoke-agent-token
+      # PROTEOS_NODE_AGENT_URL is left at its loopback default: no node-agent
+      # runs in this stack, and no probe touches machine lifecycle.
+    ports:
+      # Direct (un-proxied) access for the /healthz probe. 18080 to keep clear
+      # of anything already bound on a dev machine.
+      - "127.0.0.1:18080:8080"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/app-stack/web.Dockerfile
+    depends_on:
+      - controlplane
+    ports:
+      - "127.0.0.1:18081:80"

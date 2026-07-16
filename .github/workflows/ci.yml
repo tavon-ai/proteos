@@ -58,12 +58,13 @@ jobs:
       - name: Apply migrations (against service Postgres)
         run: go run ./cmd/controlplane -migrate-only
 
-      # -p 1 serializes package test binaries: in CI every package shares the
-      # single service Postgres, and the down/up migration test mutates global
-      # schema. (Locally, Testcontainers gives each package its own DB, so
-      # `go test ./...` runs fully parallel there.)
+      # Package binaries run in parallel (no -p 1) and tests within httpapi call
+      # t.Parallel(): testutil.Postgres gives every test its own database cloned
+      # from a migrated template (pid-scoped names), so nothing is shared even
+      # on the single service Postgres — including the down/up migration test,
+      # which now mutates only its private clone (TAV-40).
       - name: go test -race
-        run: go test -race -p 1 ./...
+        run: go test -race ./...
 
   nodeagent:
     name: node-agent (Go)
@@ -93,6 +94,17 @@ jobs:
 
       - name: go test -race
         run: go test -race ./...
+
+      # Firecracker driver unit tests (TAV-40): the state machine runs against
+      # the commandRunner seam, so boot/stop/reattach are covered without root
+      # or KVM on this ordinary runner. The root+KVM integration tests in the
+      # same package skip themselves here (testDriver guards on euid/KVM) and
+      # keep running on the self-hosted job below.
+      - name: go vet (firecracker tag)
+        run: go vet -tags=firecracker ./...
+
+      - name: go test (firecracker driver, unit)
+        run: go test -race -tags=firecracker ./internal/driver/firecracker/
 
   guestagent:
     name: guest agent (Go)
@@ -200,6 +212,22 @@ jobs:
           name: web-dist
           path: web/dist
           if-no-files-found: error
+
+  # E2E smoke (TAV-40): build the production controlplane + web images from this
+  # checkout, boot the minimal Postgres + API + SPA stack, and probe it —
+  # migrations apply, /healthz answers, nginx serves the SPA, and the /api
+  # reverse proxy reaches the control plane. This is the only place the shipped
+  # Dockerfiles + nginx.conf are exercised before the publish job bakes them.
+  smoke:
+    name: e2e smoke (app stack)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build, boot, probe, tear down
+        run: deploy/app-stack/smoke.sh
 
   # govulncheck scans the Go modules for known CVEs. govulncheck is module-scoped
   # (it needs a go.mod in the working directory — the workspace root has only a

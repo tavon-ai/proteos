@@ -127,6 +127,7 @@ func (fx projFixture) do(t *testing.T, method, path, body string, csrf bool) *ht
 }
 
 func TestProjects_200(t *testing.T) {
+	t.Parallel()
 	ch := &fakeProjectChannel{projects: []guestwire.Project{
 		{Name: "alpha", Path: "/workspace/alpha", Branch: "main", Dirty: false},
 		{Name: "beta", Path: "/workspace/beta", Branch: "dev", Dirty: true},
@@ -147,6 +148,7 @@ func TestProjects_200(t *testing.T) {
 }
 
 func TestProjects_409WhenStopped(t *testing.T) {
+	t.Parallel()
 	fx := setupProjects(t, string(machine.StateStopped), &fakeProjectChannel{})
 	resp := fx.do(t, http.MethodGet, "/api/projects", "", false)
 	defer resp.Body.Close()
@@ -156,6 +158,7 @@ func TestProjects_409WhenStopped(t *testing.T) {
 }
 
 func TestDesktopLayoutRoundTrip(t *testing.T) {
+	t.Parallel()
 	ch := &fakeProjectChannel{}
 	fx := setupProjects(t, string(machine.StateRunning), ch)
 
@@ -188,6 +191,7 @@ func TestDesktopLayoutRoundTrip(t *testing.T) {
 }
 
 func TestDesktopPut_CSRFRequired(t *testing.T) {
+	t.Parallel()
 	fx := setupProjects(t, string(machine.StateRunning), &fakeProjectChannel{})
 	resp := fx.do(t, http.MethodPut, "/api/machine/desktop", `{"layout":{}}`, false)
 	defer resp.Body.Close()

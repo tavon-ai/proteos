@@ -34,6 +34,7 @@ import (
 // the file survives — plus that the snapshot metadata round-trips and the API
 // summary reports boot:resumed.
 func TestHibernateResumeE2E(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available to build agents")
 	}

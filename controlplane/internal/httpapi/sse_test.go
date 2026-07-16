@@ -212,6 +212,7 @@ func (h *sseHarness) connect(t *testing.T, lastEventID string) (<-chan sseFrame,
 }
 
 func TestSSEStreamsTransitionsInOrder(t *testing.T) {
+	t.Parallel()
 	h := newSSEHarness(t)
 	ctx := context.Background()
 
@@ -264,6 +265,7 @@ func TestSSEStreamsTransitionsInOrder(t *testing.T) {
 }
 
 func TestSSEReplaysFromLastEventID(t *testing.T) {
+	t.Parallel()
 	h := newSSEHarness(t)
 	ctx := context.Background()
 

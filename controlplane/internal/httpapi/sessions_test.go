@@ -14,6 +14,7 @@ import (
 // /api/sessions: it requires authentication and returns the caller's coding
 // agent sessions (agent_tasks rows) tagged with the owning machine's name.
 func TestListSessions_RequiresAuthAndReturnsMachineContext(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 
@@ -61,6 +62,7 @@ func TestListSessions_RequiresAuthAndReturnsMachineContext(t *testing.T) {
 // /api/sessions: active covers queued/running, finished covers
 // done/failed/canceled.
 func TestListSessions_FiltersByStatus(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	activeID := createTaskFor(t, fx)
 	doneID := createTaskFor(t, fx)
@@ -104,6 +106,7 @@ func TestListSessions_FiltersByStatus(t *testing.T) {
 // it requires auth, needs no CSRF header (a GET), and returns a CSV attachment
 // containing every matching session.
 func TestExportSessions_DownloadsCSVAttachment(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	_ = createTaskFor(t, fx)
 

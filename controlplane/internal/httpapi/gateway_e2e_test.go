@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 // through the node-agent tunnel to that guest. It rounds-trips a shell command
 // and proves session revocation closes the live WS with 4001.
 func TestGatewayTerminalE2E(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available to build agents")
 	}
@@ -111,17 +113,42 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// buildBinary compiles pkg within moduleDir to a temp file and returns its path.
+// buildCache dedupes binary builds across the E2E tests in this package: with
+// t.Parallel() several tests would otherwise compile the same agent binaries
+// concurrently. Keyed by moduleDir+pkg; values are *buildResult.
+var buildCache sync.Map
+
+type buildResult struct {
+	once sync.Once
+	path string
+	err  error
+	out  []byte
+}
+
+// buildBinary compiles pkg within moduleDir once per test process and returns
+// the binary's path. The output lives in an os.MkdirTemp dir rather than a
+// t.TempDir: the binary is shared by parallel tests, so it must not be removed
+// when the first test that built it finishes.
 func buildBinary(t *testing.T, moduleDir, pkg string) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "bin")
-	cmd := exec.Command("go", "build", "-o", out, pkg)
-	cmd.Dir = moduleDir
-	cmd.Env = os.Environ()
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build %s in %s: %v\n%s", pkg, moduleDir, err, combined)
+	v, _ := buildCache.LoadOrStore(moduleDir+"|"+pkg, &buildResult{})
+	r := v.(*buildResult)
+	r.once.Do(func() {
+		dir, err := os.MkdirTemp("", "proteos-e2e-bin")
+		if err != nil {
+			r.err = err
+			return
+		}
+		r.path = filepath.Join(dir, "bin")
+		cmd := exec.Command("go", "build", "-o", r.path, pkg)
+		cmd.Dir = moduleDir
+		cmd.Env = os.Environ()
+		r.out, r.err = cmd.CombinedOutput()
+	})
+	if r.err != nil {
+		t.Fatalf("build %s in %s: %v\n%s", pkg, moduleDir, r.err, r.out)
 	}
-	return out
+	return r.path
 }
 
 // freeAddr returns a probably-free 127.0.0.1 host:port (small race window).

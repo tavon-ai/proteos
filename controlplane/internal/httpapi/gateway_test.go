@@ -161,6 +161,7 @@ func getTerminal(t *testing.T, fx cpFixture, withCookie bool, origin, machinePar
 }
 
 func TestGatewayAuthzTable(t *testing.T) {
+	t.Parallel()
 	fx := setupCP(t, failDialer{t}, []string{testWSOrigin})
 	ctx := context.Background()
 

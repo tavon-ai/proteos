@@ -76,6 +76,7 @@ func setupTasks(t *testing.T, machineState string, withKey bool) wtFixture {
 }
 
 func TestCreateTask_202(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"make it responsive","provider":"claude","project":"alpha"}`, true)
@@ -115,6 +116,7 @@ func TestCreateTask_202(t *testing.T) {
 }
 
 func TestCreateTask_400ProviderNotHeadless(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"x","provider":"gemini","project":"alpha"}`, true)
@@ -134,6 +136,7 @@ func TestCreateTask_400ProviderNotHeadless(t *testing.T) {
 // requires a stored Anthropic key for Claude: with no key the run still
 // dispatches (the machine image's Claude subscription authenticates it).
 func TestCreateTask_202ClaudeNoKeySubscription(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), false) // no key
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"x","provider":"claude","project":"alpha"}`, true)
@@ -147,6 +150,7 @@ func TestCreateTask_202ClaudeNoKeySubscription(t *testing.T) {
 }
 
 func TestCreateTask_400BadProject(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"x","provider":"claude","project":"ghost"}`, true)
@@ -160,6 +164,7 @@ func TestCreateTask_400BadProject(t *testing.T) {
 }
 
 func TestCreateTask_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"x","provider":"claude","project":"alpha"}`, false)
@@ -170,6 +175,7 @@ func TestCreateTask_RequiresCSRF(t *testing.T) {
 }
 
 func TestCreateTask_409NotRunning(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateStopped), true)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"x","provider":"claude","project":"alpha"}`, true)
@@ -180,6 +186,7 @@ func TestCreateTask_409NotRunning(t *testing.T) {
 }
 
 func TestListTasks(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	r1 := fx.post(t, "/api/machines/"+fx.mid+"/tasks",
 		`{"prompt":"one","provider":"claude","project":"alpha"}`, true)
@@ -222,6 +229,7 @@ func createTaskFor(t *testing.T, fx wtFixture) string {
 }
 
 func TestCancelTask_202DispatchesCancel(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 
@@ -236,6 +244,7 @@ func TestCancelTask_202DispatchesCancel(t *testing.T) {
 }
 
 func TestCancelTask_200NoopWhenTerminal(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 
@@ -258,6 +267,7 @@ func TestCancelTask_200NoopWhenTerminal(t *testing.T) {
 }
 
 func TestCancelTask_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/cancel", "", false)
@@ -268,6 +278,7 @@ func TestCancelTask_RequiresCSRF(t *testing.T) {
 }
 
 func TestCancelTask_404Unknown(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/tasks/11111111-1111-1111-1111-111111111111/cancel", "", true)
 	defer resp.Body.Close()
@@ -288,6 +299,7 @@ func finishTask(t *testing.T, fx wtFixture, taskID, status, sessionID string) {
 }
 
 func TestSendMessage_202Resumes(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 	finishTask(t, fx, taskID, "done", "sess-keep")
@@ -319,6 +331,7 @@ func TestSendMessage_202Resumes(t *testing.T) {
 }
 
 func TestSendMessage_409NoSession(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 	finishTask(t, fx, taskID, "done", "") // finished, but no session captured
@@ -340,6 +353,7 @@ func TestSendMessage_409NoSession(t *testing.T) {
 }
 
 func TestSendMessage_409TaskRunning(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx) // still running (no finish)
 
@@ -355,6 +369,7 @@ func TestSendMessage_409TaskRunning(t *testing.T) {
 }
 
 func TestSendMessage_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 	finishTask(t, fx, taskID, "done", "sess-1")
@@ -367,6 +382,7 @@ func TestSendMessage_RequiresCSRF(t *testing.T) {
 }
 
 func TestSendMessage_400EmptyPrompt(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 	finishTask(t, fx, taskID, "done", "sess-1")
@@ -378,6 +394,7 @@ func TestSendMessage_400EmptyPrompt(t *testing.T) {
 }
 
 func TestFinishAgentTask_PreservesSessionOnEmpty(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	taskID := createTaskFor(t, fx)
 	tid, _ := machine.ParseUUID(taskID)
@@ -401,6 +418,7 @@ func TestFinishAgentTask_PreservesSessionOnEmpty(t *testing.T) {
 }
 
 func TestGetTask_404Unknown(t *testing.T) {
+	t.Parallel()
 	fx := setupTasks(t, string(machine.StateRunning), true)
 	resp := fx.get(t, "/api/machines/"+fx.mid+"/tasks/11111111-1111-1111-1111-111111111111")
 	defer resp.Body.Close()

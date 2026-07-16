@@ -113,6 +113,7 @@ const claudeItemPath = "/api/profile/items/" + profile.ClaudeOAuthKey
 // value in OpenBao + a metadata row; list returns metadata only; delete removes
 // both. The value never appears in Postgres or any response.
 func TestProfileSetListDelete(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	const tok = "claude-oauth-token-abc123"
 
@@ -196,6 +197,7 @@ func TestProfileSetListDelete(t *testing.T) {
 // running machines — and only those — so the change takes effect without a
 // recreate. A stopped machine and another user's running machine are never targeted.
 func TestProfileReinjectsRunningMachines(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pool, q := testutil.Postgres(t)
 
@@ -275,6 +277,7 @@ func TestProfileReinjectsRunningMachines(t *testing.T) {
 // token (from its metadata expiry) as needs_reconnect rather than reporting it as
 // healthily connected. A freshly-set token (1y TTL) is not flagged.
 func TestProfileNeedsReconnectWhenExpired(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 
 	fx.do(t, http.MethodPut, claudeItemPath, `{"value":"fresh-token"}`, true).Body.Close()
@@ -308,6 +311,7 @@ func TestProfileNeedsReconnectWhenExpired(t *testing.T) {
 }
 
 func TestProfilePutUnknownItem404(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	resp := fx.do(t, http.MethodPut, "/api/profile/items/nope", `{"value":"x"}`, true)
 	defer resp.Body.Close()
@@ -321,6 +325,7 @@ func TestProfilePutUnknownItem404(t *testing.T) {
 // and path/mode/kind in Postgres; the list surfaces them (never the content);
 // delete removes both. The content never appears in Postgres or any response.
 func TestProfileFileItemLifecycle(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	const content = "[user]\n\temail = ada@example.com\n"
 	const path = "/api/profile/items/gitconfig"
@@ -376,6 +381,7 @@ func TestProfileFileItemLifecycle(t *testing.T) {
 // TestProfileFileItemRejectsEscape proves a $HOME-escaping path is rejected (422)
 // and an unregistered key without kind:"file" is a 404 (not a silent generic item).
 func TestProfileFileItemRejectsEscape(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	esc := fx.do(t, http.MethodPut, "/api/profile/items/evil",
 		`{"kind":"file","path":"../../etc/cron.d/x","value":"x"}`, true)
@@ -393,6 +399,7 @@ func TestProfileFileItemRejectsEscape(t *testing.T) {
 // TestProfileDeleteUnknown404 proves deleting an item the user does not have is a
 // 404 (the row-count gate), not a false 204.
 func TestProfileDeleteUnknown404(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	resp := fx.do(t, http.MethodDelete, claudeItemPath, "", true)
 	defer resp.Body.Close()
@@ -409,6 +416,7 @@ func jsonString(s string) string {
 }
 
 func TestProfilePutEmptyValue422(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	resp := fx.do(t, http.MethodPut, claudeItemPath, `{"value":"   "}`, true)
 	defer resp.Body.Close()
@@ -418,6 +426,7 @@ func TestProfilePutEmptyValue422(t *testing.T) {
 }
 
 func TestProfilePutRequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	resp := fx.do(t, http.MethodPut, claudeItemPath, `{"value":"x"}`, false)
 	defer resp.Body.Close()
@@ -429,6 +438,7 @@ func TestProfilePutRequiresCSRF(t *testing.T) {
 // TestProfileAuditNoLeak asserts put/delete write audit rows whose target is the
 // path, never the value.
 func TestProfileAuditNoLeak(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	const tok = "tok-must-not-leak-7777"
 

@@ -23,6 +23,7 @@ func (s stubProjects) KVGet(context.Context, string, string) (*string, error) { 
 func (s stubProjects) KVSet(context.Context, string, string, string) error    { return nil }
 
 func TestResolveSessionCwd(t *testing.T) {
+	t.Parallel()
 	listable := []guestwire.Project{
 		{Name: "alpha", Path: "/workspace/alpha"},
 		{Name: "beta", Path: "/workspace/beta"},
@@ -88,6 +89,7 @@ func TestResolveSessionCwd(t *testing.T) {
 }
 
 func TestCwdErrorStatus(t *testing.T) {
+	t.Parallel()
 	if got := cwdErrorStatus("bad_cwd"); got != http.StatusBadRequest {
 		t.Errorf("bad_cwd → %d, want 400", got)
 	}
