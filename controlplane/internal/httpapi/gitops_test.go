@@ -197,6 +197,7 @@ func (fx wtFixture) post(t *testing.T, path, body string, csrf bool) *http.Respo
 }
 
 func TestGitStatus_200(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{
 		projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}},
 		status: guestwire.GitStatusResponse{Branch: "main", Files: []guestwire.GitFileStatus{
@@ -221,6 +222,7 @@ func TestGitStatus_200(t *testing.T) {
 }
 
 func TestGitStatus_400BadProject(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.get(t, "/api/machines/"+fx.mid+"/git/status?project=ghost")
@@ -234,6 +236,7 @@ func TestGitStatus_400BadProject(t *testing.T) {
 }
 
 func TestGitStatus_400MissingProject(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.get(t, "/api/machines/"+fx.mid+"/git/status")
@@ -244,6 +247,7 @@ func TestGitStatus_400MissingProject(t *testing.T) {
 }
 
 func TestGitStatus_409NotRunning(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateStopped), ch)
 	resp := fx.get(t, "/api/machines/"+fx.mid+"/git/status?project=alpha")
@@ -257,6 +261,7 @@ func TestGitStatus_409NotRunning(t *testing.T) {
 }
 
 func TestGitStatus_404UnknownMachine(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{}
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.get(t, "/api/machines/11111111-1111-1111-1111-111111111111/git/status?project=alpha")
@@ -267,6 +272,7 @@ func TestGitStatus_404UnknownMachine(t *testing.T) {
 }
 
 func TestGitStatus_502GuestUnreachable(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{
 		projects:  []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}},
 		statusErr: fmt.Errorf("guest read failed"),
@@ -280,6 +286,7 @@ func TestGitStatus_502GuestUnreachable(t *testing.T) {
 }
 
 func TestGitDiff_200Staged(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{
 		projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}},
 		diff:     guestwire.GitDiffResponse{Diff: "diff --git a/README.md b/README.md\n+changed\n"},
@@ -304,6 +311,7 @@ func TestGitDiff_200Staged(t *testing.T) {
 }
 
 func TestGitDiff_200WorktreeDefault(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{
 		projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}},
 		diff:     guestwire.GitDiffResponse{Diff: "x"},
@@ -328,6 +336,7 @@ func alphaWorktree(branch guestwire.GitBranchResponse, branchErr error) *fakeWor
 }
 
 func TestGitBranch_200Checkout(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{Branch: "feature/x"}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
@@ -347,6 +356,7 @@ func TestGitBranch_200Checkout(t *testing.T) {
 }
 
 func TestGitBranch_200CreateOnlyWithFrom(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{Branch: "main"}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
@@ -364,6 +374,7 @@ func TestGitBranch_200CreateOnlyWithFrom(t *testing.T) {
 }
 
 func TestGitBranch_400InvalidName(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	// A leading '-' is rejected by ValidBranchName before any dispatch.
@@ -382,6 +393,7 @@ func TestGitBranch_400InvalidName(t *testing.T) {
 }
 
 func TestGitBranch_409Exists(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{}, &guestctl.ControlError{Code: guestwire.ErrCodeBranchExists})
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
@@ -396,6 +408,7 @@ func TestGitBranch_409Exists(t *testing.T) {
 }
 
 func TestGitBranch_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{Branch: "feature/x"}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
@@ -407,6 +420,7 @@ func TestGitBranch_RequiresCSRF(t *testing.T) {
 }
 
 func TestGitBranch_400BadProject(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
@@ -421,6 +435,7 @@ func TestGitBranch_400BadProject(t *testing.T) {
 }
 
 func TestGitBranch_409NotRunning(t *testing.T) {
+	t.Parallel()
 	ch := alphaWorktree(guestwire.GitBranchResponse{}, nil)
 	fx := setupWorktree(t, string(machine.StateStopped), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/branch",
@@ -440,6 +455,7 @@ func alphaCommitWorktree(commit guestwire.GitCommitResponse, commitErr error) *f
 }
 
 func TestGitCommit_200All(t *testing.T) {
+	t.Parallel()
 	ch := alphaCommitWorktree(guestwire.GitCommitResponse{Sha: "abc1234", Subject: "my commit"}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
@@ -459,6 +475,7 @@ func TestGitCommit_200All(t *testing.T) {
 }
 
 func TestGitCommit_200Partial(t *testing.T) {
+	t.Parallel()
 	ch := alphaCommitWorktree(guestwire.GitCommitResponse{Sha: "def5678", Subject: "add a"}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
@@ -473,6 +490,7 @@ func TestGitCommit_200Partial(t *testing.T) {
 }
 
 func TestGitCommit_400EmptyMessage(t *testing.T) {
+	t.Parallel()
 	ch := alphaCommitWorktree(guestwire.GitCommitResponse{}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
@@ -490,6 +508,7 @@ func TestGitCommit_400EmptyMessage(t *testing.T) {
 }
 
 func TestGitCommit_409NothingToCommit(t *testing.T) {
+	t.Parallel()
 	ch := alphaCommitWorktree(guestwire.GitCommitResponse{}, &guestctl.ControlError{Code: guestwire.ErrCodeNothingToCommit})
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
@@ -504,6 +523,7 @@ func TestGitCommit_409NothingToCommit(t *testing.T) {
 }
 
 func TestGitCommit_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	ch := alphaCommitWorktree(guestwire.GitCommitResponse{Sha: "x"}, nil)
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
@@ -515,6 +535,7 @@ func TestGitCommit_RequiresCSRF(t *testing.T) {
 }
 
 func TestGitCommit_409NotRunning(t *testing.T) {
+	t.Parallel()
 	ch := alphaCommitWorktree(guestwire.GitCommitResponse{}, nil)
 	fx := setupWorktree(t, string(machine.StateStopped), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/commit",
@@ -526,6 +547,7 @@ func TestGitCommit_409NotRunning(t *testing.T) {
 }
 
 func TestGitPush_202(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
@@ -548,6 +570,7 @@ func TestGitPush_202(t *testing.T) {
 }
 
 func TestGitPush_400InvalidBranch(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
@@ -562,6 +585,7 @@ func TestGitPush_400InvalidBranch(t *testing.T) {
 }
 
 func TestGitPush_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateRunning), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
@@ -573,6 +597,7 @@ func TestGitPush_RequiresCSRF(t *testing.T) {
 }
 
 func TestGitPush_409NotRunning(t *testing.T) {
+	t.Parallel()
 	ch := &fakeWorktree{projects: []guestwire.Project{{Name: "alpha", Path: "/workspace/alpha"}}}
 	fx := setupWorktree(t, string(machine.StateStopped), ch)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/push",
@@ -672,6 +697,7 @@ func setupPR(t *testing.T, machineState string, revoked bool, ghURL string) wtFi
 }
 
 func TestGitPR_200(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusCreated, `{"number":7,"html_url":"https://github.com/octocat/hello/pull/7"}`)
 	fx := setupPR(t, string(machine.StateRunning), false, gh)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
@@ -695,6 +721,7 @@ func TestGitPR_200(t *testing.T) {
 // would address the wrong repository. The fake GitHub server would happily
 // create the PR (returning 200), so a missing guard fails this test on status.
 func TestGitPR_422UnsupportedHost(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusCreated, `{"number":7,"html_url":"x"}`)
 	fx := setupPR(t, string(machine.StateRunning), false, gh)
 	fx.ch.projects = []guestwire.Project{
@@ -822,6 +849,7 @@ func setupGiteaPR(t *testing.T, pat, giteaURL string) wtFixture {
 }
 
 func TestGitPR_Gitea200(t *testing.T) {
+	t.Parallel()
 	gt := fakeGiteaPRServer(t, http.StatusCreated,
 		`{"number":3,"html_url":"https://codeberg.example/octocat/hello/pulls/3"}`)
 	fx := setupGiteaPR(t, "pat-xyz", gt)
@@ -842,6 +870,7 @@ func TestGitPR_Gitea200(t *testing.T) {
 }
 
 func TestGitPR_Gitea409TokenRequired(t *testing.T) {
+	t.Parallel()
 	gt := fakeGiteaPRServer(t, http.StatusCreated, `{"number":3,"html_url":"x"}`)
 	fx := setupGiteaPR(t, "", gt) // no PAT stored
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
@@ -856,6 +885,7 @@ func TestGitPR_Gitea409TokenRequired(t *testing.T) {
 }
 
 func TestGitPR_Gitea409TokenInvalid(t *testing.T) {
+	t.Parallel()
 	gt := fakeGiteaPRServer(t, http.StatusCreated, `{"number":3,"html_url":"x"}`)
 	fx := setupGiteaPR(t, "pat-revoked", gt) // stored, but the host rejects it
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
@@ -870,6 +900,7 @@ func TestGitPR_Gitea409TokenInvalid(t *testing.T) {
 }
 
 func TestGitPR_Gitea409Exists(t *testing.T) {
+	t.Parallel()
 	gt := fakeGiteaPRServer(t, http.StatusConflict,
 		`{"message":"pull request already exists for these targets"}`)
 	fx := setupGiteaPR(t, "pat-xyz", gt)
@@ -885,6 +916,7 @@ func TestGitPR_Gitea409Exists(t *testing.T) {
 }
 
 func TestGitPR_Gitea422NoCommits(t *testing.T) {
+	t.Parallel()
 	gt := fakeGiteaPRServer(t, http.StatusConflict,
 		`{"message":"no commits between branches"}`)
 	fx := setupGiteaPR(t, "pat-xyz", gt)
@@ -900,6 +932,7 @@ func TestGitPR_Gitea422NoCommits(t *testing.T) {
 }
 
 func TestGitPR_422NoCommits(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusUnprocessableEntity,
 		`{"message":"Validation Failed","errors":[{"message":"No commits between main and feature/x"}]}`)
 	fx := setupPR(t, string(machine.StateRunning), false, gh)
@@ -915,6 +948,7 @@ func TestGitPR_422NoCommits(t *testing.T) {
 }
 
 func TestGitPR_409Exists(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusUnprocessableEntity,
 		`{"message":"Validation Failed","errors":[{"message":"A pull request already exists for octocat:feature/x."}]}`)
 	fx := setupPR(t, string(machine.StateRunning), false, gh)
@@ -930,6 +964,7 @@ func TestGitPR_409Exists(t *testing.T) {
 }
 
 func TestGitPR_409Reconnect(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusCreated, `{"number":1,"html_url":"x"}`)
 	fx := setupPR(t, string(machine.StateRunning), true, gh) // revoked grant
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
@@ -944,6 +979,7 @@ func TestGitPR_409Reconnect(t *testing.T) {
 }
 
 func TestGitPR_400MissingTitle(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusCreated, `{}`)
 	fx := setupPR(t, string(machine.StateRunning), false, gh)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
@@ -955,6 +991,7 @@ func TestGitPR_400MissingTitle(t *testing.T) {
 }
 
 func TestGitPR_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusCreated, `{"number":1,"html_url":"x"}`)
 	fx := setupPR(t, string(machine.StateRunning), false, gh)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",
@@ -966,6 +1003,7 @@ func TestGitPR_RequiresCSRF(t *testing.T) {
 }
 
 func TestGitPR_409NotRunning(t *testing.T) {
+	t.Parallel()
 	gh := fakePRServer(t, http.StatusCreated, `{"number":1,"html_url":"x"}`)
 	fx := setupPR(t, string(machine.StateStopped), false, gh)
 	resp := fx.post(t, "/api/machines/"+fx.mid+"/git/pr",

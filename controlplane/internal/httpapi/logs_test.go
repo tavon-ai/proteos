@@ -75,6 +75,7 @@ func (fx logsFixture) do(t *testing.T, method, path, body string, csrf bool) *ht
 // requires authentication, defaults to returning every source, and ?source=
 // narrows to just "api" or "ui".
 func TestListLogs_FiltersBySourceAndRequiresAuth(t *testing.T) {
+	t.Parallel()
 	fx := setupLogs(t)
 	fx.logs.Add(applog.Entry{Time: time.Now(), Level: "INFO", Source: "api", Message: "http request"})
 	fx.logs.Add(applog.Entry{Time: time.Now(), Level: "ERROR", Source: "ui", Message: "window crash"})
@@ -127,6 +128,7 @@ func TestListLogs_FiltersBySourceAndRequiresAuth(t *testing.T) {
 // it requires auth, needs no CSRF header (a GET), and returns a text/plain
 // attachment containing every captured entry.
 func TestExportLogs_DownloadsPlainTextAttachment(t *testing.T) {
+	t.Parallel()
 	fx := setupLogs(t)
 	fx.logs.Add(applog.Entry{Time: time.Now(), Level: "INFO", Source: "api", Message: "control plane listening"})
 
@@ -155,6 +157,7 @@ func TestExportLogs_DownloadsPlainTextAttachment(t *testing.T) {
 // the captured entry shows up via GET /api/logs tagged source "ui" with the
 // reporting user's login attached.
 func TestReportUILog_RequiresCSRFAndCapturesEntry(t *testing.T) {
+	t.Parallel()
 	fx := setupLogs(t)
 
 	// Missing CSRF header → 403.

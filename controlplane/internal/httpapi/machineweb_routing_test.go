@@ -32,6 +32,7 @@ func (rtMachines) MachineOwner(context.Context, string) (string, bool, bool, err
 // machine subdomain is served ONLY by the machine-web handler (never the main
 // mux), and any other host goes to the main mux.
 func TestHostFirstRouting(t *testing.T) {
+	t.Parallel()
 	mw := gateway.NewMachineWeb(gateway.MachineWebConfig{
 		Domain:     "localhost",
 		SigningKey: []byte("k"),

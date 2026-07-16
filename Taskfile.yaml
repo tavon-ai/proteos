@@ -56,6 +56,11 @@ tasks:
       - task: cli:test
       - task: web:typecheck
 
+  smoke:
+    desc: "E2E smoke: build the production images, boot the app stack, probe /healthz + SPA + /api proxy, tear down (needs Docker)"
+    cmds:
+      - deploy/app-stack/smoke.sh
+
   vet:
     desc: Vet all Go modules (incl. the linux firecracker build)
     cmds:
@@ -281,6 +286,12 @@ tasks:
     dir: nodeagent
     cmds:
       - go test -tags=firecracker ./internal/driver/firecracker/...
+
+  na:test:fc:unit:
+    desc: "Node-agent: firecracker driver unit tests in a linux container (no root/KVM; needs Docker on non-linux hosts)"
+    dir: nodeagent
+    cmds:
+      - docker run --rm -v {{.ROOT_DIR}}:/w -w /w/nodeagent -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=auto golang:1.26 go test -race -tags=firecracker ./internal/driver/firecracker/
 
   na:run:
     desc: "Node-agent: run with the dev driver"

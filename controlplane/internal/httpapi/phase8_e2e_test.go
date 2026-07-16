@@ -28,6 +28,7 @@ import (
 // tunnel. It then proves a logout closes the live editor socket (revocation
 // parity with terminals) and that /api/* on the subdomain never hits the CP API.
 func TestMachineWebE2E(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
 	guestBin := buildBinary(t, filepath.Join(root, "guestagent"), "./cmd/guestagent")
 	agentBin := buildBinary(t, filepath.Join(root, "nodeagent"), "./cmd/nodeagent")

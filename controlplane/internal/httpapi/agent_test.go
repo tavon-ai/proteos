@@ -117,6 +117,7 @@ func getAgent(t *testing.T, fx agentFixture, provider string, withCookie bool, o
 }
 
 func TestAgentUnauthenticated401(t *testing.T) {
+	t.Parallel()
 	fx := setupAgent(t)
 	if code := getAgent(t, fx, "claude", false, testWSOrigin); code != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", code)
@@ -124,6 +125,7 @@ func TestAgentUnauthenticated401(t *testing.T) {
 }
 
 func TestAgentBadOrigin403(t *testing.T) {
+	t.Parallel()
 	fx := setupAgent(t)
 	if code := getAgent(t, fx, "claude", true, "http://evil.example"); code != http.StatusForbidden {
 		t.Fatalf("want 403, got %d", code)
@@ -131,6 +133,7 @@ func TestAgentBadOrigin403(t *testing.T) {
 }
 
 func TestAgentUnknownProvider404(t *testing.T) {
+	t.Parallel()
 	fx := setupAgent(t)
 	if code := getAgent(t, fx, "bogus", true, testWSOrigin); code != http.StatusNotFound {
 		t.Fatalf("want 404 unknown_provider, got %d", code)
@@ -138,6 +141,7 @@ func TestAgentUnknownProvider404(t *testing.T) {
 }
 
 func TestAgentNoProviderKey409(t *testing.T) {
+	t.Parallel()
 	fx := setupAgent(t)
 	// gemini is registered+enabled and the machine is running, but no key is set —
 	// and gemini needs a key (unlike Claude, it cannot run on a subscription).
@@ -151,6 +155,7 @@ func TestAgentNoProviderKey409(t *testing.T) {
 // to the secret push, which fails on failDialer — surfacing as 502, the same
 // outcome as the key-set case and proof the key gate was skipped.
 func TestAgentClaudeNoKeyReachesInjection(t *testing.T) {
+	t.Parallel()
 	fx := setupAgent(t)
 	if code := getAgent(t, fx, "claude", true, testWSOrigin); code != http.StatusBadGateway {
 		t.Fatalf("want 502 injection_failed (key gate skipped), got %d", code)
@@ -158,6 +163,7 @@ func TestAgentClaudeNoKeyReachesInjection(t *testing.T) {
 }
 
 func TestAgentKeySetReachesInjection(t *testing.T) {
+	t.Parallel()
 	fx := setupAgent(t)
 	// With a key set, the handler proceeds past the 409 to the secret push, which
 	// fails because failDialer refuses to dial — surfacing as 502 injection_failed

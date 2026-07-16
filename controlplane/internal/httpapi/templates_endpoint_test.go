@@ -83,6 +83,7 @@ func doReq(t *testing.T, method, url, token, body string) *http.Response {
 }
 
 func TestListTemplatesEndpoint(t *testing.T) {
+	t.Parallel()
 	url, token := setupTemplatesCP(t)
 	resp := doReq(t, http.MethodGet, url+"/api/templates", token, "")
 	defer resp.Body.Close()
@@ -118,6 +119,7 @@ func rawBody(t *testing.T, url, token string) string {
 }
 
 func TestCreateMachine_InvalidResources(t *testing.T) {
+	t.Parallel()
 	url, token := setupTemplatesCP(t)
 	resp := doReq(t, http.MethodPost, url+"/api/machines", token, `{"template_id":"base","vcpus":99}`)
 	defer resp.Body.Close()
@@ -137,6 +139,7 @@ func TestCreateMachine_InvalidResources(t *testing.T) {
 }
 
 func TestCreateMachine_UnknownTemplate(t *testing.T) {
+	t.Parallel()
 	url, token := setupTemplatesCP(t)
 	resp := doReq(t, http.MethodPost, url+"/api/machines", token, `{"template_id":"nope"}`)
 	defer resp.Body.Close()

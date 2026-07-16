@@ -85,6 +85,7 @@ func (fx provFixture) do(t *testing.T, method, path, body string, csrf bool) *ht
 }
 
 func TestProvidersListAndKeySet(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 
 	resp := fx.do(t, http.MethodGet, "/api/providers", "", false)
@@ -148,6 +149,7 @@ func TestProvidersListAndKeySet(t *testing.T) {
 }
 
 func TestPutUnknownProvider404(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/nope", `{"fields":{"api_key":"x"}}`, true)
 	defer resp.Body.Close()
@@ -157,6 +159,7 @@ func TestPutUnknownProvider404(t *testing.T) {
 }
 
 func TestPutEmptyKey422(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"   "}}`, true)
 	defer resp.Body.Close()
@@ -166,6 +169,7 @@ func TestPutEmptyKey422(t *testing.T) {
 }
 
 func TestPutRequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"x"}}`, false)
 	defer resp.Body.Close()
@@ -175,6 +179,7 @@ func TestPutRequiresCSRF(t *testing.T) {
 }
 
 func TestDeleteProviderKey(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{"api_key":"sk-1"}}`, true).Body.Close()
 
@@ -191,6 +196,7 @@ func TestDeleteProviderKey(t *testing.T) {
 // TestAuditRowsOnPutDelete asserts an audit row is written for both put and
 // delete, with the path (never the value) as target.
 func TestAuditRowsOnPutDelete(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	ctx := context.Background()
 
@@ -225,6 +231,7 @@ func TestAuditRowsOnPutDelete(t *testing.T) {
 
 // TestKeyNeverInResponse scans providers/secrets response bodies for the key.
 func TestKeyNeverInResponse(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	const key = "sk-must-not-leak-9999"
 
@@ -245,6 +252,7 @@ func TestKeyNeverInResponse(t *testing.T) {
 
 // TestPutUnknownField422 proves a field not declared by the provider is rejected.
 func TestPutUnknownField422(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude",
 		`{"fields":{"api_key":"sk-1","bogus":"x"}}`, true)
@@ -257,6 +265,7 @@ func TestPutUnknownField422(t *testing.T) {
 // TestPutMissingField422 proves an empty fields map (declared field absent) is
 // rejected as a missing required field.
 func TestPutMissingField422(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	resp := fx.do(t, http.MethodPut, "/api/secrets/providers/claude", `{"fields":{}}`, true)
 	defer resp.Body.Close()
@@ -268,6 +277,7 @@ func TestPutMissingField422(t *testing.T) {
 // TestSeededProvidersShape proves the Phase 6 seeds expose the expected field
 // metadata and that openai carries a setup-style provider (no key in the view).
 func TestSeededProvidersShape(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	resp := fx.do(t, http.MethodGet, "/api/providers", "", false)
 	defer resp.Body.Close()
@@ -301,6 +311,7 @@ func TestSeededProvidersShape(t *testing.T) {
 // TestPiKeyStoredUnderOwnPath proves pi's borrowed Anthropic key is stored under
 // pi's own provider path, not read from or written to claude's (Phase 6 #2).
 func TestPiKeyStoredUnderOwnPath(t *testing.T) {
+	t.Parallel()
 	fx := setupProviders(t)
 	r := fx.do(t, http.MethodPut, "/api/secrets/providers/pi",
 		`{"fields":{"anthropic_api_key":"sk-pi-borrowed"}}`, true)

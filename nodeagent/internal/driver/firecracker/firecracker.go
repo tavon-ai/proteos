@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
@@ -255,12 +254,14 @@ func (d *Driver) boot(rec state.Record, key []byte) {
 		slog.Error("firecracker boot failed", "machine", rec.MachineID, "err", err)
 		metrics.VMOperationsTotal.WithLabelValues(op, "error").Inc()
 		metrics.VMOperationDuration.WithLabelValues(op).Observe(time.Since(start).Seconds())
+		// Best-effort cleanup of partial host state so a retry starts clean —
+		// BEFORE flipping to error, so a retry the error state triggers can
+		// never race the teardown.
+		d.cleanupHost(rec)
 		_, _, _ = d.store.Update(rec.MachineID, func(r *state.Record) {
 			r.State = api.StateError
 			r.Reason = err.Error()
 		})
-		// Best-effort cleanup of partial host state so a retry starts clean.
-		d.cleanupHost(rec)
 		return
 	}
 
@@ -612,7 +613,7 @@ func (d *Driver) finishStop(rec state.Record, hibernate bool) {
 	// with "device still in use". Waiting for the fds to drop makes teardown
 	// deterministic.
 	if processAlive(rec.Pid) {
-		_ = syscall.Kill(rec.Pid, syscall.SIGKILL)
+		_ = killProcess(rec.Pid)
 		deadline := time.Now().Add(stopGrace)
 		for processAlive(rec.Pid) && time.Now().Before(deadline) {
 			time.Sleep(50 * time.Millisecond)
@@ -662,7 +663,7 @@ func (d *Driver) Destroy(ctx context.Context, machineID string) error {
 	}
 	if ok {
 		if rec.Pid > 0 && processAlive(rec.Pid) {
-			_ = syscall.Kill(rec.Pid, syscall.SIGKILL)
+			_ = killProcess(rec.Pid)
 		}
 		layout := jailLayout{chrootBaseDir: d.cfg.ChrootBaseDir, id: rec.MachineID}
 		d.cleanupHost(rec)
@@ -833,13 +834,4 @@ func waitForSocket(path string, timeout time.Duration) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for API socket %s", path)
-}
-
-// processAlive reports whether pid refers to a live process (signal 0 probe).
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
 }

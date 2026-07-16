@@ -166,6 +166,7 @@ func (deterministicEntropy) Read(p []byte) (int, error) {
 // ─── handleListMachines ───────────────────────────────────────────────────────
 
 func TestListMachines_Empty(t *testing.T) {
+	t.Parallel()
 	// Seed a user+session with no machines.
 	ctx := context.Background()
 	pool, q := testutil.Postgres(t)
@@ -204,6 +205,7 @@ func TestListMachines_Empty(t *testing.T) {
 }
 
 func TestListMachines_Multiple(t *testing.T) {
+	t.Parallel()
 	fx := setupMachMulti(t)
 	resp := fx.doMach(t, http.MethodGet, "/api/machines", "", true, false)
 	defer resp.Body.Close()
@@ -230,6 +232,7 @@ func TestListMachines_Multiple(t *testing.T) {
 // ─── handleStartMachine ──────────────────────────────────────────────────────
 
 func TestStartMachine_202(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/"+fx.mid+"/start", "", true, true)
 	defer resp.Body.Close()
@@ -250,6 +253,7 @@ func TestStartMachine_202(t *testing.T) {
 }
 
 func TestStartMachine_409InvalidState(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateRunning))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/"+fx.mid+"/start", "", true, true)
 	defer resp.Body.Close()
@@ -262,6 +266,7 @@ func TestStartMachine_409InvalidState(t *testing.T) {
 }
 
 func TestStartMachine_404Unknown(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/00000000-0000-0000-0000-000000000000/start", "", true, true)
 	defer resp.Body.Close()
@@ -271,6 +276,7 @@ func TestStartMachine_404Unknown(t *testing.T) {
 }
 
 func TestStartMachine_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/"+fx.mid+"/start", "", true, false)
 	defer resp.Body.Close()
@@ -282,6 +288,7 @@ func TestStartMachine_RequiresCSRF(t *testing.T) {
 // ─── handleStopMachine ───────────────────────────────────────────────────────
 
 func TestStopMachine_202(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateRunning))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/"+fx.mid+"/stop", "", true, true)
 	defer resp.Body.Close()
@@ -298,6 +305,7 @@ func TestStopMachine_202(t *testing.T) {
 }
 
 func TestStopMachine_409InvalidState(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/"+fx.mid+"/stop", "", true, true)
 	defer resp.Body.Close()
@@ -310,6 +318,7 @@ func TestStopMachine_409InvalidState(t *testing.T) {
 }
 
 func TestStopMachine_404Unknown(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateRunning))
 	resp := fx.doMach(t, http.MethodPost, "/api/machines/00000000-0000-0000-0000-000000000000/stop", "", true, true)
 	defer resp.Body.Close()
@@ -321,6 +330,7 @@ func TestStopMachine_404Unknown(t *testing.T) {
 // ─── handleRenameMachine ─────────────────────────────────────────────────────
 
 func TestRenameMachine_200(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPatch, "/api/machines/"+fx.mid, `{"name":"renamed"}`, true, true)
 	defer resp.Body.Close()
@@ -341,6 +351,7 @@ func TestRenameMachine_200(t *testing.T) {
 }
 
 func TestRenameMachine_400EmptyName(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPatch, "/api/machines/"+fx.mid, `{"name":""}`, true, true)
 	defer resp.Body.Close()
@@ -350,6 +361,7 @@ func TestRenameMachine_400EmptyName(t *testing.T) {
 }
 
 func TestRenameMachine_400WhitespaceName(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPatch, "/api/machines/"+fx.mid, `{"name":"   "}`, true, true)
 	defer resp.Body.Close()
@@ -359,6 +371,7 @@ func TestRenameMachine_400WhitespaceName(t *testing.T) {
 }
 
 func TestRenameMachine_400BadBody(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPatch, "/api/machines/"+fx.mid, `not json`, true, true)
 	defer resp.Body.Close()
@@ -368,6 +381,7 @@ func TestRenameMachine_400BadBody(t *testing.T) {
 }
 
 func TestRenameMachine_404Unknown(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPatch, "/api/machines/00000000-0000-0000-0000-000000000000", `{"name":"x"}`, true, true)
 	defer resp.Body.Close()
@@ -377,6 +391,7 @@ func TestRenameMachine_404Unknown(t *testing.T) {
 }
 
 func TestRenameMachine_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodPatch, "/api/machines/"+fx.mid, `{"name":"x"}`, true, false)
 	defer resp.Body.Close()
@@ -388,6 +403,7 @@ func TestRenameMachine_RequiresCSRF(t *testing.T) {
 // ─── handleDestroyMachine ────────────────────────────────────────────────────
 
 func TestDestroyMachine_204(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodDelete, "/api/machines/"+fx.mid, "", true, true)
 	defer resp.Body.Close()
@@ -403,6 +419,7 @@ func TestDestroyMachine_204(t *testing.T) {
 }
 
 func TestDestroyMachine_404Unknown(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodDelete, "/api/machines/00000000-0000-0000-0000-000000000000", "", true, true)
 	defer resp.Body.Close()
@@ -412,6 +429,7 @@ func TestDestroyMachine_404Unknown(t *testing.T) {
 }
 
 func TestDestroyMachine_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupMach(t, string(machine.StateStopped))
 	resp := fx.doMach(t, http.MethodDelete, "/api/machines/"+fx.mid, "", true, false)
 	defer resp.Body.Close()

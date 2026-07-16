@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 )
@@ -85,7 +84,7 @@ func freshJailRoot(l jailLayout) error {
 // launchJailer execs the jailer to start a daemonized, chrooted, uid-dropped
 // firecracker, mirroring 06-jailer.sh. Returns the jailer/firecracker pid.
 func launchJailer(jailerBin, firecrackerBin string, l jailLayout, uid, gid int) (int, error) {
-	cmd := exec.Command(jailerBin,
+	if out, err := cmds.CombinedOutput(nil, jailerBin,
 		"--id", l.id,
 		"--exec-file", firecrackerBin,
 		"--uid", strconv.Itoa(uid),
@@ -95,8 +94,7 @@ func launchJailer(jailerBin, firecrackerBin string, l jailLayout, uid, gid int) 
 		"--cgroup", "cpu.weight=512",
 		"--daemonize",
 		"--", "--api-sock", "/run/firecracker.socket",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	); err != nil {
 		return 0, fmt.Errorf("jailer: %w: %s", err, out)
 	}
 	// With --daemonize the jailer forks firecracker and exits; find the pid by

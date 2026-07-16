@@ -36,7 +36,7 @@ ok      github.com/tavon-ai/proteos/controlplane/internal/providers        2.587
 ok      github.com/tavon-ai/proteos/controlplane/internal/session  1.309s
 ok      github.com/tavon-ai/proteos/controlplane/internal/store    7.324s
 ok      github.com/tavon-ai/proteos/controlplane/internal/token    8.252s
-[ ] When left idle, the started machines report as "error".
+[x] When left idle, the started machines report as "error".
 ```
       GET https://proteos.tavon.io/api/me
       {

@@ -132,6 +132,7 @@ func readSSE(t *testing.T, fx taskStreamFixture, lastEventID string) []sseFrame 
 }
 
 func TestTaskEvents_SnapshotThenTerminalClose(t *testing.T) {
+	t.Parallel()
 	fx := setupTaskStream(t, "running")
 	// Everything is already in the hub before connect: two events + terminal.
 	fx.hub.Publish(fx.taskID, []byte(`{"kind":"assistant_text","text":"hi"}`), false)
@@ -154,6 +155,7 @@ func TestTaskEvents_SnapshotThenTerminalClose(t *testing.T) {
 }
 
 func TestTaskEvents_LiveFanOut(t *testing.T) {
+	t.Parallel()
 	fx := setupTaskStream(t, "running")
 	// Publish live, shortly after the reader connects.
 	go func() {
@@ -171,6 +173,7 @@ func TestTaskEvents_LiveFanOut(t *testing.T) {
 }
 
 func TestTaskEvents_ReconnectReplay(t *testing.T) {
+	t.Parallel()
 	fx := setupTaskStream(t, "running")
 	fx.hub.Publish(fx.taskID, []byte(`{"kind":"assistant_text","text":"a"}`), false) // seq 1
 	fx.hub.Publish(fx.taskID, []byte(`{"kind":"assistant_text","text":"b"}`), false) // seq 2
@@ -184,6 +187,7 @@ func TestTaskEvents_ReconnectReplay(t *testing.T) {
 }
 
 func TestTaskEvents_DBSynthFallbackWhenStreamGone(t *testing.T) {
+	t.Parallel()
 	// The task is already terminal in the DB and the hub has no stream (CP restart
 	// / past retention). The handler must synthesize the result and close.
 	fx := setupTaskStream(t, "done")
@@ -200,6 +204,7 @@ func TestTaskEvents_DBSynthFallbackWhenStreamGone(t *testing.T) {
 }
 
 func TestTaskEvents_ResumeStreamsOnlyNewTurn(t *testing.T) {
+	t.Parallel()
 	fx := setupTaskStream(t, "running")
 	// Turn 1 runs and finishes.
 	fx.hub.Publish(fx.taskID, []byte(`{"kind":"assistant_text","text":"turn one"}`), false)
@@ -230,6 +235,7 @@ func TestTaskEvents_ResumeStreamsOnlyNewTurn(t *testing.T) {
 }
 
 func TestTaskEvents_404UnknownTask(t *testing.T) {
+	t.Parallel()
 	fx := setupTaskStream(t, "running")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

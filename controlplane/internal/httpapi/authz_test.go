@@ -16,6 +16,7 @@ import (
 // DB is needed: requireAuth returns 401 before touching the session manager
 // when there is no cookie.
 func TestProtectedRoutesRejectUnauthenticated(t *testing.T) {
+	t.Parallel()
 	srv := &httpapi.Server{
 		Sessions: session.NewManager(store.New(nil), time.Hour),
 	}
@@ -56,6 +57,7 @@ func TestProtectedRoutesRejectUnauthenticated(t *testing.T) {
 }
 
 func TestHealthzIsPublic(t *testing.T) {
+	t.Parallel()
 	srv := &httpapi.Server{Sessions: session.NewManager(store.New(nil), time.Hour)}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
