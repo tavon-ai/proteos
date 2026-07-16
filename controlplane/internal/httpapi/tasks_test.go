@@ -34,7 +34,7 @@ func setupTasks(t *testing.T, machineState string, withKey bool) wtFixture {
 	}
 	uid := machine.UUIDString(user.ID)
 
-	mc, err := q.CreateMachine(ctx, store.CreateMachineParams{UserID: user.ID, HostID: host.ID, KernelRef: "k", RootfsRef: "r", ResourceSpec: []byte(`{}`)})
+	mc, err := q.CreateMachine(ctx, store.CreateMachineParams{UserID: user.ID, HostID: host.ID, Name: "machine-1", KernelRef: "k", RootfsRef: "r", ResourceSpec: []byte(`{}`)})
 	if err != nil {
 		t.Fatalf("machine: %v", err)
 	}

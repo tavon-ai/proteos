@@ -79,9 +79,7 @@ function SessionRow({ session }: { session: AgentSession }) {
         </span>
       </div>
       <p className="sessions-row-prompt">{session.prompt}</p>
-      {session.result_summary && (
-        <p className="sessions-row-summary">{session.result_summary}</p>
-      )}
+      {session.result_summary && <p className="sessions-row-summary">{session.result_summary}</p>}
       {session.error && <p className="sessions-row-error">{session.error}</p>}
     </li>
   );
