@@ -9,6 +9,7 @@ import { ChangesWindow } from '../windows/ChangesWindow';
 import { TasksWindow } from '../windows/TasksWindow';
 import { LogsWindow } from '../windows/LogsWindow';
 import { AppLogsWindow } from '../windows/AppLogsWindow';
+import { SessionsWindow } from '../windows/SessionsWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
@@ -274,6 +275,8 @@ function WindowBody({
       return <LogsWindow events={events} />;
     case 'applogs':
       return <AppLogsWindow />;
+    case 'sessions':
+      return <SessionsWindow />;
     case 'settings':
       return <SettingsWindow />;
     case 'placeholder':

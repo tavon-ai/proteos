@@ -8,21 +8,23 @@ import {
   openHomeTerminal,
   openLogs,
   openProjects,
+  openSessions,
   openSettings,
 } from './openers';
 import { focusedWindow, type WindowState } from './windowState';
 import { useClickOutside } from './useClickOutside';
 
 // LeftRail is the desktop's primary navigation: a persistent 76px column of
-// labeled icon buttons (Projects/Terminal/Agents/Activity/Logs, then Settings
-// and the account avatar pinned to the bottom). Clicking an item opens or
-// focuses that window kind for the active machine via the shared openers; the
-// item matching the focused window's kind is highlighted with the section's
-// dock-kind color. Labels are always visible, so there are no tooltips.
+// labeled icon buttons (Projects/Terminal/Agents/Activity/Logs/Sessions, then
+// Settings and the account avatar pinned to the bottom). Clicking an item
+// opens or focuses that window kind for the active machine via the shared
+// openers; the item matching the focused window's kind is highlighted with
+// the section's dock-kind color. Labels are always visible, so there are no
+// tooltips.
 
 // Each rail section: the window kinds that light it up, and how to open it.
 // Projects/Terminal/Agents act on the ACTIVE machine (disabled when none);
-// Activity, Logs, and Settings are global windows.
+// Activity, Logs, Sessions, and Settings are global windows.
 interface Section {
   key: string;
   label: string;
@@ -117,6 +119,24 @@ const SECTIONS: Section[] = [
       </svg>
     ),
   },
+  {
+    key: 'sessions',
+    label: 'Sessions',
+    kinds: ['sessions'],
+    needsMachine: false,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <circle cx="12" cy="12" r="8.4" stroke="currentColor" strokeWidth="1.7" />
+        <path
+          d="M12 7.4V12l3.2 2.2"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
 ];
 
 const SETTINGS_ICON = (
@@ -170,6 +190,9 @@ export function LeftRail({
         break;
       case 'applogs':
         openAppLogs(wm);
+        break;
+      case 'sessions':
+        openSessions(wm);
         break;
     }
   };

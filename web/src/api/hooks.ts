@@ -16,6 +16,7 @@ import {
   type MachineSummary,
   type ProjectsResponse,
   type ReposResponse,
+  type SessionStatusFilter,
   type SnapshotData,
   type TaskEvent,
   type TasksResponse,
@@ -733,6 +734,18 @@ export function useLogs(source: LogSource | 'all') {
   return useQuery({
     queryKey: ['logs', source],
     queryFn: () => api.listLogs(source === 'all' ? undefined : source, 1000),
+    refetchInterval: 5_000,
+  });
+}
+
+// useSessions polls GET /api/sessions for the Sessions page (TAV-107): coding
+// agent sessions (headless task runs) across every machine the caller owns,
+// filtered by status. A short poll keeps in-progress sessions live while the
+// window is open — there is no SSE stream across machines.
+export function useSessions(status: SessionStatusFilter) {
+  return useQuery({
+    queryKey: ['sessions', status],
+    queryFn: () => api.listSessions(status, 1000),
     refetchInterval: 5_000,
   });
 }

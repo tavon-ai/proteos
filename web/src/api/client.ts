@@ -507,6 +507,36 @@ export interface LogsResponse {
   entries: LogEntry[];
 }
 
+// SessionStatusFilter narrows GET /api/sessions to in-progress ("active":
+// queued/running) or terminal ("finished": done/failed/canceled) coding agent
+// sessions; "all" applies no filter (TAV-107).
+export type SessionStatusFilter = 'all' | 'active' | 'finished';
+
+// AgentSession is one coding agent session (an agent_tasks row) in the GET
+// /api/sessions responses — the same headless task lane as AgentTask, but
+// across every machine the caller owns and tagged with where it ran, for the
+// Sessions page (TAV-107).
+export interface AgentSession {
+  id: string;
+  machine_id: string;
+  machine_name: string;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'canceled';
+  provider: string;
+  project: string;
+  prompt: string;
+  agent_session_id?: string;
+  usage?: Record<string, unknown>;
+  result_summary?: string;
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  ended_at?: string;
+}
+
+export interface SessionsResponse {
+  sessions: AgentSession[];
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? 'GET';
   let res: Response;
@@ -855,6 +885,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ level, message, fields }),
     }),
+
+  // Coding agent sessions (TAV-107): the caller's agent_tasks rows across every
+  // machine they own, newest first. status omitted ⇒ both active and finished;
+  // limit caps the count (server default 500, max 2000).
+  listSessions: (status?: SessionStatusFilter, limit?: number) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.set('status', status);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return request<SessionsResponse>(`/api/sessions${qs ? `?${qs}` : ''}`);
+  },
 };
 
 // logsExportUrl is the GET URL that downloads captured logs as a plain-text
@@ -862,6 +903,13 @@ export const api = {
 // text stream, not JSON; same pattern as projectDownloadUrl.
 export function logsExportUrl(source?: LogSource): string {
   return `/api/logs/export${source ? `?source=${encodeURIComponent(source)}` : ''}`;
+}
+
+// sessionsExportUrl is the GET URL that downloads the caller's coding agent
+// sessions as a CSV attachment (TAV-107's Export button). Not a request()
+// call — the body is a CSV stream, not JSON; same pattern as logsExportUrl.
+export function sessionsExportUrl(status?: SessionStatusFilter): string {
+  return `/api/sessions/export${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`;
 }
 
 // taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),
