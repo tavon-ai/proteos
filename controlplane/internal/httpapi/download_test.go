@@ -135,6 +135,7 @@ func (fx dlFixture) getDownload(t *testing.T, path string, withCookie bool) *htt
 // running machine requests a listable project → 200 with zip body and the
 // correct Content-Disposition header.
 func TestProjectDownload_200(t *testing.T) {
+	t.Parallel()
 	fx := setupDownload(t)
 	resp := fx.getDownload(t, "/api/projects/download?path=/workspace/alpha&machine="+fx.mid, true)
 	defer resp.Body.Close()
@@ -166,6 +167,7 @@ func TestProjectDownload_200(t *testing.T) {
 // TestProjectDownload_401Unauthenticated proves the download route is behind
 // the requireAuth middleware.
 func TestProjectDownload_401Unauthenticated(t *testing.T) {
+	t.Parallel()
 	fx := setupDownload(t)
 	resp := fx.getDownload(t, "/api/projects/download?path=/workspace/alpha&machine="+fx.mid, false)
 	defer resp.Body.Close()
@@ -177,6 +179,7 @@ func TestProjectDownload_401Unauthenticated(t *testing.T) {
 // TestProjectDownload_400BadPath proves that a path not in the machine's
 // listable project set is rejected before the guest is dialled.
 func TestProjectDownload_400BadPath(t *testing.T) {
+	t.Parallel()
 	fx := setupDownload(t)
 	// "/workspace/secret" is not in the fakeProjectChannel's project list.
 	resp := fx.getDownload(t, "/api/projects/download?path=/workspace/secret&machine="+fx.mid, true)
@@ -193,6 +196,7 @@ func TestProjectDownload_400BadPath(t *testing.T) {
 // TestProjectDownload_400EmptyPath proves that an empty path query parameter
 // is rejected.
 func TestProjectDownload_400EmptyPath(t *testing.T) {
+	t.Parallel()
 	fx := setupDownload(t)
 	resp := fx.getDownload(t, "/api/projects/download?machine="+fx.mid, true)
 	defer resp.Body.Close()
@@ -204,6 +208,7 @@ func TestProjectDownload_400EmptyPath(t *testing.T) {
 // TestProjectDownload_409NotRunning proves that a machine that is stopped
 // results in 409, not a guest dial.
 func TestProjectDownload_409NotRunning(t *testing.T) {
+	t.Parallel()
 	// Build a stopped-machine fixture without reusing setupDownload.
 	ctx := context.Background()
 	pool, q := testutil.Postgres(t)

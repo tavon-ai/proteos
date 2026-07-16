@@ -20,6 +20,7 @@ import (
 // re-pushes the configure ops to the user's running machines — while a no-op
 // PATCH or an unrelated preference change does not.
 func TestUserPrefs_ClaudeAttribution(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, q := testutil.Postgres(t)
 

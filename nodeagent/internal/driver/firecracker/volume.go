@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -104,7 +103,7 @@ func (d *Driver) ensureVolumeMounted(rec state.Record, key []byte, layout jailLa
 		fresh = true
 	}
 
-	if !fileExists(mapperPath(rec.MachineID)) {
+	if !mapperExists(mapperPath(rec.MachineID)) {
 		if err := d.luksOpen(volFile, mapper, key); err != nil {
 			return false, err
 		}
@@ -148,7 +147,7 @@ func (d *Driver) closeVolume(machineID string, layout jailLayout) {
 			_ = run("umount", "-l", mp)
 		}
 	}
-	if !fileExists(mapperPath(machineID)) {
+	if !mapperExists(mapperPath(machineID)) {
 		return
 	}
 	// The device-mapper / loop backing can hold its last reference for a beat
@@ -157,7 +156,7 @@ func (d *Driver) closeVolume(machineID string, layout jailLayout) {
 	// mapper (and its loop device) — a dangling mapper blocks the next open.
 	var lastErr error
 	for i := 0; i < 30; i++ {
-		if !fileExists(mapperPath(machineID)) {
+		if !mapperExists(mapperPath(machineID)) {
 			return
 		}
 		if lastErr = d.cryptsetup(nil, "close", mapperName(machineID)); lastErr == nil {
@@ -186,11 +185,7 @@ func (d *Driver) cryptsetupBin() string {
 
 // cryptsetup runs the configured binary with key (if any) on stdin.
 func (d *Driver) cryptsetup(key []byte, args ...string) error {
-	cmd := exec.Command(d.cryptsetupBin(), args...)
-	if key != nil {
-		cmd.Stdin = strings.NewReader(string(key))
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := cmds.CombinedOutput(key, d.cryptsetupBin(), args...)
 	if err != nil {
 		// Redact: the key is on stdin, not argv, but be defensive in the message.
 		return fmt.Errorf("cryptsetup %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
@@ -237,8 +232,9 @@ func truncateFile(path string, size int64) error {
 	return nil
 }
 
-// isMounted reports whether target is a mount point, by scanning /proc/mounts.
-func isMounted(target string) bool {
+// isMountedProc reports whether target is a mount point, by scanning
+// /proc/mounts. It is the production value of the isMounted seam (exec.go).
+func isMountedProc(target string) bool {
 	f, err := os.Open("/proc/mounts")
 	if err != nil {
 		return false

@@ -158,6 +158,7 @@ func (fx gitFixture) do(t *testing.T, method, path, body string, csrf bool) *htt
 }
 
 func TestGitRepos_200(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodGet, "/api/git/repos", "", false)
 	defer resp.Body.Close()
@@ -181,6 +182,7 @@ func TestGitRepos_200(t *testing.T) {
 }
 
 func TestGitRepos_409ReconnectWhenRevoked(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, true, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodGet, "/api/git/repos", "", false)
 	defer resp.Body.Close()
@@ -193,6 +195,7 @@ func TestGitRepos_409ReconnectWhenRevoked(t *testing.T) {
 }
 
 func TestGitClone_202(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"octocat/hello"}`, true)
 	defer resp.Body.Close()
@@ -222,6 +225,7 @@ func TestGitClone_202(t *testing.T) {
 // the gate would only block harmless public clones. The dispatched URL must
 // still target s.GitHost with no embedded token.
 func TestGitClone_202NotListable(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"someone/public"}`, true)
 	defer resp.Body.Close()
@@ -242,6 +246,7 @@ func TestGitClone_202NotListable(t *testing.T) {
 // Clone-by-URL targets an allowlisted public host (Gitea/Forgejo phase 1): the
 // dispatched URL is rebuilt from validated parts and carries no token.
 func TestGitClone_202ByURL(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"https://codeberg.example/octocat/hello"}`, true)
 	defer resp.Body.Close()
@@ -261,6 +266,7 @@ func TestGitClone_202ByURL(t *testing.T) {
 
 // A full URL for the auth host itself is also accepted by the url path.
 func TestGitClone_202ByURLAuthHost(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"https://github.com/octocat/hello.git"}`, true)
 	defer resp.Body.Close()
@@ -273,6 +279,7 @@ func TestGitClone_202ByURLAuthHost(t *testing.T) {
 }
 
 func TestGitClone_400ForbiddenHost(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"https://evil.example/octocat/hello"}`, true)
 	defer resp.Body.Close()
@@ -288,6 +295,7 @@ func TestGitClone_400ForbiddenHost(t *testing.T) {
 }
 
 func TestGitClone_400BadURL(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"url":"http://codeberg.example/octocat/hello"}`, true)
 	defer resp.Body.Close()
@@ -301,6 +309,7 @@ func TestGitClone_400BadURL(t *testing.T) {
 
 // full_name and url are mutually exclusive; both (or neither) is a bad request.
 func TestGitClone_400BothFullNameAndURL(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone",
 		`{"full_name":"octocat/hello","url":"https://codeberg.example/octocat/hello"}`, true)
@@ -314,6 +323,7 @@ func TestGitClone_400BothFullNameAndURL(t *testing.T) {
 }
 
 func TestGitClone_409NotRunning(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateStopped))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"octocat/hello"}`, true)
 	defer resp.Body.Close()
@@ -326,6 +336,7 @@ func TestGitClone_409NotRunning(t *testing.T) {
 }
 
 func TestGitClone_400BadFullName(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"../etc/passwd"}`, true)
 	defer resp.Body.Close()
@@ -335,6 +346,7 @@ func TestGitClone_400BadFullName(t *testing.T) {
 }
 
 func TestGitClone_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))
 	resp := fx.do(t, http.MethodPost, "/api/git/clone", `{"full_name":"octocat/hello"}`, false)
 	defer resp.Body.Close()

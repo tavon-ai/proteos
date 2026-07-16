@@ -127,6 +127,7 @@ func (fx gitHostsFixture) hosts(t *testing.T) map[string]struct {
 }
 
 func TestGitHosts_SetTokenAndList(t *testing.T) {
+	t.Parallel()
 	fx := setupGitHosts(t)
 
 	// Unlinked to start, one row per allowlisted host.
@@ -161,6 +162,7 @@ func TestGitHosts_SetTokenAndList(t *testing.T) {
 }
 
 func TestGitHosts_BadTokenRejectedWithoutStoring(t *testing.T) {
+	t.Parallel()
 	fx := setupGitHosts(t)
 	resp := fx.do(t, http.MethodPut, "/api/git/hosts/codeberg.example/token", `{"token":"pat-wrong"}`, true)
 	defer resp.Body.Close()
@@ -179,6 +181,7 @@ func TestGitHosts_BadTokenRejectedWithoutStoring(t *testing.T) {
 }
 
 func TestGitHosts_UnknownHost404(t *testing.T) {
+	t.Parallel()
 	fx := setupGitHosts(t)
 	resp := fx.do(t, http.MethodPut, "/api/git/hosts/evil.example/token", `{"token":"pat-ok"}`, true)
 	defer resp.Body.Close()
@@ -191,6 +194,7 @@ func TestGitHosts_UnknownHost404(t *testing.T) {
 }
 
 func TestGitHosts_EmptyToken400(t *testing.T) {
+	t.Parallel()
 	fx := setupGitHosts(t)
 	resp := fx.do(t, http.MethodPut, "/api/git/hosts/codeberg.example/token", `{"token":"  "}`, true)
 	defer resp.Body.Close()
@@ -200,6 +204,7 @@ func TestGitHosts_EmptyToken400(t *testing.T) {
 }
 
 func TestGitHosts_DeleteIsIdempotent(t *testing.T) {
+	t.Parallel()
 	fx := setupGitHosts(t)
 	resp := fx.do(t, http.MethodPut, "/api/git/hosts/codeberg.example/token", `{"token":"pat-ok"}`, true)
 	resp.Body.Close()
@@ -224,6 +229,7 @@ func TestGitHosts_DeleteIsIdempotent(t *testing.T) {
 }
 
 func TestGitHosts_SetTokenRequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupGitHosts(t)
 	resp := fx.do(t, http.MethodPut, "/api/git/hosts/codeberg.example/token", `{"token":"pat-ok"}`, false)
 	defer resp.Body.Close()

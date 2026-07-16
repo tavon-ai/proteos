@@ -97,6 +97,7 @@ func createToken(t *testing.T, url, cookie, name string) (id, plaintext, prefix 
 }
 
 func TestCreateTokenAndUseAsBearer(t *testing.T) {
+	t.Parallel()
 	url, cookie := setupTokens(t)
 	_, plaintext, _ := createToken(t, url, cookie, "laptop")
 
@@ -116,6 +117,7 @@ func TestCreateTokenAndUseAsBearer(t *testing.T) {
 }
 
 func TestCreateTokenRequiresCSRFForCookie(t *testing.T) {
+	t.Parallel()
 	url, cookie := setupTokens(t)
 	// Cookie auth without the CSRF header is rejected.
 	resp := do(t, http.MethodPost, url+"/api/tokens", `{"name":"x"}`, cookie, "", false)
@@ -126,6 +128,7 @@ func TestCreateTokenRequiresCSRFForCookie(t *testing.T) {
 }
 
 func TestBearerExemptFromCSRF(t *testing.T) {
+	t.Parallel()
 	url, cookie := setupTokens(t)
 	_, plaintext, _ := createToken(t, url, cookie, "first")
 
@@ -138,6 +141,7 @@ func TestBearerExemptFromCSRF(t *testing.T) {
 }
 
 func TestListTokensNeverLeaksSecret(t *testing.T) {
+	t.Parallel()
 	url, cookie := setupTokens(t)
 	_, _, prefix := createToken(t, url, cookie, "laptop")
 
@@ -157,6 +161,7 @@ func TestListTokensNeverLeaksSecret(t *testing.T) {
 }
 
 func TestInvalidBearerRejected(t *testing.T) {
+	t.Parallel()
 	url, _ := setupTokens(t)
 	resp := do(t, http.MethodGet, url+"/api/me", "", "", "proteos_pat_bogus", false)
 	defer resp.Body.Close()
@@ -166,6 +171,7 @@ func TestInvalidBearerRejected(t *testing.T) {
 }
 
 func TestRevokeTokenEndpoint(t *testing.T) {
+	t.Parallel()
 	url, cookie := setupTokens(t)
 	id, plaintext, _ := createToken(t, url, cookie, "doomed")
 
@@ -190,6 +196,7 @@ func TestRevokeTokenEndpoint(t *testing.T) {
 }
 
 func TestRevokeOtherUsersTokenIs404(t *testing.T) {
+	t.Parallel()
 	// Two independent fixtures would share no users; instead create a second user
 	// in the same DB and a token, then try to revoke it with the first user's
 	// cookie. Simplest: a malformed/foreign id yields 404.

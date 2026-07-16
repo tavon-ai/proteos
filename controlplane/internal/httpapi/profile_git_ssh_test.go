@@ -39,6 +39,7 @@ func (r *recordingConfigurer) n() int {
 }
 
 func TestGitIdentityLifecycle(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 
 	// Default identity is the GitHub one (fixture user: login "prof-user").
@@ -84,6 +85,7 @@ func TestGitIdentityLifecycle(t *testing.T) {
 }
 
 func TestGitIdentityValidation(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 	for _, body := range []string{`{"name":"","email":"a@b.com"}`, `{"name":"x","email":""}`, `{"name":"x","email":"no-at"}`} {
 		resp := fx.do(t, http.MethodPut, "/api/profile/git", body, true)
@@ -103,6 +105,7 @@ func TestGitIdentityValidation(t *testing.T) {
 // TestGitIdentityReinjectsToRunningMachines proves a git-identity change calls the
 // configurer to re-apply to running machines (parity with secret re-injection).
 func TestGitIdentityReinjectsToRunningMachines(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, q := testutil.Postgres(t)
 	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 91, Login: "gitre", Email: "g@example.com"})
@@ -143,6 +146,7 @@ func TestGitIdentityReinjectsToRunningMachines(t *testing.T) {
 }
 
 func TestSSHKeyLifecycle(t *testing.T) {
+	t.Parallel()
 	fx := setupProfile(t)
 
 	// None to start.

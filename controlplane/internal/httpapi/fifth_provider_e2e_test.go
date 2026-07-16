@@ -46,6 +46,7 @@ import (
 // close 4003 with reason setup_failed; rotating the key re-runs setup and clears
 // the degraded state.
 func TestFifthProviderE2E(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available to build agents")
 	}

@@ -6,6 +6,7 @@ import (
 )
 
 func TestParseRemote(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		remote            string
 		host, owner, repo string
@@ -32,6 +33,7 @@ func TestParseRemote(t *testing.T) {
 }
 
 func TestParseCloneURL(t *testing.T) {
+	t.Parallel()
 	public := []string{"codeberg.org", "git.example.com:3000"}
 	cases := []struct {
 		name, raw          string

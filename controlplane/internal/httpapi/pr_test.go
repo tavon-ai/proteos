@@ -107,6 +107,7 @@ func setupPRReview(t *testing.T, revoked bool, ghURL string) wtFixture {
 }
 
 func TestPRDetail_200(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.get(t, "/api/git/repos/octocat/hello/pulls/7")
 	defer resp.Body.Close()
@@ -135,6 +136,7 @@ func TestPRDetail_200(t *testing.T) {
 }
 
 func TestPRDetail_MergedState(t *testing.T) {
+	t.Parallel()
 	gh := fakePRReviewServer(t, map[string]http.HandlerFunc{
 		"GET /repos/octocat/hello/pulls/7": func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"number":7,"state":"closed","merged":true,"title":"T",
@@ -154,6 +156,7 @@ func TestPRDetail_MergedState(t *testing.T) {
 }
 
 func TestPRDetail_404(t *testing.T) {
+	t.Parallel()
 	gh := fakePRReviewServer(t, map[string]http.HandlerFunc{
 		"GET /repos/octocat/hello/pulls/7": func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
@@ -171,6 +174,7 @@ func TestPRDetail_404(t *testing.T) {
 }
 
 func TestPRDetail_409Reconnect(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, true, fakePRReviewServer(t, nil)) // revoked grant
 	resp := fx.get(t, "/api/git/repos/octocat/hello/pulls/7")
 	defer resp.Body.Close()
@@ -183,6 +187,7 @@ func TestPRDetail_409Reconnect(t *testing.T) {
 }
 
 func TestPRDetail_400BadNumber(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.get(t, "/api/git/repos/octocat/hello/pulls/nope")
 	defer resp.Body.Close()
@@ -192,6 +197,7 @@ func TestPRDetail_400BadNumber(t *testing.T) {
 }
 
 func TestPRFiles_200(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.get(t, "/api/git/repos/octocat/hello/pulls/7/files")
 	defer resp.Body.Close()
@@ -221,6 +227,7 @@ func TestPRFiles_200(t *testing.T) {
 }
 
 func TestPRChecks_200(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.get(t, "/api/git/repos/octocat/hello/pulls/7/checks")
 	defer resp.Body.Close()
@@ -240,6 +247,7 @@ func TestPRChecks_200(t *testing.T) {
 }
 
 func TestPRMerge_200(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/merge", `{"method":"squash"}`, true)
 	defer resp.Body.Close()
@@ -257,6 +265,7 @@ func TestPRMerge_200(t *testing.T) {
 }
 
 func TestPRMerge_EmptyBodyDefaults(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/merge", ``, true)
 	defer resp.Body.Close()
@@ -266,6 +275,7 @@ func TestPRMerge_EmptyBodyDefaults(t *testing.T) {
 }
 
 func TestPRMerge_400BadMethod(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/merge", `{"method":"fast-forward"}`, true)
 	defer resp.Body.Close()
@@ -275,6 +285,7 @@ func TestPRMerge_400BadMethod(t *testing.T) {
 }
 
 func TestPRMerge_422NotMergeable(t *testing.T) {
+	t.Parallel()
 	gh := fakePRReviewServer(t, map[string]http.HandlerFunc{
 		"PUT /repos/octocat/hello/pulls/7/merge": func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -293,6 +304,7 @@ func TestPRMerge_422NotMergeable(t *testing.T) {
 }
 
 func TestPRMerge_409HeadChanged(t *testing.T) {
+	t.Parallel()
 	gh := fakePRReviewServer(t, map[string]http.HandlerFunc{
 		"PUT /repos/octocat/hello/pulls/7/merge": func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusConflict)
@@ -311,6 +323,7 @@ func TestPRMerge_409HeadChanged(t *testing.T) {
 }
 
 func TestPRMerge_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/merge", `{}`, false)
 	defer resp.Body.Close()
@@ -320,6 +333,7 @@ func TestPRMerge_RequiresCSRF(t *testing.T) {
 }
 
 func TestPRComment_200(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/comments", `{"body":"LGTM"}`, true)
 	defer resp.Body.Close()
@@ -337,6 +351,7 @@ func TestPRComment_200(t *testing.T) {
 }
 
 func TestPRComment_400Empty(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/comments", `{"body":"  "}`, true)
 	defer resp.Body.Close()
@@ -349,6 +364,7 @@ func TestPRComment_400Empty(t *testing.T) {
 }
 
 func TestPRComment_RequiresCSRF(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	resp := fx.post(t, "/api/git/repos/octocat/hello/pulls/7/comments", `{"body":"x"}`, false)
 	defer resp.Body.Close()
@@ -358,6 +374,7 @@ func TestPRComment_RequiresCSRF(t *testing.T) {
 }
 
 func TestPRDetail_401Unauthenticated(t *testing.T) {
+	t.Parallel()
 	fx := setupPRReview(t, false, fakePRReviewServer(t, nil))
 	req, _ := http.NewRequest(http.MethodGet, fx.url+"/api/git/repos/octocat/hello/pulls/7", nil)
 	resp, err := http.DefaultClient.Do(req) // no session cookie

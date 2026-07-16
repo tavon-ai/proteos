@@ -5,7 +5,6 @@ package firecracker
 import (
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
@@ -27,8 +26,7 @@ const (
 
 // run executes a command, returning its combined output on failure for context.
 func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
+	out, err := cmds.CombinedOutput(nil, name, args...)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -37,7 +35,7 @@ func run(name string, args ...string) error {
 
 // runOut executes a command and returns trimmed stdout.
 func runOut(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
+	out, err := cmds.Output(name, args...)
 	if err != nil {
 		return "", fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
@@ -408,9 +406,11 @@ func deleteRulesByComment(table, chain, tag string) {
 
 // nftChainExists reports whether the given ip-family table/chain is present.
 func nftChainExists(table, chain string) bool {
-	return exec.Command("nft", "list", "chain", "ip", table, chain).Run() == nil
+	_, err := cmds.CombinedOutput(nil, "nft", "list", "chain", "ip", table, chain)
+	return err == nil
 }
 
 func linkExists(name string) bool {
-	return exec.Command("ip", "link", "show", name).Run() == nil
+	_, err := cmds.CombinedOutput(nil, "ip", "link", "show", name)
+	return err == nil
 }
