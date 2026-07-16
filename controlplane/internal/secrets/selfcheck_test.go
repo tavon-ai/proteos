@@ -40,6 +40,6 @@ func TestSelfCheckSurfacesWriteError(t *testing.T) {
 // write-failure path without a real backend.
 type failingStore struct{ err error }
 
-func (f failingStore) Put(string, map[string]string) error  { return f.err }
+func (f failingStore) Put(string, map[string]string) error   { return f.err }
 func (f failingStore) Get(string) (map[string]string, error) { return nil, secrets.ErrNotFound }
 func (f failingStore) Delete(string) error                   { return nil }

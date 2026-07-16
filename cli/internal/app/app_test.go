@@ -42,12 +42,12 @@ type fakeCP struct {
 	machinesFailN int // GET /api/machines returns 500 this many times before succeeding
 	createFailN   int // POST /api/machines returns 500 this many times before succeeding
 
-	providerKeySet map[string]bool   // provider key -> whether a key is currently stored
-	lastSetKey     string            // provider key from the last PUT /api/secrets/providers/{key}
-	lastSetFields  map[string]string // fields from the last PUT /api/secrets/providers/{key}
-	lastDeletedKey string            // provider key from the last DELETE /api/secrets/providers/{key}
-	lastMergeMethod string // method from the last PR merge request
-	lastCommentBody string // body from the last PR comment request
+	providerKeySet  map[string]bool   // provider key -> whether a key is currently stored
+	lastSetKey      string            // provider key from the last PUT /api/secrets/providers/{key}
+	lastSetFields   map[string]string // fields from the last PUT /api/secrets/providers/{key}
+	lastDeletedKey  string            // provider key from the last DELETE /api/secrets/providers/{key}
+	lastMergeMethod string            // method from the last PR merge request
+	lastCommentBody string            // body from the last PR comment request
 }
 
 func (f *fakeCP) handler() http.Handler {

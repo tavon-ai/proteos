@@ -132,10 +132,10 @@ type Server struct {
 // Handler builds the fully-wired http.Handler with all routes and middleware.
 func (s *Server) Handler() http.Handler {
 	// Initialize in-memory token-bucket rate limiters.
-	s.authRL = NewLimiter(10, 10.0/60)   // 10-req burst, refill 10/min per IP
-	s.patRL = NewLimiter(30, 1.0)        // 30-req burst, refill 1/s per IP
-	s.machineRL = NewLimiter(5, 5.0/60)  // 5-req burst, refill 5/min per user
-	s.taskRL = NewLimiter(10, 10.0/60)   // 10-req burst, refill 10/min per user
+	s.authRL = NewLimiter(10, 10.0/60)  // 10-req burst, refill 10/min per IP
+	s.patRL = NewLimiter(30, 1.0)       // 30-req burst, refill 1/s per IP
+	s.machineRL = NewLimiter(5, 5.0/60) // 5-req burst, refill 5/min per user
+	s.taskRL = NewLimiter(10, 10.0/60)  // 10-req burst, refill 10/min per user
 
 	mux := http.NewServeMux()
 
@@ -185,6 +185,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/machines/{id}/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
 	mux.Handle("POST /api/machines/{id}/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))
+
+	// Network policy (TAV-116): a machine's egress/ingress allow/deny
+	// configuration. The read defaults to allow_all for a machine with no
+	// policy row; set/delete mutate so they also require the CSRF header.
+	mux.Handle("GET /api/machines/{id}/network-policy", s.requireAuth(http.HandlerFunc(s.handleGetNetworkPolicy)))
+	mux.Handle("PUT /api/machines/{id}/network-policy", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleSetNetworkPolicy))))
+	mux.Handle("DELETE /api/machines/{id}/network-policy", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteNetworkPolicy))))
 
 	// Machine-template catalog (read-only): backs the create-machine picker.
 	mux.Handle("GET /api/templates", s.requireAuth(http.HandlerFunc(s.handleListTemplates)))

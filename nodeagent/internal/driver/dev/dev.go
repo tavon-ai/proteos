@@ -160,20 +160,22 @@ func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (stri
 
 	rec, existed, err := d.store.Reserve(spec.MachineID, func(a state.Alloc) state.Record {
 		return state.Record{
-			MachineID: spec.MachineID,
-			Handle:    handle,
-			State:     agentapi.StateCreating,
-			Vcpus:     spec.Vcpus,
-			MemMiB:    spec.MemMiB,
-			KernelRef: spec.KernelRef,
-			RootfsRef: spec.RootfsRef,
-			DiskID:    diskID,
-			DiskMiB:   diskMiB,
-			Boot:      agentapi.BootCold,
-			TapName:   a.TapName,
-			GuestIP:   a.GuestIP.String(),
-			GatewayIP: a.GatewayIP.String(),
-			MAC:       a.MAC,
+			MachineID:            spec.MachineID,
+			Handle:               handle,
+			State:                agentapi.StateCreating,
+			Vcpus:                spec.Vcpus,
+			MemMiB:               spec.MemMiB,
+			KernelRef:            spec.KernelRef,
+			RootfsRef:            spec.RootfsRef,
+			DiskID:               diskID,
+			DiskMiB:              diskMiB,
+			Boot:                 agentapi.BootCold,
+			TapName:              a.TapName,
+			GuestIP:              a.GuestIP.String(),
+			GatewayIP:            a.GatewayIP.String(),
+			MAC:                  a.MAC,
+			NetworkPolicyMode:    spec.NetworkPolicy.Mode,
+			NetworkPolicyDomains: spec.NetworkPolicy.Domains,
 		}
 	})
 	if err != nil {
@@ -207,6 +209,8 @@ func (d *DevDriver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (stri
 			}
 			r.Boot = boot
 			r.Snapshot = state.SnapshotRecord{} // consumed on resume
+			r.NetworkPolicyMode = spec.NetworkPolicy.Mode
+			r.NetworkPolicyDomains = spec.NetworkPolicy.Domains
 		})
 		if err != nil {
 			return "", err

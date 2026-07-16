@@ -21,9 +21,9 @@ import (
 // machFixture holds a wired test server and the IDs/credentials of the seeded data.
 type machFixture struct {
 	url   string
-	token string   // session cookie value
-	mid   string   // canonical UUID of the seeded machine
-	extra string   // canonical UUID of an optional second machine (empty if not seeded)
+	token string // session cookie value
+	mid   string // canonical UUID of the seeded machine
+	extra string // canonical UUID of an optional second machine (empty if not seeded)
 }
 
 // setupMach seeds a user + session + host + one machine in the given state, then

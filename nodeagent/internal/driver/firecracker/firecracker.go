@@ -194,20 +194,22 @@ func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string,
 
 	rec, existed, err := d.store.Reserve(spec.MachineID, func(a state.Alloc) state.Record {
 		return state.Record{
-			MachineID: spec.MachineID,
-			Handle:    handle,
-			State:     api.StateCreating,
-			Vcpus:     spec.Vcpus,
-			MemMiB:    spec.MemMiB,
-			KernelRef: spec.KernelRef,
-			RootfsRef: spec.RootfsRef,
-			DiskID:    diskID,
-			DiskMiB:   diskMiB,
-			Boot:      api.BootCold,
-			TapName:   a.TapName,
-			GuestIP:   a.GuestIP.String(),
-			GatewayIP: a.GatewayIP.String(),
-			MAC:       a.MAC,
+			MachineID:            spec.MachineID,
+			Handle:               handle,
+			State:                api.StateCreating,
+			Vcpus:                spec.Vcpus,
+			MemMiB:               spec.MemMiB,
+			KernelRef:            spec.KernelRef,
+			RootfsRef:            spec.RootfsRef,
+			DiskID:               diskID,
+			DiskMiB:              diskMiB,
+			Boot:                 api.BootCold,
+			TapName:              a.TapName,
+			GuestIP:              a.GuestIP.String(),
+			GatewayIP:            a.GatewayIP.String(),
+			MAC:                  a.MAC,
+			NetworkPolicyMode:    spec.NetworkPolicy.Mode,
+			NetworkPolicyDomains: spec.NetworkPolicy.Domains,
 		}
 	})
 	if err != nil {
@@ -231,6 +233,8 @@ func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string,
 				r.DiskID = diskID
 				r.DiskMiB = diskMiB
 			}
+			r.NetworkPolicyMode = spec.NetworkPolicy.Mode
+			r.NetworkPolicyDomains = spec.NetworkPolicy.Domains
 		})
 		if err != nil {
 			return "", err
@@ -525,7 +529,8 @@ func (d *Driver) setupNetworking(rec state.Record) error {
 	if err != nil {
 		return err
 	}
-	return setupTap(rec.TapName, gwCIDR, guestCIDR, d.cfg.AgentPort, d.cfg.MgmtIfaces)
+	return setupTap(rec.TapName, gwCIDR, guestCIDR, d.cfg.AgentPort, d.cfg.MgmtIfaces,
+		rec.NetworkPolicyMode, rec.NetworkPolicyDomains)
 }
 
 // Stop shuts down a running machine asynchronously. StopModeHibernate pauses the

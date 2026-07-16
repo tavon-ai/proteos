@@ -205,6 +205,16 @@ func (q *Queries) DeleteMachine(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const deleteNetworkPolicy = `-- name: DeleteNetworkPolicy :exec
+DELETE FROM network_policies WHERE machine_id = $1
+`
+
+// Reset a machine to the default policy (allow_all) by dropping its row.
+func (q *Queries) DeleteNetworkPolicy(ctx context.Context, machineID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteNetworkPolicy, machineID)
+	return err
+}
+
 const deleteProfileItem = `-- name: DeleteProfileItem :execrows
 DELETE FROM profile_items WHERE user_id = $1 AND key = $2
 `
@@ -465,6 +475,25 @@ func (q *Queries) GetMachineHost(ctx context.Context, id pgtype.UUID) (Host, err
 		&i.AgentUrl,
 		&i.Status,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getNetworkPolicy = `-- name: GetNetworkPolicy :one
+SELECT machine_id, mode, domains, created_at, updated_at FROM network_policies WHERE machine_id = $1
+`
+
+// A machine's configured network policy. No row ⇒ pgx.ErrNoRows, which the
+// service layer maps to the "allow_all" default (TAV-116).
+func (q *Queries) GetNetworkPolicy(ctx context.Context, machineID pgtype.UUID) (NetworkPolicy, error) {
+	row := q.db.QueryRow(ctx, getNetworkPolicy, machineID)
+	var i NetworkPolicy
+	err := row.Scan(
+		&i.MachineID,
+		&i.Mode,
+		&i.Domains,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1889,6 +1918,36 @@ func (q *Queries) UpsertHostByName(ctx context.Context, arg UpsertHostByNamePara
 		&i.AgentUrl,
 		&i.Status,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertNetworkPolicy = `-- name: UpsertNetworkPolicy :one
+INSERT INTO network_policies (machine_id, mode, domains)
+VALUES ($1, $2, $3)
+ON CONFLICT (machine_id) DO UPDATE
+    SET mode       = EXCLUDED.mode,
+        domains    = EXCLUDED.domains,
+        updated_at = now()
+RETURNING machine_id, mode, domains, created_at, updated_at
+`
+
+type UpsertNetworkPolicyParams struct {
+	MachineID pgtype.UUID `json:"machine_id"`
+	Mode      string      `json:"mode"`
+	Domains   []byte      `json:"domains"`
+}
+
+// Save (replacing) a machine's network policy. One row per machine.
+func (q *Queries) UpsertNetworkPolicy(ctx context.Context, arg UpsertNetworkPolicyParams) (NetworkPolicy, error) {
+	row := q.db.QueryRow(ctx, upsertNetworkPolicy, arg.MachineID, arg.Mode, arg.Domains)
+	var i NetworkPolicy
+	err := row.Scan(
+		&i.MachineID,
+		&i.Mode,
+		&i.Domains,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

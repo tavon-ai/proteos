@@ -295,6 +295,25 @@ SELECT * FROM snapshots WHERE machine_id = ANY($1::uuid[]);
 -- name: DeleteSnapshot :exec
 DELETE FROM snapshots WHERE machine_id = $1;
 
+-- name: GetNetworkPolicy :one
+-- A machine's configured network policy. No row ⇒ pgx.ErrNoRows, which the
+-- service layer maps to the "allow_all" default (TAV-116).
+SELECT * FROM network_policies WHERE machine_id = $1;
+
+-- name: UpsertNetworkPolicy :one
+-- Save (replacing) a machine's network policy. One row per machine.
+INSERT INTO network_policies (machine_id, mode, domains)
+VALUES ($1, $2, $3)
+ON CONFLICT (machine_id) DO UPDATE
+    SET mode       = EXCLUDED.mode,
+        domains    = EXCLUDED.domains,
+        updated_at = now()
+RETURNING *;
+
+-- name: DeleteNetworkPolicy :exec
+-- Reset a machine to the default policy (allow_all) by dropping its row.
+DELETE FROM network_policies WHERE machine_id = $1;
+
 -- name: ListProviders :many
 -- The provider registry, ordered for stable API output.
 SELECT * FROM providers ORDER BY key;

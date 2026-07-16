@@ -140,6 +140,26 @@ const (
 	BootResumed = "resumed"
 )
 
+// Network policy modes (TAV-116): the wire contract's four network-policy
+// shapes, shared verbatim between the control plane (which owns the policy in
+// Postgres) and the node-agent (which enforces it via nft rules on the
+// machine's tap).
+const (
+	NetworkPolicyAllowAll     = "allow_all"
+	NetworkPolicyDenyAll      = "deny_all"
+	NetworkPolicyAllowDomains = "allow_domains"
+	NetworkPolicyDenyDomains  = "deny_domains"
+)
+
+// NetworkPolicyConfig is the network policy to apply to a machine, embedded in
+// EnsureRequest (TAV-116). Domains is meaningful only for the two domain-list
+// modes. Omitted on EnsureRequest ⇒ NetworkPolicyAllowAll (unrestricted —
+// the default for a machine with no policy configured).
+type NetworkPolicyConfig struct {
+	Mode    string   `json:"mode"`
+	Domains []string `json:"domains,omitempty"`
+}
+
 // EnsureRequest is the body of PUT /v1/machines/{id}: the desired VM shape and
 // the pinned image refs. Idempotent — re-PUTing an already-running machine is a
 // no-op that returns the existing handle.
@@ -149,13 +169,14 @@ const (
 // ensure (the only call that needs it, for luksOpen), held in agent memory, and
 // MUST NEVER be logged or persisted host-side — the request logger redacts it.
 type EnsureRequest struct {
-	Vcpus        int    `json:"vcpus"`
-	MemMiB       int    `json:"mem_mib"`
-	KernelRef    string `json:"kernel_ref"`
-	RootfsRef    string `json:"rootfs_ref"`
-	DiskID       string `json:"disk_id,omitempty"`
-	DiskMiB      int    `json:"disk_mib,omitempty"`
-	VolumeKeyB64 string `json:"volume_key_b64,omitempty"`
+	Vcpus         int                  `json:"vcpus"`
+	MemMiB        int                  `json:"mem_mib"`
+	KernelRef     string               `json:"kernel_ref"`
+	RootfsRef     string               `json:"rootfs_ref"`
+	DiskID        string               `json:"disk_id,omitempty"`
+	DiskMiB       int                  `json:"disk_mib,omitempty"`
+	VolumeKeyB64  string               `json:"volume_key_b64,omitempty"`
+	NetworkPolicy *NetworkPolicyConfig `json:"network_policy,omitempty"`
 }
 
 // EnsureResponse is returned by PUT /v1/machines/{id} (202).

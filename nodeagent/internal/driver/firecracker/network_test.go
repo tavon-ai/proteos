@@ -5,6 +5,8 @@ package firecracker
 import (
 	"strings"
 	"testing"
+
+	api "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // commentArg returns the value following "comment" in an nft rule arg list, or
@@ -153,5 +155,127 @@ func TestMgmtInputRulesCoverEveryInterface(t *testing.T) {
 				t.Errorf("no accept rule for %s dport %s; that interface's traffic would hit the default drop", ifc, port)
 			}
 		}
+	}
+}
+
+// forwardRulesWithVerdict returns the subset of rules that are in the forward
+// chain and end in the given verdict ("accept" or "drop").
+func forwardRulesWithVerdict(rules [][]string, verdict string) [][]string {
+	var out [][]string
+	for _, r := range rules {
+		if ruleHas(r, "forward") && ruleHas(r, verdict) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// TAV-116: mode "" (a pre-TAV-116/legacy record) must behave exactly like
+// allow_all — networkPolicyRules is what setupTap actually calls, and it must
+// not regress the existing default-deny-private/allow-rest behavior egressRules
+// documents and TestEgressRulesDenyGuestToHost etc. exercise.
+func TestNetworkPolicyRulesEmptyModeMatchesAllowAll(t *testing.T) {
+	empty := networkPolicyRules("tape87d0754", "172.30.0.2/24", "eth0", "", nil, nil)
+	allowAll := networkPolicyRules("tape87d0754", "172.30.0.2/24", "eth0", api.NetworkPolicyAllowAll, nil, nil)
+	if len(empty) != len(allowAll) {
+		t.Fatalf("mode \"\" produced %d rules, allow_all produced %d", len(empty), len(allowAll))
+	}
+	for i := range empty {
+		if strings.Join(empty[i], " ") != strings.Join(allowAll[i], " ") {
+			t.Errorf("rule %d differs: %q vs %q", i, empty[i], allowAll[i])
+		}
+	}
+}
+
+// deny_all must not accept a guest's forward traffic to the egress interface
+// (or anywhere else) — the only forward accepts left are the established/
+// related return-traffic ones (harmless: nothing gets established without an
+// initial accept), and every other forward-hook drop rule is unconditional
+// (matching the tap alone, no daddr/oifname carve-out).
+func TestNetworkPolicyRulesDenyAll(t *testing.T) {
+	rules := networkPolicyRules("tape87d0754", "172.30.0.2/24", "eth0", api.NetworkPolicyDenyAll, nil, nil)
+	for _, r := range forwardRulesWithVerdict(rules, "accept") {
+		if !ruleHas(r, "established,related") {
+			t.Errorf("deny_all has a non-established forward accept: %v", r)
+		}
+	}
+}
+
+// allow_domains must accept forward traffic only to the resolved allow-list
+// IPs (to the egress interface), and must not carry the allow_all catch-all
+// (an unconditional iifname-tap forward accept with no daddr).
+func TestNetworkPolicyRulesAllowDomains(t *testing.T) {
+	allowIPs := []string{"93.184.216.34"}
+	rules := networkPolicyRules("tape87d0754", "172.30.0.2/24", "eth0", api.NetworkPolicyAllowDomains, allowIPs, nil)
+
+	found := false
+	for _, r := range forwardRulesWithVerdict(rules, "accept") {
+		if ruleHas(r, "established,related") {
+			continue
+		}
+		if !ruleHas(r, "ip") || !ruleHas(r, "daddr") || !ruleHas(r, allowIPs[0]) {
+			t.Errorf("allow_domains forward accept without a daddr allowlist match: %v", r)
+			continue
+		}
+		found = true
+	}
+	if !found {
+		t.Error("no forward accept for the allow-listed IP")
+	}
+}
+
+// deny_domains must drop forward traffic to the deny-list IPs specifically,
+// while still accepting everything else (the allow_all-style catch-all).
+func TestNetworkPolicyRulesDenyDomains(t *testing.T) {
+	denyIPs := []string{"93.184.216.34"}
+	rules := networkPolicyRules("tape87d0754", "172.30.0.2/24", "eth0", api.NetworkPolicyDenyDomains, nil, denyIPs)
+
+	var dropsDeniedIP, hasCatchAll bool
+	for _, r := range forwardRulesWithVerdict(rules, "drop") {
+		if ruleHas(r, denyIPs[0]) {
+			dropsDeniedIP = true
+		}
+	}
+	for _, r := range forwardRulesWithVerdict(rules, "accept") {
+		if !ruleHas(r, "established,related") && !ruleHas(r, denyIPs[0]) {
+			hasCatchAll = true
+		}
+	}
+	if !dropsDeniedIP {
+		t.Error("no forward drop for the deny-listed IP")
+	}
+	if !hasCatchAll {
+		t.Error("no forward catch-all accept; deny_domains should allow everything else")
+	}
+}
+
+// Every mode must still carry the private-range drops and the input-hook
+// guest→host deny — TestEgressRulesDenyGuestToHost already covers allow_all;
+// this is the regression for the other three modes.
+func TestNetworkPolicyRulesAlwaysDenyPrivateRanges(t *testing.T) {
+	for _, mode := range []string{api.NetworkPolicyAllowAll, api.NetworkPolicyDenyAll, api.NetworkPolicyAllowDomains, api.NetworkPolicyDenyDomains} {
+		rules := networkPolicyRules("tape87d0754", "172.30.0.2/24", "eth0", mode, nil, nil)
+		for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
+			found := false
+			for _, r := range forwardRulesWithVerdict(rules, "drop") {
+				if ruleHas(r, cidr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("mode %q: no forward drop for private range %s", mode, cidr)
+			}
+		}
+	}
+}
+
+// resolveDomainIPs must degrade gracefully (empty, no panic/error) for a
+// domain that cannot resolve, so one bad entry in the list doesn't break the
+// rest of setupTap.
+func TestResolveDomainIPsUnresolvable(t *testing.T) {
+	ips := resolveDomainIPs([]string{"this-domain-should-not-resolve.invalid"})
+	if len(ips) != 0 {
+		t.Errorf("resolveDomainIPs of an unresolvable domain = %v, want empty", ips)
 	}
 }

@@ -100,6 +100,14 @@ type MachineEvent struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type NetworkPolicy struct {
+	MachineID pgtype.UUID        `json:"machine_id"`
+	Mode      string             `json:"mode"`
+	Domains   []byte             `json:"domains"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PersonalAccessToken struct {
 	ID         pgtype.UUID        `json:"id"`
 	UserID     pgtype.UUID        `json:"user_id"`

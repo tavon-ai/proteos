@@ -67,15 +67,15 @@ func (s *Server) handleGetPRDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, prDetailView{
-		Number:  pr.Number,
-		State:   prReviewState(pr),
-		Title:   pr.Title,
-		Body:    pr.Body,
-		HTMLURL: pr.HTMLURL,
-		Head:    pr.HeadRef,
-		Base:    pr.BaseRef,
-		HeadSHA: pr.HeadSHA,
-		Author:  prAuthorView{Login: pr.AuthorLogin, AvatarURL: pr.AuthorAvatar},
+		Number:    pr.Number,
+		State:     prReviewState(pr),
+		Title:     pr.Title,
+		Body:      pr.Body,
+		HTMLURL:   pr.HTMLURL,
+		Head:      pr.HeadRef,
+		Base:      pr.BaseRef,
+		HeadSHA:   pr.HeadSHA,
+		Author:    prAuthorView{Login: pr.AuthorLogin, AvatarURL: pr.AuthorAvatar},
 		Additions: pr.Additions, Deletions: pr.Deletions, ChangedFiles: pr.ChangedFiles,
 	})
 }

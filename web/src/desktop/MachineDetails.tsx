@@ -1,4 +1,5 @@
 import type { MachineSummary, MachineTemplate } from '../api/client';
+import { NetworkPolicyPanel } from '../components/NetworkPolicyPanel';
 import { Modal } from './Modal';
 
 function gib(mib: number | undefined): string {
@@ -57,6 +58,9 @@ export function MachineDetails({
         ))}
       </dl>
       {machine.last_error && <div className="form-error">{machine.last_error}</div>}
+
+      <NetworkPolicyPanel machineId={machine.id} />
+
       <div className="modal-actions">
         <button type="button" className="btn-primary" onClick={onClose}>
           Close

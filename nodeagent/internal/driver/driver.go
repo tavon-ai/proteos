@@ -28,6 +28,22 @@ type VMSpec struct {
 	// decision #2), delivered fresh on every ensure and held only in memory for
 	// luksOpen. Never persisted host-side, never logged.
 	VolumeKey []byte
+
+	// NetworkPolicy is the egress/ingress policy for this machine's tap
+	// (TAV-116). A zero value (empty Mode) is equivalent to
+	// {Mode: "allow_all"} — unrestricted, matching a machine with no policy
+	// configured. Applied on boot; a policy change on an already-running
+	// machine takes effect on its next Ensure-driven (re)boot, same as a
+	// resource-spec override.
+	NetworkPolicy NetworkPolicy
+}
+
+// NetworkPolicy mirrors agentapi.NetworkPolicyConfig at the driver level
+// (TAV-116). Kept as a plain driver-owned type — like Disk — rather than
+// importing the agentapi wire type directly.
+type NetworkPolicy struct {
+	Mode    string
+	Domains []string
 }
 
 // Disk is a persistent block device attached to the VM (Phase 4). Single entry
