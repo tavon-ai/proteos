@@ -746,14 +746,23 @@ install_rust() {
 
   # rustfmt/clippy ship as optional rustup components, not part of the
   # minimal profile above; cargo-fmt/cargo-clippy fail with "is not
-  # installed for the toolchain" until these are added explicitly.
+  # installed for the toolchain" until these are added explicitly. This must
+  # NOT be a hard failure (TAV-111): rustfmt/clippy are occasionally missing
+  # for a freshly promoted stable release for a few days (a known rustup/
+  # channel-layout gap — see rust-lang.github.io/rustup-components-history),
+  # and code-server is already baked into this same image by the time we get
+  # here (install_codeserver runs first). A `die` here would abort the whole
+  # bake — including the already-installed editor — over an optional dev-QoL
+  # component, taking code-server down with it. Warn and keep going instead;
+  # `cargo fmt`/`cargo clippy` simply stay unavailable until a later rebake.
   log "adding rustfmt and clippy components"
-  sudo chroot "$mnt" /usr/bin/env \
+  if ! sudo chroot "$mnt" /usr/bin/env \
     PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
-    rustup component add rustfmt clippy \
-    || die "rustup component add rustfmt clippy failed"
+    rustup component add rustfmt clippy; then
+    log "WARNING: rustup component add rustfmt clippy failed; continuing without them"
+  fi
 
   # Symlink the three key binaries onto /usr/local/bin so they are immediately
   # on PATH; install_shell_env exports RUSTUP_HOME (proxies need it to resolve
@@ -1152,9 +1161,11 @@ if [[ $PYTHON_INSTALL -eq 1 ]]; then
   log "baking Python + build tools — bumping grow ${GROW_MIB}→${PY_NEED}MiB headroom"
   GROW_MIB=$PY_NEED
 fi
-# Rust toolchain (rustc + cargo + std, minimal profile) unpacks to ~400MiB.
+# Rust toolchain (rustc + cargo + std, minimal profile) unpacks to ~400MiB;
+# the rustfmt/clippy components (TAV-109) add clippy-driver on top of that, so
+# the headroom needs more than the minimal-profile-only estimate.
 if [[ $RUST_INSTALL -eq 1 ]]; then
-  RUST_NEED=$((GROW_MIB + 600))
+  RUST_NEED=$((GROW_MIB + 800))
   log "baking Rust toolchain — bumping grow ${GROW_MIB}→${RUST_NEED}MiB headroom"
   GROW_MIB=$RUST_NEED
 fi
