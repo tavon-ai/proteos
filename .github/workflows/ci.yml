@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: controlplane/go.mod
           cache-dependency-path: controlplane/go.sum
@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: nodeagent/go.mod
           # The node-agent has no external deps (no go.sum); key the module
@@ -115,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: guestagent/go.mod
           cache-dependency-path: guestagent/go.sum
@@ -157,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: nodeagent/go.mod
           cache-dependency-path: go.work.sum
@@ -179,7 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "25"
           cache: npm
@@ -248,7 +248,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: go.work.sum
@@ -277,14 +277,14 @@ jobs:
 
       - name: Set up Go
         if: matrix.language == 'go'
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: controlplane/go.mod
           cache-dependency-path: go.work.sum
 
       - name: Set up Node
         if: matrix.language == 'typescript'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "25"
           cache: npm
