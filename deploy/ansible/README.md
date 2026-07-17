@@ -113,7 +113,7 @@ Run **just the Tailscale step** on an already-provisioned node with
 | -------- | ------- | ----- |
 | `proteos_agent_token` | `CHANGE_ME` | **required** — must equal app-stack token; the play refuses the placeholder |
 | `proteos_fc_version` | `v1.16.0` | firecracker/jailer release |
-| `proteos_kernel_key` | `firecracker-ci/v1.15/x86_64/vmlinux-6.1.155` | exact pinned kernel object |
+| `proteos_kernel_key` | `firecracker-ci/v1.15/x86_64/vmlinux-6.1.176` | exact pinned kernel object |
 | `proteos_go_version` | `1.26.4` | must satisfy `nodeagent/go.mod` |
 | `proteos_agent_addr` | `0.0.0.0:9090` | listen address |
 | `proteos_agent_subnet` | `172.30.0.0/24` | per-host guest subnet |
