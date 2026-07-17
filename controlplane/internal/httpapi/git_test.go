@@ -118,12 +118,12 @@ func setupGit(t *testing.T, revoked bool, machineState string) gitFixture {
 	ch := &fakeChannel{has: machineState == string(machine.StateRunning)}
 
 	srv := &httpapi.Server{
-		Sessions:      sessions,
-		Queries:       q,
-		Audit:         audit.NewRecorder(q),
-		Machines:      machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
-		GitHub:        gh,
-		Tokens:        github.NewTokenSource(gh, q, sec),
+		Sessions:       sessions,
+		Queries:        q,
+		Audit:          audit.NewRecorder(q),
+		Machines:       machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
+		GitHub:         gh,
+		Tokens:         github.NewTokenSource(gh, q, sec),
 		GitChannel:     ch,
 		GitHost:        "github.com",
 		GitPublicHosts: []string{"codeberg.example"},

@@ -30,6 +30,13 @@ type Record struct {
 	KernelRef string `json:"kernel_ref"`
 	RootfsRef string `json:"rootfs_ref"`
 
+	// NetworkPolicyMode/NetworkPolicyDomains are the egress/ingress policy
+	// applied to this machine's tap (TAV-116), echoed from the ensure request.
+	// Empty Mode ⇒ allow_all (pre-TAV-116 records, and the default for new
+	// machines).
+	NetworkPolicyMode    string   `json:"network_policy_mode,omitempty"`
+	NetworkPolicyDomains []string `json:"network_policy_domains,omitempty"`
+
 	// Network allocation (owned by the agent).
 	TapName   string `json:"tap_name"`
 	GuestIP   string `json:"guest_ip"`

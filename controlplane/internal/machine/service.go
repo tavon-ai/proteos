@@ -503,6 +503,14 @@ func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef,
 	}
 	req.VolumeKeyB64 = keyB64
 
+	// TAV-116: apply the machine's configured network policy on every
+	// (re)boot; a machine with no policy set defaults to allow_all.
+	policy, err := s.getNetworkPolicy(ctx, m.ID)
+	if err != nil {
+		return s.fail(ctx, m, State(m.State), "load network policy: "+err.Error())
+	}
+	req.NetworkPolicy = &agentapi.NetworkPolicyConfig{Mode: policy.Mode, Domains: policy.Domains}
+
 	resp, err := s.nodes.Ensure(ctx, id, req)
 	if err != nil {
 		return s.fail(ctx, m, State(m.State), "node-agent ensure failed: "+err.Error())

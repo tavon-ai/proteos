@@ -4,7 +4,10 @@ package firecracker
 
 import (
 	"fmt"
+	"net"
 	"strings"
+
+	api "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // Networking mirrors the spike's tap + NAT setup (03-network.sh / lib.sh), but
@@ -161,9 +164,10 @@ func mgmtInputRules(agentPort string, ifaces []string) [][]string {
 }
 
 // setupTap creates the tap owned by the agent, addresses it with the gateway IP,
-// brings it up, enables forwarding, and installs the default-deny egress policy
-// plus the masquerade rule for this guest.
-func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string, mgmtIfaces []string) error {
+// brings it up, enables forwarding, and installs the egress policy (TAV-116:
+// mode/domains — empty mode is the pre-TAV-116 default-deny-private/allow-rest
+// behavior, i.e. allow_all) plus the masquerade rule for this guest.
+func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string, mgmtIfaces []string, policyMode string, policyDomains []string) error {
 	if err := ensureNftTable(agentPort, mgmtIfaces); err != nil {
 		return err
 	}
@@ -204,7 +208,14 @@ func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string, mgmtIfaces []string
 		return err
 	}
 
-	for _, r := range egressRules(tap, guestCIDR, egress) {
+	var allowIPs, denyIPs []string
+	switch policyMode {
+	case api.NetworkPolicyAllowDomains:
+		allowIPs = resolveDomainIPs(policyDomains)
+	case api.NetworkPolicyDenyDomains:
+		denyIPs = resolveDomainIPs(policyDomains)
+	}
+	for _, r := range networkPolicyRules(tap, guestCIDR, egress, policyMode, allowIPs, denyIPs) {
 		if err := run("nft", r...); err != nil {
 			return err
 		}
@@ -224,19 +235,43 @@ func setupTap(tap, gatewayCIDR, guestCIDR, agentPort string, mgmtIfaces []string
 // value as it appears inside the quotes in `nft list` output.
 func commentTag(tap string) string { return "proteos:" + tap }
 
-// egressRules builds the ordered nft rule argument lists implementing the
-// default-deny policy for one tap. It is pure (no I/O) so it can be unit tested.
+// egressRules is the allow_all (TAV-116 default) rule set for one tap: kept as
+// its own function — rather than inlining networkPolicyRules(tap, guestCIDR,
+// egress, api.NetworkPolicyAllowAll, nil, nil) at call sites — because it
+// predates TAV-116 and is exercised directly by this file's existing tests.
+func egressRules(tap, guestCIDR, egress string) [][]string {
+	return networkPolicyRules(tap, guestCIDR, egress, api.NetworkPolicyAllowAll, nil, nil)
+}
+
+// networkPolicyRules builds the ordered nft rule argument lists implementing
+// one tap's network policy (TAV-116). It is pure (no I/O) so it can be unit
+// tested; domain-list modes take their already-resolved addresses
+// (allowIPs/denyIPs) rather than resolving domains themselves — that I/O lives
+// in resolveDomainIPs, called by setupTap.
 //
-// input hook (guest → host-local services):
+// input hook (guest → host-local services), every mode alike:
 //   - allow established/related return traffic (Phase 3 host→guest terminal)
 //   - DROP everything else — the guest must not reach the node-agent etc.
 //
 // forward hook (guest → routed destinations):
 //   - allow established/related return traffic
-//   - DROP guest → private ranges (host, agent, control plane, peers)
-//   - allow guest → anywhere else (the internet)
+//   - DROP guest → private ranges (host, agent, control plane, peers) — no mode
+//     ever grants guest → other-guest/host access
+//   - mode-specific accepts/drops (see below), everything unmatched falls
+//     through to the forward chain's default-drop policy
 //
-// postrouting: masquerade the guest to the internet.
+// mode-specific forward behavior:
+//   - "" | allow_all: accept everything else to the egress interface (the
+//     pre-TAV-116 behavior)
+//   - deny_all: no further accepts — private-range drops are already in place
+//     and the chain default-drops the rest
+//   - allow_domains: accept only allowIPs, to the egress interface
+//   - deny_domains: drop denyIPs first, then accept everything else (mirrors
+//     allow_all's catch-all)
+//
+// postrouting: masquerade whatever this policy actually let through — a packet
+// the forward chain dropped never reaches this hook, so installing it
+// unconditionally is safe for every mode.
 //
 // Every rule carries a `counter` (so `nft list table ip proteos` shows per-rule
 // hit counts for debugging) and a comment tag (the tap name) so teardownTap can
@@ -244,23 +279,68 @@ func commentTag(tap string) string { return "proteos:" + tap }
 // literal double quotes because the tag contains a ':' that nft rejects
 // unquoted; we exec nft directly (no shell), so the quotes must be in the
 // argument itself.
-func egressRules(tap, guestCIDR, egress string) [][]string {
+func networkPolicyRules(tap, guestCIDR, egress, mode string, allowIPs, denyIPs []string) [][]string {
 	tag := `"` + commentTag(tap) + `"`
-	return [][]string{
+	rules := [][]string{
 		// input: deny guest → host, except return traffic.
 		{"add", "rule", "ip", nftTable, "input", "iifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag},
 		{"add", "rule", "ip", nftTable, "input", "iifname", tap, "counter", "drop", "comment", tag},
-		// forward: default-deny egress.
+		// forward: established/related return traffic for whatever got out.
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "oifname", tap, "ct", "state", "established,related", "counter", "accept", "comment", tag},
+		// forward: never let a guest reach another guest/host over the private ranges.
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "10.0.0.0/8", "counter", "drop", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "172.16.0.0/12", "counter", "drop", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "192.168.0.0/16", "counter", "drop", "comment", tag},
 		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", "169.254.0.0/16", "counter", "drop", "comment", tag},
-		{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "oifname", egress, "counter", "accept", "comment", tag},
-		// postrouting: NAT the guest out to the internet.
-		{"add", "rule", "ip", nftTable, "postrouting", "ip", "saddr", guestCIDR, "oifname", egress, "counter", "masquerade", "comment", tag},
 	}
+
+	switch mode {
+	case api.NetworkPolicyDenyAll:
+		// No further forward accepts — the chain's default-drop policy handles it.
+	case api.NetworkPolicyAllowDomains:
+		for _, ip := range allowIPs {
+			rules = append(rules, []string{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", ip, "oifname", egress, "counter", "accept", "comment", tag})
+		}
+	case api.NetworkPolicyDenyDomains:
+		for _, ip := range denyIPs {
+			rules = append(rules, []string{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "ip", "daddr", ip, "counter", "drop", "comment", tag})
+		}
+		rules = append(rules, []string{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "oifname", egress, "counter", "accept", "comment", tag})
+	default: // "" | allow_all
+		rules = append(rules, []string{"add", "rule", "ip", nftTable, "forward", "iifname", tap, "oifname", egress, "counter", "accept", "comment", tag})
+	}
+
+	// postrouting: NAT the guest out to the internet.
+	rules = append(rules, []string{"add", "rule", "ip", nftTable, "postrouting", "ip", "saddr", guestCIDR, "oifname", egress, "counter", "masquerade", "comment", tag})
+	return rules
+}
+
+// resolveDomainIPs resolves each domain to its A/AAAA addresses for the
+// allow_domains/deny_domains policy modes (TAV-116). Best-effort per domain: a
+// domain that fails to resolve (typo, transient DNS outage) is skipped rather
+// than failing the whole ensure — one bad entry should not brick network setup
+// for a machine whose other entries are fine. Note this is an IP-snapshot
+// allowlist, not live DNS filtering: it does not track a domain's IPs changing
+// after boot (no periodic re-resolution), and offers no protection against
+// DNS-rebinding/SNI tricks that reach an already-allowed IP under a different
+// name.
+func resolveDomainIPs(domains []string) []string {
+	seen := make(map[string]bool, len(domains))
+	var ips []string
+	for _, d := range domains {
+		addrs, err := net.LookupHost(d)
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if !seen[a] {
+				seen[a] = true
+				ips = append(ips, a)
+			}
+		}
+	}
+	return ips
 }
 
 // allowForwardInFilter adds accept rules for this tap's forwarded traffic to the

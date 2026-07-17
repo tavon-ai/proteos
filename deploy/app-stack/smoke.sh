@@ -38,7 +38,20 @@ done
 echo "ok: /healthz answers on the control plane"
 
 echo "== smoke: SPA served by nginx"
-index=$(curl -fsS "$WEB/")
+# nginx starts alongside the control plane, so it may not be listening yet when
+# /healthz answers on the first try — retry like the healthz probe (a not-yet-
+# listening published port shows up as connection reset, hence the retries).
+for i in $(seq 1 30); do
+  if index=$(curl -fsS "$WEB/" 2>/dev/null); then
+    break
+  fi
+  if [ "$i" = 30 ]; then
+    echo "FAIL: nginx never answered on $WEB" >&2
+    compose logs web >&2
+    exit 1
+  fi
+  sleep 2
+done
 if ! echo "$index" | grep -qi '<div id="root">'; then
   echo "FAIL: GET / did not return the SPA index (got: ${index:0:200})" >&2
   exit 1

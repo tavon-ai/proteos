@@ -135,6 +135,19 @@ export interface CreateMachineInput {
   disk_mib?: number;
 }
 
+// NetworkPolicyMode mirrors the control-plane network_policies.mode CHECK
+// constraint (TAV-116). allow_all is the default for a machine with no policy
+// row (see NetworkPolicy).
+export type NetworkPolicyMode = 'allow_all' | 'deny_all' | 'allow_domains' | 'deny_domains';
+
+// NetworkPolicy is the body of GET/PUT /api/machines/{id}/network-policy: a
+// machine's egress/ingress configuration. domains is meaningful only for the
+// two domain-list modes; it is always present (possibly empty).
+export interface NetworkPolicy {
+  mode: NetworkPolicyMode;
+  domains: string[];
+}
+
 export interface MachineEvent {
   id: number;
   // "git.clone"/"git.push" carry an async git op completion (payload:
@@ -618,6 +631,17 @@ export const api = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
+    }),
+  // Network policy (TAV-116): getNetworkPolicy defaults to allow_all for a
+  // machine with no policy configured. setNetworkPolicy takes effect on the
+  // machine's next (re)boot, not immediately on an already-running machine.
+  getNetworkPolicy: (id: string) =>
+    request<NetworkPolicy>(`/api/machines/${encodeURIComponent(id)}/network-policy`),
+  setNetworkPolicy: (id: string, policy: NetworkPolicy) =>
+    request<NetworkPolicy>(`/api/machines/${encodeURIComponent(id)}/network-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(policy),
     }),
   // Mint a one-shot editor URL for a running machine (Phase 8). 409
   // machine_not_running / 404 no_machine surface as ApiError. Only available when

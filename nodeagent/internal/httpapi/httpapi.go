@@ -113,6 +113,12 @@ func (s *Server) handleEnsure(w http.ResponseWriter, r *http.Request) {
 	if req.DiskID != "" {
 		spec.Disks = []driver.Disk{{ID: req.DiskID, SizeMiB: req.DiskMiB}}
 	}
+	if req.NetworkPolicy != nil {
+		spec.NetworkPolicy = driver.NetworkPolicy{
+			Mode:    req.NetworkPolicy.Mode,
+			Domains: req.NetworkPolicy.Domains,
+		}
+	}
 	handle, err := s.drv.EnsureRunning(r.Context(), spec)
 	if err != nil {
 		slog.Error("ensure failed", "machine", id, "err", err)

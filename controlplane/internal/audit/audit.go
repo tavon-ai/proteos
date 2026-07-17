@@ -52,8 +52,8 @@ const (
 	ActionGitPRComment = "git.pr.comment" // a user commented on a pull request
 
 	// Auth session events. Target is the user id.
-	ActionAuthLogin    = "auth.login"     // a user completed OAuth login and a session was created
-	ActionAuthLogout   = "auth.logout"    // a user explicitly logged out
+	ActionAuthLogin     = "auth.login"     // a user completed OAuth login and a session was created
+	ActionAuthLogout    = "auth.logout"    // a user explicitly logged out
 	ActionSessionRevoke = "session.revoke" // an active session was explicitly revoked (logout or admin)
 
 	// Machine lifecycle events. Target is the machine id; metadata carries the name.
@@ -61,6 +61,10 @@ const (
 	ActionMachineStart   = "machine.start"   // a user cold-booted or resumed a stopped machine
 	ActionMachineStop    = "machine.stop"    // a user stopped a running machine
 	ActionMachineDestroy = "machine.destroy" // a user permanently destroyed a machine
+
+	// TAV-116 network policy. Target is the machine id; metadata carries the mode.
+	ActionNetworkPolicySet    = "machine.network_policy.set"    // a user configured a machine's network policy
+	ActionNetworkPolicyDelete = "machine.network_policy.delete" // a user reset a machine's network policy to allow_all
 )
 
 // Actor prefixes identify who performed the action.

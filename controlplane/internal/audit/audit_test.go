@@ -30,18 +30,18 @@ func TestActionConstants(t *testing.T) {
 	// Guard against accidental edits to the canonical action strings written to
 	// audit_log.action (callers and dashboards depend on these exact values).
 	cases := map[string]string{
-		ActionSecretPut:     "secret.put",
-		ActionSecretDelete:  "secret.delete",
-		ActionSecretRead:    "secret.read",
-		ActionAgentLaunch:   "agent.launch",
-		ActionGitRepos:      "git.repos",
-		ActionGitClone:      "git.clone",
-		ActionGitCredential: "git.credential",
-		ActionGitPRMerge:    "git.pr.merge",
-		ActionGitPRComment:  "git.pr.comment",
+		ActionSecretPut:          "secret.put",
+		ActionSecretDelete:       "secret.delete",
+		ActionSecretRead:         "secret.read",
+		ActionAgentLaunch:        "agent.launch",
+		ActionGitRepos:           "git.repos",
+		ActionGitClone:           "git.clone",
+		ActionGitCredential:      "git.credential",
+		ActionGitPRMerge:         "git.pr.merge",
+		ActionGitPRComment:       "git.pr.comment",
 		ActionGitHostTokenSet:    "git.host.token.set",
 		ActionGitHostTokenDelete: "git.host.token.delete",
-		ActorSystemInjector: "system:injector",
+		ActorSystemInjector:      "system:injector",
 	}
 	for got, want := range cases {
 		if got != want {

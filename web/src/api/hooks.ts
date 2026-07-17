@@ -14,6 +14,7 @@ import {
   type MachineEvent,
   type MachineEventData,
   type MachineSummary,
+  type NetworkPolicy,
   type ProjectsResponse,
   type ReposResponse,
   type SessionStatusFilter,
@@ -205,6 +206,34 @@ export function useGitHostMutations() {
     onSuccess: invalidate,
   });
   return { setToken, deleteToken };
+}
+
+// networkPolicyKey is the query cache key for one machine's network policy
+// (TAV-116), keyed by machine id so switching machines refetches.
+const networkPolicyKey = (machineId: string) => ['network-policy', machineId] as const;
+
+// useNetworkPolicy loads a machine's configured network policy (defaults to
+// allow_all when none is set — see the control-plane handler).
+export function useNetworkPolicy(machineId: string) {
+  return useQuery({
+    queryKey: networkPolicyKey(machineId),
+    queryFn: () => api.getNetworkPolicy(machineId),
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useSetNetworkPolicy saves a machine's network policy and invalidates the
+// query so the panel re-renders from the server's (validated) copy.
+export function useSetNetworkPolicy(machineId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (policy: NetworkPolicy) => api.setNetworkPolicy(machineId, policy),
+    onSuccess: () => qc.invalidateQueries({ queryKey: networkPolicyKey(machineId) }),
+  });
 }
 
 // profileItemsKey is the query cache key for the user's portable-profile items.

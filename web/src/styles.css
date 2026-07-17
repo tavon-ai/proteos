@@ -1406,6 +1406,43 @@ body {
   font-size: 0.78rem;
 }
 
+/* TAV-116: network policy panel (machine details modal). */
+.network-policy-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.network-policy-panel h3 {
+  margin: 0 0 0.25rem;
+}
+.network-policy-domains {
+  margin-top: 0.75rem;
+}
+.network-policy-domain-add {
+  display: flex;
+  gap: 0.5rem;
+}
+.network-policy-domain-add .provider-key-input {
+  flex: 1 1 auto;
+}
+.network-policy-domain-list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.network-policy-domain-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
 /* === Phase 9: project-centric desktop ================================= */
 
 .desktop {
