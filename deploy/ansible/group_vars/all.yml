@@ -7,7 +7,7 @@
 proteos_fc_version: "v1.16.0" # firecracker + jailer release tag
 proteos_ci_version: "v1.15" # CI artifact bucket line (lags the binary)
 proteos_ubuntu_version: "24.04" # rootfs flavour from the CI bucket
-proteos_kernel_key: "firecracker-ci/v1.15/x86_64/vmlinux-6.1.155" # exact key from versions.lock
+proteos_kernel_key: "firecracker-ci/v1.15/x86_64/vmlinux-6.1.176" # exact key from versions.lock
 proteos_go_version: "1.26.4" # must satisfy nodeagent/go.mod (go 1.26.4)
 proteos_taskfile_version: "v3.40.0" # go-task release tag (host `task` CLI; bump freely)
 proteos_arch: "x86_64"
