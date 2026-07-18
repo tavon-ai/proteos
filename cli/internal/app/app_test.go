@@ -28,13 +28,14 @@ type fakeCP struct {
 	canceled    bool
 	lastSend    string
 
-	projectsPresent bool   // GET /api/projects returns hello-world when true
-	cloned          bool   // set by POST /api/git/clone (then projects show up)
-	lastCloneName   string // full_name from the last clone request
-	lastCloneURL    string // url from the last clone request (clone-by-URL)
-	gitHostLinked   bool   // whether the fake git host has a PAT saved
-	lastHostToken   string // token from the last set-token request
-	lastCommitMsg   string // message from the last git commit request
+	projectsPresent   bool   // GET /api/projects returns hello-world when true
+	projectsFailForID string // GET /api/projects returns 500 when ?machine= equals this id
+	cloned            bool   // set by POST /api/git/clone (then projects show up)
+	lastCloneName     string // full_name from the last clone request
+	lastCloneURL      string // url from the last clone request (clone-by-URL)
+	gitHostLinked     bool   // whether the fake git host has a PAT saved
+	lastHostToken     string // token from the last set-token request
+	lastCommitMsg     string // message from the last git commit request
 
 	lastCreateName     string // name from the last POST /api/machines
 	lastCreateTemplate string // template_id from the last POST /api/machines
@@ -189,9 +190,15 @@ func (f *fakeCP) handler() http.Handler {
 		if !auth(w, r) {
 			return
 		}
+		machine := r.URL.Query().Get("machine")
 		f.mu.Lock()
 		present := f.projectsPresent || f.cloned
+		failForID := f.projectsFailForID
 		f.mu.Unlock()
+		if failForID != "" && machine == failForID {
+			writeErr(w, http.StatusInternalServerError, "machine_stopped")
+			return
+		}
 		if !present {
 			fmt.Fprint(w, `{"projects":[]}`)
 			return
@@ -1159,6 +1166,99 @@ func TestProjectListEmpty(t *testing.T) {
 	}
 	if !strings.Contains(out, "No projects.") {
 		t.Fatalf("project output:\n%s", out)
+	}
+}
+
+func TestProjectListRequiresMachineOrAll(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLI(t, url, "tok", "project", "ls")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want usage; stderr=%s", code, errOut)
+	}
+}
+
+func TestProjectListMachineAndAllMutuallyExclusive(t *testing.T) {
+	_, url := newCP(t)
+	code, _, errOut := runCLI(t, url, "tok", "project", "ls", "--machine", "m1", "--all")
+	if code != client.ExitUsage {
+		t.Fatalf("exit = %d, want usage; stderr=%s", code, errOut)
+	}
+}
+
+func TestProjectListAll(t *testing.T) {
+	cp, url := newCP(t)
+	cp.projectsPresent = true
+	code, out, _ := runCLI(t, url, "tok", "project", "ls", "--all")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if !strings.Contains(out, "MACHINE") {
+		t.Fatalf("table missing MACHINE column:\n%s", out)
+	}
+	if got := projectRowCount(out); got != 2 {
+		t.Fatalf("want one row per machine, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") {
+		t.Fatalf("want both machine names:\n%s", out)
+	}
+}
+
+// projectRowCount counts the "hello-world" project rows in a `project ls`
+// table by line, since a single row's remote URL also contains the
+// substring "hello-world" (so a whole-output strings.Count would double it).
+func projectRowCount(out string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "hello-world") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestProjectListAllJSON(t *testing.T) {
+	cp, url := newCP(t)
+	cp.projectsPresent = true
+	code, out, _ := runCLI(t, url, "tok", "project", "ls", "--all", "--json")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	var projects []struct {
+		Name        string `json:"name"`
+		MachineID   string `json:"machine_id"`
+		MachineName string `json:"machine_name"`
+	}
+	if err := json.Unmarshal([]byte(out), &projects); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("want 2 projects, got %d:\n%s", len(projects), out)
+	}
+	for _, p := range projects {
+		if p.MachineID == "" || p.MachineName == "" {
+			t.Fatalf("missing machine_id/machine_name: %+v", p)
+		}
+	}
+}
+
+// TestProjectListAllSkipsFailingMachine covers the "machine is stopped"
+// case: a per-machine ListProjects error is a warning, not a failed command.
+func TestProjectListAllSkipsFailingMachine(t *testing.T) {
+	cp, url := newCP(t)
+	cp.projectsPresent = true
+	cp.projectsFailForID = "m2"
+	code, out, errOut := runCLI(t, url, "tok", "project", "ls", "--all")
+	if code != client.ExitOK {
+		t.Fatalf("exit = %d: %s", code, out)
+	}
+	if got := projectRowCount(out); got != 1 {
+		t.Fatalf("want only the healthy machine's project, got %d rows:\n%s", got, out)
+	}
+	if !strings.Contains(out, "alpha") || strings.Contains(out, "beta") {
+		t.Fatalf("want only alpha's row:\n%s", out)
+	}
+	if !strings.Contains(errOut, "m2") {
+		t.Fatalf("want a warning naming the skipped machine:\n%s", errOut)
 	}
 }
 
