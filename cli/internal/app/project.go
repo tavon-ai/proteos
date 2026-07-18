@@ -38,38 +38,51 @@ project, so the typical agent flow is: 'project ensure' the repo onto the machin
 then 'task run --project <name>'.
 
 Commands:
-  ls               List the projects cloned on a machine
+  ls               List the projects cloned on a machine (or --all machines)
   clone <r>        Clone owner/repo onto a machine (async; --wait to block)
   ensure <r>       Clone owner/repo onto a machine only if not already present
 
-Every command needs --machine <id>. Reads accept --json.
+Every command needs --machine <id> (ls also accepts --all). Reads accept --json.
 Run 'proteos project <command> -h' for that command's flags and examples.
 `)
+}
+
+// projectWithMachine pairs a Project with the machine it was fetched from, for
+// --all output where several machines' projects are aggregated into one list.
+type projectWithMachine struct {
+	client.Project
+	MachineID   string `json:"machine_id"`
+	MachineName string `json:"machine_name"`
 }
 
 func projectsList(env Env, args []string) int {
 	fs := cmdFlags(env, "project ls", cmdHelp{
 		summary: "List the repositories cloned in a machine's workspace.",
-		usage:   "proteos project ls --machine <id> [--json] [--limit N] [--offset N]",
+		usage:   "proteos project ls (--machine <id> | --all) [--json] [--limit N] [--offset N]",
 		examples: []string{
 			"proteos project ls --machine m-123",
 			"proteos project ls --machine m-123 --json",
+			"proteos project ls --all",
 		},
 	})
 	url := fs.String("url", "", "control-plane base URL (or PROTEOS_URL)")
-	machineID := fs.String("machine", "", "machine id (required)")
+	machineID := fs.String("machine", "", "machine id (required, unless --all)")
+	allMachines := fs.Bool("all", false, "fetch projects from all of the caller's machines")
 	asJSON := fs.Bool("json", false, "emit raw JSON")
 	limit, offset := paginationFlags(fs)
 	if ok, code := parse(env, fs, args); !ok {
 		return code
 	}
-	if *machineID == "" {
+	if (*machineID != "") == *allMachines {
 		fs.Usage()
 		return client.ExitUsage
 	}
 	c, _, code, ok := newClient(env, *url)
 	if !ok {
 		return code
+	}
+	if *allMachines {
+		return projectsListAll(env, c, *asJSON, *offset, *limit)
 	}
 	projects, err := c.ListProjects(ctx(), *machineID)
 	if err != nil {
@@ -90,6 +103,47 @@ func projectsList(env Env, args []string) int {
 	fmt.Fprintln(tw, "NAME\tBRANCH\tDIRTY\tREMOTE")
 	for _, pr := range p.Items {
 		fmt.Fprintf(tw, "%s\t%s\t%t\t%s\n", pr.Name, pr.Branch, pr.Dirty, pr.Remote)
+	}
+	tw.Flush()
+	printPageFooter(env.Stdout, p, "projects")
+	return client.ExitOK
+}
+
+// projectsListAll fetches the caller's machines and aggregates each machine's
+// projects into a single list. A machine that fails to list (e.g. it's
+// stopped) is skipped with a warning on stderr rather than failing the whole
+// command.
+func projectsListAll(env Env, c *client.Client, asJSON bool, offset, limit int) int {
+	machines, err := c.ListMachines(ctx())
+	if err != nil {
+		return fail(env, err)
+	}
+	var all []projectWithMachine
+	for _, m := range machines {
+		projects, err := c.ListProjects(ctx(), m.ID)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "proteos: warning: skipping machine %s (%s): %v\n", m.Name, m.ID, err)
+			continue
+		}
+		for _, pr := range projects {
+			all = append(all, projectWithMachine{Project: pr, MachineID: m.ID, MachineName: m.Name})
+		}
+	}
+	p := paginate(all, offset, limit)
+	if asJSON {
+		if err := printPageJSON(env.Stdout, p); err != nil {
+			return fail(env, err)
+		}
+		return client.ExitOK
+	}
+	if len(p.Items) == 0 {
+		fmt.Fprintln(env.Stdout, "No projects.")
+		return client.ExitOK
+	}
+	tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "MACHINE\tNAME\tBRANCH\tDIRTY\tREMOTE")
+	for _, pr := range p.Items {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%t\t%s\n", pr.MachineName, pr.Name, pr.Branch, pr.Dirty, pr.Remote)
 	}
 	tw.Flush()
 	printPageFooter(env.Stdout, p, "projects")
