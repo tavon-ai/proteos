@@ -334,6 +334,64 @@ func (s *Server) handleDestroyAllMachines(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// CreateAllResult is the per-machine outcome reported by POST /api/machines/fill.
+type CreateAllResult struct {
+	ID    string  `json:"id,omitempty"`
+	Name  string  `json:"name,omitempty"`
+	Ok    bool    `json:"ok"`
+	Error *string `json:"error,omitempty"`
+}
+
+// CreateAllResponse summarizes a bulk create-up-to-limit call.
+type CreateAllResponse struct {
+	Requested int               `json:"requested"`
+	Created   int               `json:"created"`
+	Failed    int               `json:"failed"`
+	Results   []CreateAllResult `json:"results"`
+}
+
+// handleCreateUpToLimit creates machines (default template/specs) until the
+// user reaches their per-user cap. Always 200 (even when already at the limit,
+// which reports Requested: 0), with a per-machine breakdown of success/failure
+// in the body — a partial failure does not fail the request.
+func (s *Server) handleCreateUpToLimit(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	results, err := s.Machines.CreateUpToLimit(r.Context(), user.ID)
+	if err != nil {
+		slog.Error("create up to limit failed", "err", err, "user", user.ID)
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	uid := uuidString(user.ID)
+	resp := CreateAllResponse{Requested: len(results), Results: make([]CreateAllResult, 0, len(results))}
+	for _, res := range results {
+		out := CreateAllResult{Ok: res.Err == nil}
+		if res.Err != nil {
+			resp.Failed++
+			msg := res.Err.Error()
+			out.Error = &msg
+			slog.Error("create-up-to-limit: machine create failed", "err", res.Err, "user", user.ID)
+		} else {
+			resp.Created++
+			out.ID = machine.UUIDString(res.Machine.ID)
+			out.Name = res.Machine.Name
+			s.Audit.Record(r.Context(), audit.Entry{
+				UserID:   uid,
+				Actor:    audit.UserActor(uid),
+				Action:   audit.ActionMachineCreate,
+				Target:   out.ID,
+				Metadata: map[string]any{"name": out.Name},
+			})
+		}
+		resp.Results = append(resp.Results, out)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // machineMutation factors the shared shape of start/stop: auth, parse the {id}
 // path value, run op (which ownership-checks), map ErrNoMachine→404,
 // ErrInvalidState→409, else 202 with the summary. action is the audit constant

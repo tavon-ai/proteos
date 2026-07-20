@@ -1197,7 +1197,8 @@ body {
   margin: 0.2rem 0;
 }
 .machine-menu-empty,
-.machine-menu-error {
+.machine-menu-error,
+.machine-menu-hint {
   padding: 0.35rem 0.5rem;
   font-size: 0.8rem;
   color: var(--muted);
@@ -1300,6 +1301,44 @@ body {
   color: var(--text);
 }
 .destroy-all-results {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--error);
+  font-size: 0.85rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.create-all {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.create-all-info {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+.create-all-progress {
+  margin: 0;
+  color: var(--muted);
+}
+.create-all-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.create-all-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.create-all-summary {
+  margin: 0;
+  color: var(--text);
+}
+.create-all-results {
   margin: 0;
   padding-left: 1.1rem;
   color: var(--error);

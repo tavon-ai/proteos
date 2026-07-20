@@ -10,9 +10,10 @@ import (
 // machines (possibly empty), seeding the SPA's first paint without a second
 // round-trip; the SSE stream then keeps the list live.
 type meResponse struct {
-	User     meUser           `json:"user"`
-	Prefs    userPrefs        `json:"prefs"`
-	Machines []MachineSummary `json:"machines"`
+	User         meUser           `json:"user"`
+	Prefs        userPrefs        `json:"prefs"`
+	Machines     []MachineSummary `json:"machines"`
+	MachineLimit int              `json:"machine_limit"`
 }
 
 type meUser struct {
@@ -59,8 +60,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			Email:     user.Email,
 			AvatarURL: user.AvatarUrl,
 		},
-		Prefs:    prefsView(user),
-		Machines: []MachineSummary{},
+		Prefs:        prefsView(user),
+		Machines:     []MachineSummary{},
+		MachineLimit: s.Machines.MaxPerUser(),
 	}
 	ms, err := s.Machines.List(r.Context(), user.ID)
 	if err != nil {

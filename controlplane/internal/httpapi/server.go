@@ -183,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/machines/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleRenameMachine))))
 	mux.Handle("DELETE /api/machines/{id}", s.requireAuth(s.csrfHeader(s.userLimit(s.machineRL, http.HandlerFunc(s.handleDestroyMachine)))))
 	mux.Handle("DELETE /api/machines", s.requireAuth(s.csrfHeader(s.userLimit(s.machineRL, http.HandlerFunc(s.handleDestroyAllMachines)))))
+	mux.Handle("POST /api/machines/fill", s.requireAuth(s.csrfHeader(s.userLimit(s.machineRL, http.HandlerFunc(s.handleCreateUpToLimit)))))
 	mux.Handle("POST /api/machines/{id}/start", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStartMachine))))
 	mux.Handle("POST /api/machines/{id}/stop", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleStopMachine))))
 	mux.Handle("GET /api/machine/events", s.requireAuth(http.HandlerFunc(s.handleMachineEvents)))

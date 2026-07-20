@@ -50,6 +50,8 @@ export interface Me {
   prefs: UserPrefs;
   // All of the user's machines (possibly empty), seeding the SPA's first paint.
   machines: MachineSummary[];
+  // The per-user machine cap (global, deployment-configured; currently 5).
+  machine_limit: number;
 }
 
 // MachineState mirrors the control-plane machines.state CHECK constraint.
@@ -107,6 +109,23 @@ export interface DestroyAllResponse {
   destroyed: number;
   failed: number;
   results: DestroyAllResult[];
+}
+
+// Per-machine outcome of a POST /api/machines/fill bulk create call. id/name
+// are omitted for a failed create (ok: false).
+export interface CreateAllResult {
+  id?: string;
+  name?: string;
+  ok: boolean;
+  error?: string;
+}
+
+// Summary returned by POST /api/machines/fill.
+export interface CreateAllResponse {
+  requested: number;
+  created: number;
+  failed: number;
+  results: CreateAllResult[];
 }
 
 // A machine's resource spec: pinned vCPUs, memory, and disk (MiB). Reached
@@ -646,6 +665,11 @@ export const api = {
   // with a per-machine breakdown even if some machines fail — it never rejects
   // on a partial failure (only on network/auth errors).
   destroyAllMachines: () => request<DestroyAllResponse>('/api/machines', { method: 'DELETE' }),
+  // POST /api/machines/fill creates machines (default template/specs) until the
+  // account reaches its machine_limit. Always resolves with a per-machine
+  // breakdown even if some creates fail — it never rejects on a partial
+  // failure (only on network/auth errors). Requested: 0 when already at limit.
+  createUpToLimit: () => request<CreateAllResponse>('/api/machines/fill', { method: 'POST' }),
   renameMachine: (id: string, name: string) =>
     request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}`, {
       method: 'PATCH',

@@ -498,3 +498,102 @@ func TestDestroyAllMachines_RequiresCSRF(t *testing.T) {
 		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
 	}
 }
+
+// ─── handleCreateUpToLimit ──────────────────────────────────────────────────
+
+func TestCreateUpToLimit_200(t *testing.T) {
+	t.Parallel()
+	// setupMach seeds one machine, so with the default cap (5) four more
+	// should be created to fill the account.
+	fx := setupMach(t, string(machine.StateStopped))
+	resp := fx.doMach(t, http.MethodPost, "/api/machines/fill", "", true, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out httpapi.CreateAllResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Requested != 4 || out.Created != 4 || out.Failed != 0 || len(out.Results) != 4 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	for _, res := range out.Results {
+		if !res.Ok || res.ID == "" || res.Name == "" {
+			t.Fatalf("unexpected result: %+v", res)
+		}
+	}
+
+	// The account is now at the cap.
+	list := fx.doMach(t, http.MethodGet, "/api/machines", "", true, false)
+	defer list.Body.Close()
+	var ms []httpapi.MachineSummary
+	if err := json.NewDecoder(list.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(ms) != 5 {
+		t.Fatalf("machines after fill = %d, want 5", len(ms))
+	}
+}
+
+func TestCreateUpToLimit_200AlreadyAtLimit(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateStopped))
+	// Fill to the cap first.
+	first := fx.doMach(t, http.MethodPost, "/api/machines/fill", "", true, true)
+	first.Body.Close()
+
+	resp := fx.doMach(t, http.MethodPost, "/api/machines/fill", "", true, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out httpapi.CreateAllResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Requested != 0 || out.Created != 0 || out.Failed != 0 || len(out.Results) != 0 {
+		t.Fatalf("unexpected response when already at limit: %+v", out)
+	}
+}
+
+func TestCreateUpToLimit_RequiresCSRF(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateStopped))
+	resp := fx.doMach(t, http.MethodPost, "/api/machines/fill", "", true, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
+	}
+}
+
+func TestMe_ExposesMachineLimit(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateStopped))
+	resp := fx.doMach(t, http.MethodGet, "/api/me", "", true, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		MachineLimit int `json:"machine_limit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// setupMach wires machine.Spec{} (MaxPerUser unset), so the effective cap is
+	// the package default (5).
+	if out.MachineLimit != 5 {
+		t.Fatalf("machine_limit = %d, want 5", out.MachineLimit)
+	}
+}
+
+func TestCreateUpToLimit_RequiresAuth(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateStopped))
+	resp := fx.doMach(t, http.MethodPost, "/api/machines/fill", "", false, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
