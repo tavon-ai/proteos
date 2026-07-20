@@ -279,6 +279,61 @@ func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DestroyAllResult is the per-machine outcome reported by DELETE /api/machines.
+type DestroyAllResult struct {
+	ID    string  `json:"id"`
+	Name  string  `json:"name"`
+	Ok    bool    `json:"ok"`
+	Error *string `json:"error,omitempty"`
+}
+
+// DestroyAllResponse summarizes a bulk destroy-all-machines call.
+type DestroyAllResponse struct {
+	Total     int                `json:"total"`
+	Destroyed int                `json:"destroyed"`
+	Failed    int                `json:"failed"`
+	Results   []DestroyAllResult `json:"results"`
+}
+
+// handleDestroyAllMachines tears down and removes every machine the user owns.
+// Always 200 (even with zero machines), with a per-machine breakdown of
+// success/failure in the body — a partial failure does not fail the request.
+// Irreversible, same as handleDestroyMachine.
+func (s *Server) handleDestroyAllMachines(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	results, err := s.Machines.DestroyAll(r.Context(), user.ID)
+	if err != nil {
+		slog.Error("destroy all machines failed", "err", err, "user", user.ID)
+		writeError(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	uid := uuidString(user.ID)
+	resp := DestroyAllResponse{Total: len(results), Results: make([]DestroyAllResult, 0, len(results))}
+	for _, res := range results {
+		out := DestroyAllResult{ID: machine.UUIDString(res.MachineID), Name: res.Name, Ok: res.Err == nil}
+		if res.Err != nil {
+			resp.Failed++
+			msg := res.Err.Error()
+			out.Error = &msg
+			slog.Error("destroy-all: machine destroy failed", "err", res.Err, "user", user.ID, "machine", out.ID)
+		} else {
+			resp.Destroyed++
+			s.Audit.Record(r.Context(), audit.Entry{
+				UserID: uid,
+				Actor:  audit.UserActor(uid),
+				Action: audit.ActionMachineDestroy,
+				Target: out.ID,
+			})
+		}
+		resp.Results = append(resp.Results, out)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // machineMutation factors the shared shape of start/stop: auth, parse the {id}
 // path value, run op (which ownership-checks), map ErrNoMachine→404,
 // ErrInvalidState→409, else 202 with the summary. action is the audit constant

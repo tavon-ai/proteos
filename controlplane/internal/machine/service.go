@@ -446,6 +446,31 @@ func (s *Service) Destroy(ctx context.Context, userID, machineID pgtype.UUID) er
 	return nil
 }
 
+// DestroyResult reports the outcome of destroying a single machine as part of
+// a DestroyAll batch.
+type DestroyResult struct {
+	MachineID pgtype.UUID
+	Name      string
+	Err       error
+}
+
+// DestroyAll destroys every machine the user owns, one at a time, continuing
+// past individual failures so one bad machine doesn't block the rest. Safe to
+// call with zero machines (returns an empty slice). Callers that need an
+// audit trail should record one entry per successful result.
+func (s *Service) DestroyAll(ctx context.Context, userID pgtype.UUID) ([]DestroyResult, error) {
+	ms, err := s.q.ListMachinesByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]DestroyResult, 0, len(ms))
+	for _, m := range ms {
+		err := s.Destroy(ctx, userID, m.ID)
+		results = append(results, DestroyResult{MachineID: m.ID, Name: m.Name, Err: err})
+	}
+	return results, nil
+}
+
 // Rename sets a machine's display name and publishes the change so the switcher
 // updates live. Missing or foreign machine ⇒ ErrNoMachine. The rename is a
 // metadata-only update (no state transition, no audit event).

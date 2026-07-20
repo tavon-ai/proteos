@@ -9,6 +9,7 @@ import {
   type CloneTarget,
   type CreateMachineInput,
   type CreateTaskInput,
+  type DestroyAllResponse,
   type LogSource,
   type MachineDestroyedData,
   type MachineEvent,
@@ -136,6 +137,25 @@ export function useMachineMutations() {
     onSuccess: (_void, id) => removeMachine(qc, id),
   });
   return { create, start, stop, rename, destroy };
+}
+
+// useDestroyAllMachines wraps DELETE /api/machines. Successfully destroyed
+// machines are dropped from the cache immediately (mirroring the single-machine
+// destroy mutation); machines that failed to destroy are left in place. The SSE
+// `destroyed` event does the same removal independently and in real time as the
+// backend works through the list, so callers can read the live cache to show
+// per-machine progress while the request is in flight.
+export function useDestroyAllMachines() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.destroyAllMachines(),
+    onSuccess: (res: DestroyAllResponse) => {
+      const destroyedIds = new Set(res.results.filter((r) => r.ok).map((r) => r.id));
+      qc.setQueryData<MachineSummary[]>(machinesKey, (prev = []) =>
+        prev.filter((m) => !destroyedIds.has(m.id)),
+      );
+    },
+  });
 }
 
 // providersKey is the query cache key for the provider registry + key_set view.

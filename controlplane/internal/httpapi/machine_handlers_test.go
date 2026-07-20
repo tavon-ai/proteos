@@ -437,3 +437,64 @@ func TestDestroyMachine_RequiresCSRF(t *testing.T) {
 		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
 	}
 }
+
+// ─── handleDestroyAllMachines ───────────────────────────────────────────────
+
+func TestDestroyAllMachines_200(t *testing.T) {
+	t.Parallel()
+	fx := setupMachMulti(t)
+	resp := fx.doMach(t, http.MethodDelete, "/api/machines", "", true, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out httpapi.DestroyAllResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Total != 2 || out.Destroyed != 2 || out.Failed != 0 || len(out.Results) != 2 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+
+	// The list is now empty.
+	list := fx.doMach(t, http.MethodGet, "/api/machines", "", true, false)
+	defer list.Body.Close()
+	var ms []httpapi.MachineSummary
+	if err := json.NewDecoder(list.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(ms) != 0 {
+		t.Fatalf("machines remaining = %d, want 0", len(ms))
+	}
+}
+
+func TestDestroyAllMachines_200Empty(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateStopped))
+	// Destroy the one seeded machine first so the account has zero machines.
+	first := fx.doMach(t, http.MethodDelete, "/api/machines/"+fx.mid, "", true, true)
+	first.Body.Close()
+
+	resp := fx.doMach(t, http.MethodDelete, "/api/machines", "", true, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var out httpapi.DestroyAllResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Total != 0 || out.Destroyed != 0 || out.Failed != 0 || len(out.Results) != 0 {
+		t.Fatalf("unexpected response for empty account: %+v", out)
+	}
+}
+
+func TestDestroyAllMachines_RequiresCSRF(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateStopped))
+	resp := fx.doMach(t, http.MethodDelete, "/api/machines", "", true, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
+	}
+}
