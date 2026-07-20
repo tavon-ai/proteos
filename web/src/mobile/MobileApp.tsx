@@ -42,7 +42,7 @@ export function MobileApp({ me }: { me: Me }) {
     <div className="m-app">
       <div className="m-panes">
         <div className={`m-pane${tab === 'machines' ? '' : ' is-hidden'}`}>
-          <MachinesScreen machines={machines.data ?? []} />
+          <MachinesScreen machines={machines.data ?? []} machineLimit={me.machine_limit} />
         </div>
         <div className={`m-pane${tab === 'review' ? '' : ' is-hidden'}`}>
           <ReviewScreen

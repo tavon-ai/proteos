@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { type MachineState } from '../api/client';
-import { useMachineMutations, useProjects, useTemplates } from '../api/hooks';
+import { useMachineMutations, useMe, useProjects, useTemplates } from '../api/hooks';
 import { useSelectedMachine } from './selectedMachineStore';
 import { useWindowManager } from './windowManagerContext';
 import { focusedWindow } from './windowState';
 import { useClickOutside } from './useClickOutside';
 import { CreateMachineDialog } from './CreateMachineDialog';
+import { CreateUpToLimitDialog } from './CreateUpToLimitDialog';
 import { DestroyAllDialog } from './DestroyAllDialog';
 import { MachineDetails } from './MachineDetails';
+
+// FALLBACK_MACHINE_LIMIT mirrors the control plane's own default (see
+// defaultMaxPerUser in controlplane/internal/machine/service.go) and is used
+// only for the instant before /api/me's real machine_limit has loaded.
+const FALLBACK_MACHINE_LIMIT = 5;
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
   'requested',
@@ -56,8 +62,12 @@ function MachinePill() {
   const { machines, selected, selectedId, setSelectedId } = useSelectedMachine();
   const { start, stop, destroy, rename } = useMachineMutations();
   const { data: templates = [] } = useTemplates();
+  const { data: me } = useMe();
+  const machineLimit = me?.machine_limit ?? FALLBACK_MACHINE_LIMIT;
   const [open, setOpen] = useState(false);
-  const [modal, setModal] = useState<'none' | 'create' | 'details' | 'destroy-all'>('none');
+  const [modal, setModal] = useState<'none' | 'create' | 'details' | 'destroy-all' | 'create-all'>(
+    'none',
+  );
   const wrapRef = useRef<HTMLDivElement | null>(null);
   useClickOutside(open, [wrapRef], () => setOpen(false));
 
@@ -158,6 +168,20 @@ function MachinePill() {
           >
             + New machine
           </button>
+          {machines.length < machineLimit ? (
+            <button
+              className="machine-menu-action"
+              onClick={() => {
+                setModal('create-all');
+                setOpen(false);
+              }}
+            >
+              Create {machineLimit - machines.length} machine
+              {machineLimit - machines.length === 1 ? '' : 's'}…
+            </button>
+          ) : (
+            <div className="machine-menu-hint">At your machine limit ({machineLimit})</div>
+          )}
           {machines.length > 0 && (
             <button
               className="machine-menu-action machine-menu-danger"
@@ -223,6 +247,13 @@ function MachinePill() {
       )}
       {modal === 'destroy-all' && (
         <DestroyAllDialog machines={machines} onClose={() => setModal('none')} />
+      )}
+      {modal === 'create-all' && (
+        <CreateUpToLimitDialog
+          machines={machines}
+          limit={machineLimit}
+          onClose={() => setModal('none')}
+        />
       )}
     </div>
   );

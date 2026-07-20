@@ -7,6 +7,7 @@ import {
   SessionExpiredError,
   taskEventsUrl,
   type CloneTarget,
+  type CreateAllResponse,
   type CreateMachineInput,
   type CreateTaskInput,
   type DestroyAllResponse,
@@ -155,6 +156,19 @@ export function useDestroyAllMachines() {
         prev.filter((m) => !destroyedIds.has(m.id)),
       );
     },
+  });
+}
+
+// useCreateUpToLimit wraps POST /api/machines/fill. The bulk response only
+// carries id/name/ok per machine, not the full MachineSummary a cache upsert
+// needs, so on success the machines list is refetched instead (the SSE stream
+// also upserts each created machine live, but a refetch guarantees the list is
+// current the moment the dialog shows its result, independent of SSE timing).
+export function useCreateUpToLimit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.createUpToLimit(),
+    onSuccess: (_res: CreateAllResponse) => qc.invalidateQueries({ queryKey: machinesKey }),
   });
 }
 

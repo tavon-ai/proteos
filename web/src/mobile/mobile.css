@@ -408,6 +408,10 @@
   font-weight: 600;
 }
 
+.m-new-btn:disabled {
+  opacity: 0.5;
+}
+
 .m-header-actions {
   display: flex;
   align-items: center;

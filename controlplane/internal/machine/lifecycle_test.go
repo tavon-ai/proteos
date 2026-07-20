@@ -479,6 +479,110 @@ func TestMachineLimit(t *testing.T) {
 	}
 }
 
+func TestCreateUpToLimit_FillsFromEmpty(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	results, err := h.svc.CreateUpToLimit(ctx, h.userID)
+	if err != nil {
+		t.Fatalf("CreateUpToLimit: %v", err)
+	}
+	if len(results) != harnessMaxPerUser {
+		t.Fatalf("results = %d, want %d", len(results), harnessMaxPerUser)
+	}
+	for i, res := range results {
+		if res.Err != nil {
+			t.Fatalf("result %d: unexpected error %v", i, res.Err)
+		}
+	}
+	ms, err := h.svc.List(ctx, h.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != harnessMaxPerUser {
+		t.Fatalf("machines after fill = %d, want %d", len(ms), harnessMaxPerUser)
+	}
+}
+
+func TestCreateUpToLimit_PartialFill(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Pre-create one machine, so the fill only needs harnessMaxPerUser-1 more.
+	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	results, err := h.svc.CreateUpToLimit(ctx, h.userID)
+	if err != nil {
+		t.Fatalf("CreateUpToLimit: %v", err)
+	}
+	if len(results) != harnessMaxPerUser-1 {
+		t.Fatalf("results = %d, want %d", len(results), harnessMaxPerUser-1)
+	}
+	ms, err := h.svc.List(ctx, h.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != harnessMaxPerUser {
+		t.Fatalf("machines after fill = %d, want %d", len(ms), harnessMaxPerUser)
+	}
+}
+
+func TestCreateUpToLimit_AlreadyAtLimit(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	for i := 0; i < harnessMaxPerUser; i++ {
+		if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
+			t.Fatalf("create %d: %v", i+1, err)
+		}
+	}
+	results, err := h.svc.CreateUpToLimit(ctx, h.userID)
+	if err != nil {
+		t.Fatalf("CreateUpToLimit: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results = %d, want 0 (already at limit)", len(results))
+	}
+}
+
+func TestCreateUpToLimit_PartialFailureStopsAtLimit(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// The agent fails every ensure call, so every Create still succeeds in
+	// creating a row (Create returns the errored machine, not an error) —
+	// CreateUpToLimit should therefore report harnessMaxPerUser successes with
+	// no Err set, since agent failure is surfaced via the machine's own error
+	// state rather than as a Create error. Confirm the batch still stops
+	// exactly at the cap and doesn't loop forever.
+	h.agent.failEnsure = true
+
+	results, err := h.svc.CreateUpToLimit(ctx, h.userID)
+	if err != nil {
+		t.Fatalf("CreateUpToLimit: %v", err)
+	}
+	if len(results) != harnessMaxPerUser {
+		t.Fatalf("results = %d, want %d", len(results), harnessMaxPerUser)
+	}
+	for i, res := range results {
+		if res.Err != nil {
+			t.Fatalf("result %d: unexpected error %v", i, res.Err)
+		}
+		if res.Machine.State != string(machine.StateError) {
+			t.Fatalf("result %d: state = %q, want error (agent ensure failed)", i, res.Machine.State)
+		}
+	}
+	// A further call is a no-op: the account is already at the cap.
+	more, err := h.svc.CreateUpToLimit(ctx, h.userID)
+	if err != nil {
+		t.Fatalf("CreateUpToLimit (2nd): %v", err)
+	}
+	if len(more) != 0 {
+		t.Fatalf("2nd fill results = %d, want 0", len(more))
+	}
+}
+
 func TestOwnershipRejected(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

@@ -1,11 +1,17 @@
 import { useRef, useState } from 'react';
 import type {
+  CreateAllResponse,
   DestroyAllResponse,
   MachineState,
   MachineSummary,
   MachineTemplate,
 } from '../api/client';
-import { useDestroyAllMachines, useMachineMutations, useTemplates } from '../api/hooks';
+import {
+  useCreateUpToLimit,
+  useDestroyAllMachines,
+  useMachineMutations,
+  useTemplates,
+} from '../api/hooks';
 import { CloseIcon, PlayIcon, StopIcon } from './icons';
 
 // Transitional states render an amber dot + spinner instead of a control.
@@ -46,10 +52,19 @@ function stateLabel(state: MachineState): string {
 
 // MachinesScreen is the glance-and-toggle surface: live machine cards with one
 // start/stop control each, plus the full-screen create sheet.
-export function MachinesScreen({ machines }: { machines: MachineSummary[] }) {
+export function MachinesScreen({
+  machines,
+  machineLimit,
+}: {
+  machines: MachineSummary[];
+  machineLimit: number;
+}) {
   const { start, stop } = useMachineMutations();
   const [creating, setCreating] = useState(false);
   const [destroyingAll, setDestroyingAll] = useState(false);
+  const [creatingAll, setCreatingAll] = useState(false);
+  const atLimit = machines.length >= machineLimit;
+  const toCreate = Math.max(0, machineLimit - machines.length);
 
   return (
     <div className="m-screen">
@@ -66,6 +81,16 @@ export function MachinesScreen({ machines }: { machines: MachineSummary[] }) {
               Destroy All
             </button>
           )}
+          <button
+            type="button"
+            className="m-new-btn"
+            aria-label={`Create ${toCreate} machines`}
+            onClick={() => setCreatingAll(true)}
+            disabled={atLimit}
+            title={atLimit ? `At your machine limit (${machineLimit})` : undefined}
+          >
+            +{toCreate}
+          </button>
           <button type="button" className="m-new-btn" onClick={() => setCreating(true)}>
             ＋ New
           </button>
@@ -89,6 +114,13 @@ export function MachinesScreen({ machines }: { machines: MachineSummary[] }) {
       {creating && <CreateMachineSheet onClose={() => setCreating(false)} />}
       {destroyingAll && (
         <DestroyAllSheet machines={machines} onClose={() => setDestroyingAll(false)} />
+      )}
+      {creatingAll && (
+        <CreateUpToLimitSheet
+          machines={machines}
+          limit={machineLimit}
+          onClose={() => setCreatingAll(false)}
+        />
       )}
     </div>
   );
@@ -176,6 +208,114 @@ function DestroyAllSheet({
                   .map((r) => (
                     <li key={r.id} className="m-error">
                       {r.name}: {r.error ?? 'unknown error'}
+                    </li>
+                  ))}
+              </ul>
+            )}
+            <button type="button" className="m-primary-btn" onClick={onClose}>
+              Done
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// CreateUpToLimitSheet is the mobile guarded bulk-create flow: an explicit
+// confirmation step naming how many machines will be created, live progress
+// as they come up, then a per-machine success/failure summary — the same
+// shape as the desktop CreateUpToLimitDialog, restyled as a full-screen sheet.
+// Progress is read off the live machines list, which SSE `machine` events grow
+// in real time as the backend works through the batch.
+function CreateUpToLimitSheet({
+  machines,
+  limit,
+  onClose,
+}: {
+  machines: MachineSummary[];
+  limit: number;
+  onClose: () => void;
+}) {
+  const createAll = useCreateUpToLimit();
+  const [step, setStep] = useState<'confirm' | 'running' | 'done'>('confirm');
+  const [result, setResult] = useState<CreateAllResponse | null>(null);
+  const startCountRef = useRef(machines.length);
+  const totalRef = useRef(Math.max(0, limit - machines.length));
+
+  const toCreate = Math.max(0, limit - machines.length);
+  // Clamped to totalRef.current: machines.length can grow for reasons unrelated
+  // to this batch (another tab creating a machine mid-run), which must not push
+  // the progress display past its own total.
+  const createdSoFar = Math.min(
+    Math.max(0, machines.length - startCountRef.current),
+    totalRef.current,
+  );
+  const inFlight = Math.min(createdSoFar + 1, totalRef.current);
+
+  const onConfirm = () => {
+    startCountRef.current = machines.length;
+    totalRef.current = toCreate;
+    setStep('running');
+    createAll.mutate(undefined, {
+      onSuccess: (res) => {
+        setResult(res);
+        setStep('done');
+      },
+      onError: () => setStep('confirm'),
+    });
+  };
+
+  return (
+    <div className="m-sheet" role="dialog" aria-modal="true" aria-label="Create machines">
+      <header className="m-header m-header-row">
+        <h1 className="m-title">Create machines</h1>
+        {step !== 'running' && (
+          <button type="button" className="m-icon-btn" aria-label="Close" onClick={onClose}>
+            <CloseIcon size={20} />
+          </button>
+        )}
+      </header>
+      <div className="m-body m-sheet-form">
+        {step === 'confirm' && (
+          <>
+            <p>
+              {toCreate > 0
+                ? `This will create ${toCreate} machine${toCreate === 1 ? '' : 's'} using the default template, filling your account up to its limit of ${limit}.`
+                : `You already have ${machines.length} machine${machines.length === 1 ? '' : 's'}, at your limit of ${limit}.`}
+            </p>
+            {createAll.isError && (
+              <div className="m-error">Could not create machines. Please try again.</div>
+            )}
+            <button
+              type="button"
+              className="m-primary-btn"
+              onClick={onConfirm}
+              disabled={toCreate === 0}
+            >
+              Yes, create {toCreate} machine{toCreate === 1 ? '' : 's'}
+            </button>
+          </>
+        )}
+        {step === 'running' && (
+          <p>
+            Creating machine {inFlight}/{totalRef.current}…
+          </p>
+        )}
+        {step === 'done' && result && (
+          <>
+            <p>
+              Created {result.created} of {result.requested} machine
+              {result.requested === 1 ? '' : 's'}
+              {result.failed > 0 ? `, ${result.failed} failed` : ''}.
+            </p>
+            {result.failed > 0 && (
+              <ul>
+                {result.results
+                  .filter((r) => !r.ok)
+                  .map((r, i) => (
+                    <li key={r.id ?? i} className="m-error">
+                      {r.error ?? 'unknown error'}
                     </li>
                   ))}
               </ul>

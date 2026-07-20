@@ -128,6 +128,15 @@ func (s *Service) Limits() ResourceLimits {
 	return s.spec.Limits
 }
 
+// MaxPerUser returns the effective per-user machine cap: Spec.MaxPerUser, or
+// defaultMaxPerUser when unset (≤0).
+func (s *Service) MaxPerUser() int {
+	if s.spec.MaxPerUser <= 0 {
+		return defaultMaxPerUser
+	}
+	return s.spec.MaxPerUser
+}
+
 // OnlyMachine returns the user's machine iff they own exactly one. ErrNoMachine
 // if they have none; ErrAmbiguous if they have more than one (the caller must
 // then require an explicit machine id). Backs the gateway resolver's empty-param
@@ -249,11 +258,7 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 	if err != nil {
 		return store.Machine{}, fmt.Errorf("count machines: %w", err)
 	}
-	max := s.spec.MaxPerUser
-	if max <= 0 {
-		max = defaultMaxPerUser
-	}
-	if count >= int64(max) {
+	if count >= int64(s.MaxPerUser()) {
 		return store.Machine{}, ErrMachineLimit
 	}
 	name := opts.Name
@@ -467,6 +472,39 @@ func (s *Service) DestroyAll(ctx context.Context, userID pgtype.UUID) ([]Destroy
 	for _, m := range ms {
 		err := s.Destroy(ctx, userID, m.ID)
 		results = append(results, DestroyResult{MachineID: m.ID, Name: m.Name, Err: err})
+	}
+	return results, nil
+}
+
+// CreateResult reports the outcome of creating a single machine as part of a
+// CreateUpToLimit batch.
+type CreateResult struct {
+	Machine store.Machine
+	Err     error
+}
+
+// CreateUpToLimit creates machines (default template/specs, auto-named) one at a
+// time until the user reaches their per-user cap, continuing past individual
+// failures so one bad create doesn't block the rest. Safe to call when already
+// at or over the limit (returns an empty slice — nothing requested). Each
+// create re-checks the live count, so it naturally accounts for machines
+// created concurrently by another request.
+func (s *Service) CreateUpToLimit(ctx context.Context, userID pgtype.UUID) ([]CreateResult, error) {
+	count, err := s.q.CountMachinesByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("count machines: %w", err)
+	}
+	toCreate := int64(s.MaxPerUser()) - count
+	if toCreate <= 0 {
+		return nil, nil
+	}
+	results := make([]CreateResult, 0, toCreate)
+	for i := int64(0); i < toCreate; i++ {
+		m, err := s.Create(ctx, userID, CreateOptions{})
+		results = append(results, CreateResult{Machine: m, Err: err})
+		if errors.Is(err, ErrMachineLimit) {
+			break
+		}
 	}
 	return results, nil
 }
