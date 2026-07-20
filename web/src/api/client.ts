@@ -93,6 +93,22 @@ export interface MachineSummary {
   snapshot: SnapshotSummary | null;
 }
 
+// Per-machine outcome of a DELETE /api/machines bulk destroy call.
+export interface DestroyAllResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  error?: string;
+}
+
+// Summary returned by DELETE /api/machines.
+export interface DestroyAllResponse {
+  total: number;
+  destroyed: number;
+  failed: number;
+  results: DestroyAllResult[];
+}
+
 // A machine's resource spec: pinned vCPUs, memory, and disk (MiB). Reached
 // through MachineTemplate; not exported on its own.
 interface MachineResources {
@@ -626,6 +642,10 @@ export const api = {
     request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   destroyMachine: (id: string) =>
     request<void>(`/api/machines/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // DELETE /api/machines destroys every machine the user owns. Always resolves
+  // with a per-machine breakdown even if some machines fail — it never rejects
+  // on a partial failure (only on network/auth errors).
+  destroyAllMachines: () => request<DestroyAllResponse>('/api/machines', { method: 'DELETE' }),
   renameMachine: (id: string, name: string) =>
     request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}`, {
       method: 'PATCH',

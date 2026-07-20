@@ -1,6 +1,11 @@
-import { useState } from 'react';
-import type { MachineState, MachineSummary, MachineTemplate } from '../api/client';
-import { useMachineMutations, useTemplates } from '../api/hooks';
+import { useRef, useState } from 'react';
+import type {
+  DestroyAllResponse,
+  MachineState,
+  MachineSummary,
+  MachineTemplate,
+} from '../api/client';
+import { useDestroyAllMachines, useMachineMutations, useTemplates } from '../api/hooks';
 import { CloseIcon, PlayIcon, StopIcon } from './icons';
 
 // Transitional states render an amber dot + spinner instead of a control.
@@ -44,14 +49,27 @@ function stateLabel(state: MachineState): string {
 export function MachinesScreen({ machines }: { machines: MachineSummary[] }) {
   const { start, stop } = useMachineMutations();
   const [creating, setCreating] = useState(false);
+  const [destroyingAll, setDestroyingAll] = useState(false);
 
   return (
     <div className="m-screen">
       <header className="m-header m-header-row">
         <h1 className="m-title">Machines</h1>
-        <button type="button" className="m-new-btn" onClick={() => setCreating(true)}>
-          ＋ New
-        </button>
+        <div className="m-header-actions">
+          {machines.length > 0 && (
+            <button
+              type="button"
+              className="m-danger-btn"
+              aria-label="Destroy all machines"
+              onClick={() => setDestroyingAll(true)}
+            >
+              Destroy All
+            </button>
+          )}
+          <button type="button" className="m-new-btn" onClick={() => setCreating(true)}>
+            ＋ New
+          </button>
+        </div>
       </header>
       <div className="m-body">
         <div className="m-machine-list">
@@ -69,6 +87,105 @@ export function MachinesScreen({ machines }: { machines: MachineSummary[] }) {
         </div>
       </div>
       {creating && <CreateMachineSheet onClose={() => setCreating(false)} />}
+      {destroyingAll && (
+        <DestroyAllSheet machines={machines} onClose={() => setDestroyingAll(false)} />
+      )}
+    </div>
+  );
+}
+
+// DestroyAllSheet is the mobile guarded bulk-destroy flow: an explicit
+// acknowledgement step, live progress as machines are torn down, then a
+// per-machine success/failure summary — the same shape as the desktop
+// DestroyAllDialog, restyled as a full-screen sheet. Progress is read off the
+// live machines list, which the SSE `destroyed` event shrinks in real time as
+// the backend works through the batch.
+function DestroyAllSheet({
+  machines,
+  onClose,
+}: {
+  machines: MachineSummary[];
+  onClose: () => void;
+}) {
+  const destroyAll = useDestroyAllMachines();
+  const [step, setStep] = useState<'confirm' | 'running' | 'done'>('confirm');
+  const [result, setResult] = useState<DestroyAllResponse | null>(null);
+  const totalRef = useRef(machines.length);
+
+  const destroyedSoFar = Math.max(0, totalRef.current - machines.length);
+  const inFlight = Math.min(destroyedSoFar + 1, totalRef.current);
+
+  const onConfirm = () => {
+    totalRef.current = machines.length;
+    setStep('running');
+    destroyAll.mutate(undefined, {
+      onSuccess: (res) => {
+        setResult(res);
+        setStep('done');
+      },
+      onError: () => setStep('confirm'),
+    });
+  };
+
+  return (
+    <div className="m-sheet" role="dialog" aria-modal="true" aria-label="Destroy all machines">
+      <header className="m-header m-header-row">
+        <h1 className="m-title">Destroy all machines</h1>
+        {step !== 'running' && (
+          <button type="button" className="m-icon-btn" aria-label="Close" onClick={onClose}>
+            <CloseIcon size={20} />
+          </button>
+        )}
+      </header>
+      <div className="m-body m-sheet-form">
+        {step === 'confirm' && (
+          <>
+            <p>
+              This will permanently destroy all {machines.length} machine
+              {machines.length === 1 ? '' : 's'} on your account. Each machine&rsquo;s persistent
+              disk is wiped and cannot be recovered.
+            </p>
+            {destroyAll.isError && (
+              <div className="m-error">Could not destroy all machines. Please try again.</div>
+            )}
+            <button
+              type="button"
+              className="m-danger-btn m-danger-btn-block"
+              onClick={onConfirm}
+              disabled={machines.length === 0}
+            >
+              Yes, destroy all
+            </button>
+          </>
+        )}
+        {step === 'running' && (
+          <p>
+            Destroying machine {inFlight}/{totalRef.current}…
+          </p>
+        )}
+        {step === 'done' && result && (
+          <>
+            <p>
+              Destroyed {result.destroyed} of {result.total} machine{result.total === 1 ? '' : 's'}
+              {result.failed > 0 ? `, ${result.failed} failed` : ''}.
+            </p>
+            {result.failed > 0 && (
+              <ul>
+                {result.results
+                  .filter((r) => !r.ok)
+                  .map((r) => (
+                    <li key={r.id} className="m-error">
+                      {r.name}: {r.error ?? 'unknown error'}
+                    </li>
+                  ))}
+              </ul>
+            )}
+            <button type="button" className="m-primary-btn" onClick={onClose}>
+              Done
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

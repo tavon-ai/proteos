@@ -6,6 +6,7 @@ import { useWindowManager } from './windowManagerContext';
 import { focusedWindow } from './windowState';
 import { useClickOutside } from './useClickOutside';
 import { CreateMachineDialog } from './CreateMachineDialog';
+import { DestroyAllDialog } from './DestroyAllDialog';
 import { MachineDetails } from './MachineDetails';
 
 const TRANSITIONAL: ReadonlySet<MachineState> = new Set([
@@ -56,7 +57,7 @@ function MachinePill() {
   const { start, stop, destroy, rename } = useMachineMutations();
   const { data: templates = [] } = useTemplates();
   const [open, setOpen] = useState(false);
-  const [modal, setModal] = useState<'none' | 'create' | 'details'>('none');
+  const [modal, setModal] = useState<'none' | 'create' | 'details' | 'destroy-all'>('none');
   const wrapRef = useRef<HTMLDivElement | null>(null);
   useClickOutside(open, [wrapRef], () => setOpen(false));
 
@@ -157,6 +158,17 @@ function MachinePill() {
           >
             + New machine
           </button>
+          {machines.length > 0 && (
+            <button
+              className="machine-menu-action machine-menu-danger"
+              onClick={() => {
+                setModal('destroy-all');
+                setOpen(false);
+              }}
+            >
+              Destroy all machines ({machines.length})…
+            </button>
+          )}
           {selected && (
             <>
               <div className="machine-menu-sep" />
@@ -208,6 +220,9 @@ function MachinePill() {
       )}
       {modal === 'details' && selected && (
         <MachineDetails machine={selected} templates={templates} onClose={() => setModal('none')} />
+      )}
+      {modal === 'destroy-all' && (
+        <DestroyAllDialog machines={machines} onClose={() => setModal('none')} />
       )}
     </div>
   );
