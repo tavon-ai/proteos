@@ -35,7 +35,7 @@ export function DestroyAllDialog({
         setResult(res);
         setStep('done');
       },
-      onError: () => setStep('confirm'),
+      onError: () => setStep('confirm') ,
     });
   };
 
@@ -48,8 +48,8 @@ export function DestroyAllDialog({
         <div className="destroy-all">
           <p className="destroy-all-warning">
             This will permanently destroy all {machines.length} machine
-            {machines.length === 1 ? '' : 's'} on your account. Each machine&rsquo;s persistent
-            disk is wiped and cannot be recovered.
+            {machines.length === 1 ? '' : 's'} on your account. Each machine&rsquo;s persistent disk
+            is wiped and cannot be recovered.
           </p>
           {destroyAll.isError && (
             <div className="form-error">Could not destroy all machines. Please try again.</div>
@@ -75,7 +75,13 @@ export function DestroyAllDialog({
           <p className="destroy-all-progress">
             Destroying machine {inFlight}/{totalRef.current}…
           </p>
-          <div className="destroy-all-bar" role="progressbar" aria-valuemin={0} aria-valuemax={totalRef.current} aria-valuenow={destroyedSoFar}>
+          <div
+            className="destroy-all-bar"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={totalRef.current}
+            aria-valuenow={destroyedSoFar}
+          >
             <div
               className="destroy-all-bar-fill"
               style={{
