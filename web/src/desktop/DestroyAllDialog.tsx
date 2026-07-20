@@ -35,7 +35,7 @@ export function DestroyAllDialog({
         setResult(res);
         setStep('done');
       },
-      onError: () => setStep('confirm') ,
+      onError: () => setStep('confirm'),
     });
   };
 
