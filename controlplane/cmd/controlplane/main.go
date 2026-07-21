@@ -312,6 +312,10 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		Limits:     limits,
 	})
 	poller := machine.NewPoller(pool, nodes, broker)
+	// TAV-134: retry starting a newly created/started machine (up to
+	// poller.MaxStartRetries times) before giving up when it fails to become
+	// reachable, instead of erroring out on the first status-poll blip.
+	poller.SetRetryEnsure(machineSvc.RetryEnsure)
 
 	// Phase 5: the secret injector pushes provider keys into the guest. The
 	// poller fires it on every * → running transition (start and resume); the

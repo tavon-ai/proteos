@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -188,6 +189,7 @@ func newHarness(t *testing.T) *harness {
 		MaxPerUser: harnessMaxPerUser,
 	})
 	poller := machine.NewPoller(pool, nc, broker)
+	poller.SetRetryEnsure(svc.RetryEnsure)
 	return &harness{q: q, svc: svc, poller: poller, agent: agent, srv: srv, sec: sec, userID: user.ID}
 }
 
@@ -316,16 +318,153 @@ func TestAgentUnreachableDuringPollMovesToError(t *testing.T) {
 	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// Agent goes away before the poller can observe the boot completing.
+	// Agent goes away entirely before the poller can observe the boot
+	// completing: both the status poll and every retried start attempt fail, so
+	// the machine exhausts its start-retry budget (TAV-134) and gives up.
 	h.srv.Close()
-	h.poller.AdvanceTransitional(ctx)
+	for i := 0; i < machine.MaxStartRetries; i++ {
+		h.poller.AdvanceTransitional(ctx)
+	}
 
 	m := h.machine(t)
 	if m.State != string(machine.StateError) {
 		t.Fatalf("state=%q, want error after agent unreachable", m.State)
 	}
-	if m.LastError == nil {
+	if m.LastError == nil || *m.LastError == "" {
 		t.Fatalf("last_error not set on unreachable agent")
+	}
+}
+
+// TestStartRetryToleratesTransientUnreachable verifies TAV-134: a newly
+// created machine that fails a status poll is not immediately failed. Instead
+// the poller retries starting it (re-issuing ensure-running, exactly what a
+// manual "Start" click would do) for up to MaxStartRetries-1 tolerated misses,
+// and completes normally once the agent becomes reachable again.
+func TestStartRetryToleratesTransientUnreachable(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	idStr := machine.UUIDString(m.ID)
+	ensureCallsAfterCreate := h.agent.ensureCalls
+
+	// The status endpoint blips for a few polls (e.g. a slow boot causing the
+	// GET to time out); the ensure endpoint stays reachable.
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+
+	for i := 0; i < machine.MaxStartRetries-1; i++ {
+		h.poller.AdvanceTransitional(ctx)
+		if got := h.machine(t).State; got != string(machine.StateProvisioning) {
+			t.Fatalf("poll %d/%d: state=%q, want provisioning (retry should be tolerated)", i+1, machine.MaxStartRetries-1, got)
+		}
+	}
+	// Each tolerated miss should have retried the start by re-issuing ensure.
+	wantEnsureCalls := ensureCallsAfterCreate + (machine.MaxStartRetries - 1)
+	if got := h.agent.ensureCalls; got != wantEnsureCalls {
+		t.Fatalf("ensure calls = %d, want %d (initial create + %d retries)", got, wantEnsureCalls, machine.MaxStartRetries-1)
+	}
+
+	// The agent recovers and reports running: the machine completes normally,
+	// same as if it had never blipped.
+	h.agent.mu.Lock()
+	h.agent.failStatus = false
+	h.agent.mu.Unlock()
+	h.agent.SetStatus(idStr, agentapi.StateRunning, "", "172.30.0.2")
+	h.poller.AdvanceTransitional(ctx)
+	if got := h.machine(t).State; got != string(machine.StateRunning) {
+		t.Fatalf("after recovery poll state=%q, want running", got)
+	}
+}
+
+// TestStartRetryGivesUpAfterMaxAttempts verifies TAV-134's give-up path: once a
+// provisioning machine has failed MaxStartRetries consecutive status polls, the
+// poller stops retrying and moves it to error with a message that points the
+// user at the manual recovery path (clicking Start).
+func TestStartRetryGivesUpAfterMaxAttempts(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+
+	for i := 0; i < machine.MaxStartRetries-1; i++ {
+		h.poller.AdvanceTransitional(ctx)
+		if got := h.machine(t).State; got != string(machine.StateProvisioning) {
+			t.Fatalf("poll %d: state=%q, want still provisioning before the budget is exhausted", i+1, got)
+		}
+	}
+	// The threshold-th consecutive failure gives up.
+	h.poller.AdvanceTransitional(ctx)
+	m := h.machine(t)
+	if m.State != string(machine.StateError) {
+		t.Fatalf("after %d consecutive failures state=%q, want error", machine.MaxStartRetries, m.State)
+	}
+	if m.LastError == nil || !strings.Contains(*m.LastError, "start attempts") {
+		t.Fatalf("last_error = %v, want a message mentioning the exhausted start attempts", m.LastError)
+	}
+}
+
+// TestStartRetryCounterResets verifies the start-retry counter is cleared once
+// the agent answers again, so a recovered blip never accumulates toward the
+// threshold across separate incidents (mirrors the running-sweep blip-reset
+// guarantee).
+func TestStartRetryCounterResets(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	idStr := machine.UUIDString(m.ID)
+
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+	for i := 0; i < machine.MaxStartRetries-1; i++ {
+		h.poller.AdvanceTransitional(ctx)
+	}
+	if got := h.machine(t).State; got != string(machine.StateProvisioning) {
+		t.Fatalf("after %d misses state=%q, want provisioning", machine.MaxStartRetries-1, got)
+	}
+
+	// One healthy poll resets the counter without yet reaching running.
+	h.agent.mu.Lock()
+	h.agent.failStatus = false
+	h.agent.mu.Unlock()
+	h.poller.AdvanceTransitional(ctx) // agent reports StateCreating (still booting)
+	if got := h.machine(t).State; got != string(machine.StateProvisioning) {
+		t.Fatalf("after recovery poll state=%q, want still provisioning (still booting)", got)
+	}
+
+	// A fresh incident of MaxStartRetries-1 misses must again be tolerated.
+	h.agent.mu.Lock()
+	h.agent.failStatus = true
+	h.agent.mu.Unlock()
+	for i := 0; i < machine.MaxStartRetries-1; i++ {
+		h.poller.AdvanceTransitional(ctx)
+		if got := h.machine(t).State; got != string(machine.StateProvisioning) {
+			t.Fatalf("second incident poll %d: state=%q, want provisioning", i+1, got)
+		}
+	}
+
+	// Let it finish booting to confirm the machine is still fully functional.
+	h.agent.mu.Lock()
+	h.agent.failStatus = false
+	h.agent.mu.Unlock()
+	h.agent.SetStatus(idStr, agentapi.StateRunning, "", "172.30.0.2")
+	h.poller.AdvanceTransitional(ctx)
+	if got := h.machine(t).State; got != string(machine.StateRunning) {
+		t.Fatalf("after final poll state=%q, want running", got)
 	}
 }
 

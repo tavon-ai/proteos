@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"sync"
@@ -28,6 +29,15 @@ const (
 	// blip (one sweep cycle ≈ 30 s) is tolerated; three consecutive misses
 	// (≈ 90 s) constitute a real outage.
 	BlipThreshold = 3
+
+	// MaxStartRetries bounds how many times the poller retries starting a
+	// machine stuck in provisioning/starting after a status-poll failure
+	// (TAV-134) — e.g. "node-agent unreachable: ... context deadline exceeded"
+	// on a machine that was, in fact, created successfully. Each retry
+	// re-issues the same ensure-running request a manual "Start" click would
+	// send. Once the budget is exhausted the machine is moved to error so the
+	// user can retry manually.
+	MaxStartRetries = 3
 )
 
 // Poller advances asynchronous machine operations by reconciling the
@@ -52,17 +62,43 @@ type Poller struct {
 	// during the running sweep. Entries are removed when the machine is healthy
 	// or after it transitions out of running.
 	blipCount map[string]int
+
+	// retryEnsure, if set, re-issues the node-agent ensure-running call for a
+	// machine stuck in provisioning/starting (TAV-134). Wired to
+	// Service.RetryEnsure; nil just skips the re-issue (the retry budget is
+	// still counted down, so the machine still eventually errors out).
+	retryEnsure func(ctx context.Context, m store.Machine) error
+
+	// startRetryMu guards startRetryCount.
+	startRetryMu sync.Mutex
+	// startRetryCount tracks consecutive status-poll failures per machine ID
+	// while provisioning/starting (TAV-134) — separate from blipCount, which
+	// only applies to the running sweep. Entries are removed once the machine
+	// is reachable again or gives up (moves to error).
+	startRetryCount map[string]int
 }
 
 // NewPoller builds a poller. broker may be nil.
 func NewPoller(pool *pgxpool.Pool, nodes NodeClient, broker *Broker) *Poller {
-	return &Poller{pool: pool, q: store.New(pool), nodes: nodes, broker: broker, blipCount: make(map[string]int)}
+	return &Poller{
+		pool: pool, q: store.New(pool), nodes: nodes, broker: broker,
+		blipCount:       make(map[string]int),
+		startRetryCount: make(map[string]int),
+	}
 }
 
 // SetOnRunning registers the post-running hook (Phase 5 secret injection). Pass
 // nil to disable. The callback must return promptly — do the work async.
 func (p *Poller) SetOnRunning(fn func(userID, machineID string)) {
 	p.onRunning = fn
+}
+
+// SetRetryEnsure registers the callback the poller uses to retry starting a
+// machine that fails to become reachable while provisioning/starting (TAV-134).
+// Pass nil to disable retrying the agent call (the retry budget is still
+// enforced, so the machine still errors out after MaxStartRetries polls).
+func (p *Poller) SetRetryEnsure(fn func(ctx context.Context, m store.Machine) error) {
+	p.retryEnsure = fn
 }
 
 // Run drives the poller until ctx is cancelled: a fast tick advances
@@ -181,9 +217,20 @@ func (p *Poller) advanceOne(ctx context.Context, m store.Machine) {
 			p.toError(ctx, m, from, "node-agent no longer tracks this machine")
 			return
 		}
+		if from == StateProvisioning || from == StateStarting {
+			// TAV-134: a newly created/started machine that isn't reachable yet is
+			// often just a transient node-agent blip (e.g. a slow boot causing the
+			// status GET to time out), not a real failure — retry the start instead
+			// of erroring on the first miss.
+			p.retryStart(ctx, m, from, err)
+			return
+		}
 		p.toError(ctx, m, from, "node-agent unreachable: "+err.Error())
 		return
 	}
+	// The agent answered: any earlier start-retry attempts for this machine no
+	// longer apply.
+	p.startRetryReset(id)
 
 	switch from {
 	case StateProvisioning, StateStarting:
@@ -280,6 +327,49 @@ func (p *Poller) blipReset(id string) {
 	p.blipMu.Lock()
 	defer p.blipMu.Unlock()
 	delete(p.blipCount, id)
+}
+
+// retryStart handles a status-poll failure for a machine that is provisioning
+// or starting (TAV-134). Rather than erroring out on the first unreachable
+// poll, it counts the attempt, logs it, and — while budget remains — re-issues
+// the ensure-running request (the same call a manual "Start" click makes) so a
+// transient blip during boot doesn't strand an otherwise-healthy machine.
+// Giving up (after MaxStartRetries attempts) moves the machine to error with a
+// message that makes the manual recovery path (click Start) obvious.
+func (p *Poller) retryStart(ctx context.Context, m store.Machine, from State, pollErr error) {
+	id := UUIDString(m.ID)
+	attempt := p.startRetryIncr(id)
+	slog.Warn("poller: node-agent unreachable while advancing new machine, retrying start",
+		"machine", id, "attempt", attempt, "max_attempts", MaxStartRetries, "err", pollErr)
+
+	if attempt >= MaxStartRetries {
+		p.startRetryReset(id)
+		p.toError(ctx, m, from, fmt.Sprintf(
+			"machine did not become reachable after %d start attempts: %s", MaxStartRetries, pollErr.Error()))
+		return
+	}
+	if p.retryEnsure == nil {
+		return
+	}
+	if err := p.retryEnsure(ctx, m); err != nil {
+		slog.Warn("poller: retry start failed, will retry again on next poll", "machine", id, "attempt", attempt, "err", err)
+	}
+}
+
+// startRetryIncr increments and returns the consecutive status-poll-failure
+// count for id (provisioning/starting only).
+func (p *Poller) startRetryIncr(id string) int {
+	p.startRetryMu.Lock()
+	defer p.startRetryMu.Unlock()
+	p.startRetryCount[id]++
+	return p.startRetryCount[id]
+}
+
+// startRetryReset clears the consecutive status-poll-failure count for id.
+func (p *Poller) startRetryReset(id string) {
+	p.startRetryMu.Lock()
+	defer p.startRetryMu.Unlock()
+	delete(p.startRetryCount, id)
 }
 
 // toError moves a machine to the error state with a reason, recorded in both
