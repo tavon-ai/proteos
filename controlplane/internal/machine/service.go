@@ -532,17 +532,13 @@ func (s *Service) Rename(ctx context.Context, userID, machineID pgtype.UUID, nam
 	return m, nil
 }
 
-// ensureOnAgent issues the agent ensure-running for a machine already moved to a
-// transitional state (provisioning or starting). On agent failure it moves the
-// machine to error; on success it records the returned handle and leaves the
-// machine transitional for the poller to advance to running.
-func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (store.Machine, error) {
-	id := UUIDString(m.ID)
-
-	// Phase 4: deliver the disk and the volume key on every ensure (the only
-	// call that needs the key — for luksOpen). The key is fetched fresh from the
-	// secret store and never logged.
-	//
+// buildEnsureRequest assembles the agent ensure-running request for m: the
+// resource shape (template/spec, falling back to the global Spec for legacy
+// rows), the Phase 4 disk + volume key (fetched fresh from the secret store and
+// never logged), and the TAV-116 network policy. Shared by ensureOnAgent (the
+// initial ensure at create/start) and RetryEnsure (TAV-134's poller-driven
+// retry of the same call) so the two never drift.
+func (s *Service) buildEnsureRequest(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (agentapi.EnsureRequest, error) {
 	// vCPUs/memory come from the machine's own resource_spec (templates can size
 	// them differently), falling back to the global Spec for legacy rows whose
 	// spec is missing/zero.
@@ -560,9 +556,9 @@ func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef,
 		req.DiskID = UUIDString(disk.ID)
 		req.DiskMiB = int(disk.SizeMib)
 	}
-	keyB64, err := secrets.GetMachineVolumeKey(s.secrets, id)
+	keyB64, err := secrets.GetMachineVolumeKey(s.secrets, UUIDString(m.ID))
 	if err != nil {
-		return s.fail(ctx, m, State(m.State), "fetch volume key: "+err.Error())
+		return agentapi.EnsureRequest{}, fmt.Errorf("fetch volume key: %w", err)
 	}
 	req.VolumeKeyB64 = keyB64
 
@@ -570,11 +566,23 @@ func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef,
 	// (re)boot; a machine with no policy set defaults to allow_all.
 	policy, err := s.getNetworkPolicy(ctx, m.ID)
 	if err != nil {
-		return s.fail(ctx, m, State(m.State), "load network policy: "+err.Error())
+		return agentapi.EnsureRequest{}, fmt.Errorf("load network policy: %w", err)
 	}
 	req.NetworkPolicy = &agentapi.NetworkPolicyConfig{Mode: policy.Mode, Domains: policy.Domains}
+	return req, nil
+}
 
-	resp, err := s.nodes.Ensure(ctx, id, req)
+// ensureOnAgent issues the agent ensure-running for a machine already moved to a
+// transitional state (provisioning or starting). On agent failure it moves the
+// machine to error; on success it records the returned handle and leaves the
+// machine transitional for the poller to advance to running.
+func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (store.Machine, error) {
+	req, err := s.buildEnsureRequest(ctx, m, kernelRef, rootfsRef)
+	if err != nil {
+		return s.fail(ctx, m, State(m.State), err.Error())
+	}
+
+	resp, err := s.nodes.Ensure(ctx, UUIDString(m.ID), req)
 	if err != nil {
 		return s.fail(ctx, m, State(m.State), "node-agent ensure failed: "+err.Error())
 	}
@@ -585,6 +593,23 @@ func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef,
 		return store.Machine{}, fmt.Errorf("record handle: %w", err)
 	}
 	return updated, nil
+}
+
+// RetryEnsure re-issues the node-agent ensure-running call for a machine that is
+// already in a transitional state (provisioning/starting), without applying any
+// state change itself. It exists for the poller (TAV-134): when a newly
+// created/started machine fails to become reachable during a status poll, the
+// poller retries the start by calling this — the same idempotent request
+// ensureOnAgent already sent — up to its own bounded retry budget, and only
+// moves the machine to error once that budget is exhausted. A failure here is
+// therefore just returned to the caller, not recorded on the machine.
+func (s *Service) RetryEnsure(ctx context.Context, m store.Machine) error {
+	req, err := s.buildEnsureRequest(ctx, m, m.KernelRef, m.RootfsRef)
+	if err != nil {
+		return err
+	}
+	_, err = s.nodes.Ensure(ctx, UUIDString(m.ID), req)
+	return err
 }
 
 // fail moves a machine from its current transitional state to error with the
