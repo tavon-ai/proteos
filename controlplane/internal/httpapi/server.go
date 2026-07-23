@@ -147,11 +147,16 @@ func (s *Server) Handler() http.Handler {
 	// Prometheus metrics — unauthenticated; restrict at the network layer.
 	mux.Handle("GET /metrics", promhttp.Handler())
 
-	// Auth flow (public). Login and callback are IP-rate-limited to slow credential
-	// stuffing and OAuth abuse before a session exists.
+	// Auth flow (TAV-149). Login and callback are the public Zitadel OIDC leg,
+	// IP-rate-limited to slow credential stuffing and OAuth abuse before a
+	// session exists. Connect GitHub runs the GitHub App OAuth flow for an
+	// already-authenticated user (the callback path is the one registered on
+	// the GitHub App, so it survives the login-IdP swap unchanged).
 	if s.Auth != nil {
-		mux.Handle("GET /api/auth/github/login", s.ipLimit(s.authRL, http.HandlerFunc(s.Auth.Login)))
-		mux.Handle("GET /api/auth/github/callback", s.ipLimit(s.authRL, http.HandlerFunc(s.Auth.Callback)))
+		mux.Handle("GET /api/auth/login", s.ipLimit(s.authRL, http.HandlerFunc(s.Auth.Login)))
+		mux.Handle("GET /api/auth/callback", s.ipLimit(s.authRL, http.HandlerFunc(s.Auth.Callback)))
+		mux.Handle("GET /api/auth/github/connect", s.requireAuth(http.HandlerFunc(s.handleGitHubConnect)))
+		mux.Handle("GET /api/auth/github/callback", s.requireAuth(http.HandlerFunc(s.handleGitHubCallback)))
 		// Logout requires auth + CSRF; the wrapper also appends the audit event.
 		mux.Handle("POST /api/auth/logout", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleLogout))))
 	}
