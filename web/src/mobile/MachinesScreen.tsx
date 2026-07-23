@@ -147,10 +147,10 @@ function DestroyAllSheet({
   const destroyedSoFar = Math.max(0, totalRef.current - machines.length);
   const inFlight = Math.min(destroyedSoFar + 1, totalRef.current);
 
-  const onConfirm = () => {
+  const runDestroy = (force: boolean) => {
     totalRef.current = machines.length;
     setStep('running');
-    destroyAll.mutate(undefined, {
+    destroyAll.mutate(force, {
       onSuccess: (res) => {
         setResult(res);
         setStep('done');
@@ -158,6 +158,12 @@ function DestroyAllSheet({
       onError: () => setStep('confirm'),
     });
   };
+  const onConfirm = () => runDestroy(false);
+  // TAV-141: retry the batch bypassing a blocked session export; only the
+  // machines that failed (still around) are destroyed again.
+  const onForceRemaining = () => runDestroy(true);
+
+  const exportBlockedRemaining = result?.results.some((r) => !r.ok && r.export_failed) ?? false;
 
   return (
     <div className="m-sheet" role="dialog" aria-modal="true" aria-label="Destroy all machines">
@@ -211,6 +217,21 @@ function DestroyAllSheet({
                     </li>
                   ))}
               </ul>
+            )}
+            {exportBlockedRemaining && (
+              <p>
+                Some machines were kept because exporting their Claude sessions failed. Force delete
+                to skip the export and destroy them anyway.
+              </p>
+            )}
+            {exportBlockedRemaining && (
+              <button
+                type="button"
+                className="m-danger-btn m-danger-btn-block"
+                onClick={onForceRemaining}
+              >
+                Force delete remaining
+              </button>
             )}
             <button type="button" className="m-primary-btn" onClick={onClose}>
               Done

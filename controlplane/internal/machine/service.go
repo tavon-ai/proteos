@@ -63,6 +63,11 @@ type Spec struct {
 	MaxPerUser int            // per-user machine cap; ≤0 ⇒ defaultMaxPerUser
 	Catalog    Catalog        // machine-template catalog; Empty() ⇒ legacy single-image path
 	Limits     ResourceLimits // caps for user resource overrides; Empty() ⇒ no bound-checking
+
+	// SessionExportDir (TAV-141) is the directory Destroy exports a machine's
+	// Claude coding-agent sessions to before tearing it down; empty ⇒
+	// defaultSessionExportDir.
+	SessionExportDir string
 }
 
 // CreateOptions carries the user-supplied inputs to Create. All fields are
@@ -420,12 +425,29 @@ func (s *Service) Stop(ctx context.Context, userID, machineID pgtype.UUID) (stor
 // (cascading to its disk, snapshot, and event log). Allowed from any state — the
 // point is to wipe the machine regardless of where it is in its lifecycle.
 // Missing or foreign machine ⇒ ErrNoMachine.
-func (s *Service) Destroy(ctx context.Context, userID, machineID pgtype.UUID) error {
+//
+// TAV-141: before any of that, the machine's Claude coding-agent sessions are
+// exported to Spec.SessionExportDir. If the export fails outright, or finishes
+// with some sessions unsaved, Destroy aborts with ErrSessionExportFailed and
+// the machine survives — unless force is set, in which case the export is
+// still attempted (best-effort) but its outcome never blocks the destroy.
+func (s *Service) Destroy(ctx context.Context, userID, machineID pgtype.UUID, force bool) error {
 	m, err := s.getOwned(ctx, userID, machineID)
 	if err != nil {
 		return err
 	}
 	id := UUIDString(m.ID)
+
+	switch res, expErr := s.exportSessions(ctx, m); {
+	case expErr != nil && !force:
+		return fmt.Errorf("%w: %v", ErrSessionExportFailed, expErr)
+	case expErr != nil:
+		slog.Warn("destroy: session export errored, forcing delete anyway", "machine", id, "err", expErr)
+	case !res.ok() && !force:
+		return fmt.Errorf("%w: %s", ErrSessionExportFailed, res.summary())
+	case !res.ok():
+		slog.Warn("destroy: session export incomplete, forcing delete anyway", "machine", id, "detail", res.summary())
+	}
 
 	// Tear the VM and its host resources down on the agent first. A machine the
 	// agent no longer tracks is already gone (idempotent); any other failure
@@ -460,17 +482,19 @@ type DestroyResult struct {
 }
 
 // DestroyAll destroys every machine the user owns, one at a time, continuing
-// past individual failures so one bad machine doesn't block the rest. Safe to
-// call with zero machines (returns an empty slice). Callers that need an
-// audit trail should record one entry per successful result.
-func (s *Service) DestroyAll(ctx context.Context, userID pgtype.UUID) ([]DestroyResult, error) {
+// past individual failures so one bad machine doesn't block the rest. force is
+// forwarded to every Destroy call (TAV-141: bypass a blocked session export for
+// the whole batch). Safe to call with zero machines (returns an empty slice).
+// Callers that need an audit trail should record one entry per successful
+// result.
+func (s *Service) DestroyAll(ctx context.Context, userID pgtype.UUID, force bool) ([]DestroyResult, error) {
 	ms, err := s.q.ListMachinesByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	results := make([]DestroyResult, 0, len(ms))
 	for _, m := range ms {
-		err := s.Destroy(ctx, userID, m.ID)
+		err := s.Destroy(ctx, userID, m.ID, force)
 		results = append(results, DestroyResult{MachineID: m.ID, Name: m.Name, Err: err})
 	}
 	return results, nil

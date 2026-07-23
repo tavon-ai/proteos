@@ -20,7 +20,7 @@ func clearEnv(t *testing.T) {
 		"PROTEOS_NODE_CA_FILE", "PROTEOS_HOSTS", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
 		"PROTEOS_MACHINE_DISK_MIB", "PROTEOS_KERNEL_REF", "PROTEOS_ROOTFS_REF",
 		"PROTEOS_MACHINE_DOMAIN", "PROTEOS_STATE_KEY",
-		"PROTEOS_ALLOWED_WS_ORIGINS",
+		"PROTEOS_ALLOWED_WS_ORIGINS", "PROTEOS_SESSION_EXPORT_DIR",
 	} {
 		t.Setenv(k, "")
 	}
@@ -73,6 +73,23 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if c.StateSigningKey != nil {
 		t.Error("StateSigningKey should be nil when PROTEOS_STATE_KEY unset")
+	}
+	if c.SessionExportDir != "./exports/sessions/" {
+		t.Errorf("SessionExportDir = %q, want ./exports/sessions/", c.SessionExportDir)
+	}
+}
+
+// TAV-141: PROTEOS_SESSION_EXPORT_DIR overrides the default directory Claude
+// coding-agent sessions are exported to before a machine is destroyed.
+func TestLoadSessionExportDirOverride(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_SESSION_EXPORT_DIR", "/tmp/proteos-session-exports")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.SessionExportDir != "/tmp/proteos-session-exports" {
+		t.Errorf("SessionExportDir = %q, want /tmp/proteos-session-exports", c.SessionExportDir)
 	}
 }
 

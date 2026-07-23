@@ -205,6 +205,13 @@ type Config struct {
 	// the graceful-shutdown sequence: draining in-flight HTTP requests and waiting
 	// for SSE clients to close after receiving the shutdown notification.
 	ShutdownTimeout time.Duration
+
+	// --- TAV-141: export Claude sessions before machine deletion -----------
+
+	// SessionExportDir (PROTEOS_SESSION_EXPORT_DIR) is the directory a
+	// machine's Claude coding-agent sessions are written to (one JSON file per
+	// session) before the machine is destroyed. Created on demand if missing.
+	SessionExportDir string
 }
 
 // Load reads configuration from the environment and validates it. The
@@ -253,6 +260,8 @@ func Load() (*Config, error) {
 		PreviewPortMin:  getenvUint32("PROTEOS_PREVIEW_PORT_MIN", agentapi.DefaultPreviewPortMin),
 		PreviewPortMax:  getenvUint32("PROTEOS_PREVIEW_PORT_MAX", agentapi.DefaultPreviewPortMax),
 		ShutdownTimeout: getenvDuration("PROTEOS_SHUTDOWN_TIMEOUT", 30*time.Second),
+
+		SessionExportDir: getenv("PROTEOS_SESSION_EXPORT_DIR", "./exports/sessions/"),
 	}
 
 	if c.PreviewPortMin < 1 || c.PreviewPortMax > 65535 || c.PreviewPortMin > c.PreviewPortMax {

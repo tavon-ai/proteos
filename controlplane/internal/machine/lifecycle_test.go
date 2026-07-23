@@ -150,13 +150,14 @@ func (f *fakeAgent) handler() http.Handler {
 
 // harness bundles a migrated DB, a fake agent, and a wired service+poller.
 type harness struct {
-	q      *store.Queries
-	svc    *machine.Service
-	poller *machine.Poller
-	agent  *fakeAgent
-	srv    *httptest.Server
-	sec    *secrets.MemStore
-	userID pgtype.UUID
+	q         *store.Queries
+	svc       *machine.Service
+	poller    *machine.Poller
+	agent     *fakeAgent
+	srv       *httptest.Server
+	sec       *secrets.MemStore
+	userID    pgtype.UUID
+	exportDir string
 }
 
 // harnessMaxPerUser pins the per-user machine cap for tests, so they don't
@@ -164,6 +165,14 @@ type harness struct {
 const harnessMaxPerUser = 3
 
 func newHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarnessWithExportDir(t, t.TempDir())
+}
+
+// newHarnessWithExportDir is newHarness with an explicit session-export
+// directory (TAV-141), for tests that need to control or break it (e.g. to
+// exercise Destroy's block-on-export-failure path).
+func newHarnessWithExportDir(t *testing.T, exportDir string) *harness {
 	t.Helper()
 	pool, q := testutil.Postgres(t)
 	ctx := context.Background()
@@ -186,11 +195,11 @@ func newHarness(t *testing.T) *harness {
 	sec := secrets.NewMemStore()
 	svc := machine.NewService(pool, nc, broker, sec, machine.Spec{
 		Vcpus: 2, MemMiB: 2048, DiskMiB: 10240, KernelRef: "k1", RootfsRef: "r1",
-		MaxPerUser: harnessMaxPerUser,
+		MaxPerUser: harnessMaxPerUser, SessionExportDir: exportDir,
 	})
 	poller := machine.NewPoller(pool, nc, broker)
 	poller.SetRetryEnsure(svc.RetryEnsure)
-	return &harness{q: q, svc: svc, poller: poller, agent: agent, srv: srv, sec: sec, userID: user.ID}
+	return &harness{q: q, svc: svc, poller: poller, agent: agent, srv: srv, sec: sec, userID: user.ID, exportDir: exportDir}
 }
 
 func (h *harness) machine(t *testing.T) store.Machine {
@@ -522,7 +531,7 @@ func TestDestroy(t *testing.T) {
 	ctx := context.Background()
 
 	// Destroy a machine that does not exist → ErrNoMachine.
-	if err := h.svc.Destroy(ctx, h.userID, nonexistentID(t)); err != machine.ErrNoMachine {
+	if err := h.svc.Destroy(ctx, h.userID, nonexistentID(t), false); err != machine.ErrNoMachine {
 		t.Fatalf("destroy nonexistent: got %v, want ErrNoMachine", err)
 	}
 
@@ -546,7 +555,7 @@ func TestDestroy(t *testing.T) {
 	}
 
 	// Destroy: agent torn down, row gone, disk + volume key cleaned up.
-	if err := h.svc.Destroy(ctx, h.userID, m.ID); err != nil {
+	if err := h.svc.Destroy(ctx, h.userID, m.ID, false); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 	if h.agent.destroyCalls != 1 {
@@ -594,7 +603,7 @@ func TestMultipleMachines(t *testing.T) {
 	}
 
 	// Destroying one leaves the other untouched.
-	if err := h.svc.Destroy(ctx, h.userID, m1.ID); err != nil {
+	if err := h.svc.Destroy(ctx, h.userID, m1.ID, false); err != nil {
 		t.Fatalf("destroy m1: %v", err)
 	}
 	ms, _ = h.svc.List(ctx, h.userID)
@@ -740,7 +749,7 @@ func TestOwnershipRejected(t *testing.T) {
 	if _, err := h.svc.Start(ctx, other.ID, m.ID); err != machine.ErrNoMachine {
 		t.Fatalf("foreign start: got %v, want ErrNoMachine", err)
 	}
-	if err := h.svc.Destroy(ctx, other.ID, m.ID); err != machine.ErrNoMachine {
+	if err := h.svc.Destroy(ctx, other.ID, m.ID, false); err != machine.ErrNoMachine {
 		t.Fatalf("foreign destroy: got %v, want ErrNoMachine", err)
 	}
 	if _, err := h.svc.Rename(ctx, other.ID, m.ID, "hax"); err != machine.ErrNoMachine {

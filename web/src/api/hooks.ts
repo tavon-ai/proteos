@@ -131,16 +131,11 @@ export function useMachineMutations() {
     mutationFn: ({ id, name }: { id: string; name: string }) => api.renameMachine(id, name),
     onSuccess,
   });
-  // Destroy returns 204 (no body); drop it from the cache immediately, before
-  // the SSE `destroyed` event lands. Accepts either a bare machine id (normal
-  // destroy) or {id, force} (TAV-141: force=true bypasses a blocked Claude
-  // session export — see api.destroyMachine).
+  // Destroy returns 204 (no body); drop it from the cache immediately, before the
+  // SSE `destroyed` event lands. force (TAV-141) bypasses a blocked session export.
   const destroy = useMutation({
-    mutationFn: (arg: string | { id: string; force?: boolean }) => {
-      const { id, force } = typeof arg === 'string' ? { id: arg, force: undefined } : arg;
-      return api.destroyMachine(id, force);
-    },
-    onSuccess: (_void, arg) => removeMachine(qc, typeof arg === 'string' ? arg : arg.id),
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) => api.destroyMachine(id, force),
+    onSuccess: (_void, { id }) => removeMachine(qc, id),
   });
   return { create, start, stop, rename, destroy };
 }

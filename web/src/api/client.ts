@@ -101,9 +101,9 @@ export interface DestroyAllResult {
   name: string;
   ok: boolean;
   error?: string;
-  // export_failed (TAV-141) is true when this machine's failure was
-  // specifically a blocked Claude session export — the UI offers a "force
-  // delete anyway" retry only for these, not for other kinds of failure.
+  // export_failed (TAV-141) is true when this machine's failure was a
+  // blocked session export specifically, distinct from other destroy
+  // failures — the UI uses it to offer a "force delete anyway" retry.
   export_failed?: boolean;
 }
 
@@ -663,19 +663,20 @@ export const api = {
     request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}/start`, { method: 'POST' }),
   stopMachine: (id: string) =>
     request<MachineSummary>(`/api/machines/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
-  // force=true (TAV-141) bypasses a blocked Claude session export and deletes
-  // the machine anyway; omitted/false is the normal guarded path, which
-  // rejects with a 409 session_export_failed ApiError if the export fails.
+  // force (TAV-141) bypasses a blocked session export and deletes the
+  // machine regardless of the export outcome.
   destroyMachine: (id: string, force?: boolean) =>
     request<void>(`/api/machines/${encodeURIComponent(id)}${force ? '?force=true' : ''}`, {
       method: 'DELETE',
     }),
   // DELETE /api/machines destroys every machine the user owns. Always resolves
   // with a per-machine breakdown even if some machines fail — it never rejects
-  // on a partial failure (only on network/auth errors). force=true (TAV-141)
-  // is forwarded to every machine's destroy, bypassing a blocked session export.
+  // on a partial failure (only on network/auth errors). force (TAV-141) is
+  // forwarded to every machine's destroy, bypassing a blocked session export.
   destroyAllMachines: (force?: boolean) =>
-    request<DestroyAllResponse>(`/api/machines${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+    request<DestroyAllResponse>(`/api/machines${force ? '?force=true' : ''}`, {
+      method: 'DELETE',
+    }),
   // POST /api/machines/fill creates machines (default template/specs) until the
   // account reaches its machine_limit. Always resolves with a per-machine
   // breakdown even if some creates fail — it never rejects on a partial
