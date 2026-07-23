@@ -22,7 +22,9 @@ const ERRORS: Record<string, string> = {
 export function ConnectGitHub({ login }: { login: string }) {
   const [params] = useSearchParams();
   const errorCode = params.get('github_error');
-  const message = errorCode ? (ERRORS[errorCode] ?? 'Connecting GitHub failed. Please try again.') : null;
+  const message = errorCode
+    ? (ERRORS[errorCode] ?? 'Connecting GitHub failed. Please try again.')
+    : null;
   const logout = useLogout();
 
   return (
@@ -45,7 +47,9 @@ export function ConnectGitHub({ login }: { login: string }) {
           <button
             type="button"
             className="btn"
-            onClick={() => logout.mutate(undefined, { onSuccess: () => window.location.assign('/login') })}
+            onClick={() =>
+              logout.mutate(undefined, { onSuccess: () => window.location.assign('/login') })
+            }
           >
             Sign out
           </button>
