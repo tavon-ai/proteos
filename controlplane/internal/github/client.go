@@ -133,6 +133,12 @@ func (c *Client) Exchange(ctx context.Context, code, redirectURI string) (*Token
 // TokenSource maps it to a revoked grant — the user must re-run the login flow.
 var ErrBadRefreshToken = errors.New("github: bad refresh token")
 
+// ErrUnauthorized is returned by API calls when GitHub rejects the access
+// token (401). A grant revoked at github.com invalidates the token server-side
+// while it still looks unexpired locally, so this 401 is the only signal — the
+// HTTP layer force-refreshes once and then surfaces reconnect_github.
+var ErrUnauthorized = errors.New("github: unauthorized")
+
 // Refresh exchanges a refresh token for a fresh access/refresh token pair. GitHub
 // rotates the refresh token on every use, so the caller MUST persist the returned
 // pair (both tokens) before relying on it. A rejected refresh token surfaces as
@@ -269,6 +275,10 @@ func (c *Client) getJSON(ctx context.Context, accessToken, path string, v any) e
 			lastErr = fmt.Errorf("status %d", resp.StatusCode)
 			continue
 		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			resp.Body.Close()
+			return ErrUnauthorized
+		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			return fmt.Errorf("status %d", resp.StatusCode)
@@ -373,6 +383,9 @@ func (c *Client) CreatePR(ctx context.Context, accessToken, owner, repo, head, b
 			return nil, fmt.Errorf("create pr: empty url")
 		}
 		return &pr, nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrUnauthorized
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		var e struct {

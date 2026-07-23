@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -383,29 +384,27 @@ func (s *Server) handleGitPR(w http.ResponseWriter, r *http.Request) {
 // user's OAuth token, default the base branch, create the PR. On failure it
 // writes the HTTP error and returns ok=false.
 func (s *Server) createGitHubPR(w http.ResponseWriter, r *http.Request, uid, owner, repo string, req prRequest) (pr prResponse, base string, ok bool) {
-	cred, err := s.Tokens.Token(r.Context(), uid)
-	if errors.Is(err, github.ErrReconnectGitHub) {
-		writeError(w, http.StatusConflict, "reconnect_github")
-		return prResponse{}, "", false
-	}
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "github_unavailable")
-		return prResponse{}, "", false
-	}
-
 	base = req.Base
-	if base == "" {
-		rp, err := s.GitHub.GetRepo(r.Context(), cred.AccessToken, owner, repo)
-		if err != nil || rp.DefaultBranch == "" {
-			writeError(w, http.StatusBadGateway, "github_unavailable")
-			return prResponse{}, "", false
+	var created *github.PullRequest
+	err := s.callGitHub(r.Context(), uid, func(token string) error {
+		if base == "" {
+			rp, gerr := s.GitHub.GetRepo(r.Context(), token, owner, repo)
+			if gerr != nil {
+				return gerr
+			}
+			if rp.DefaultBranch == "" {
+				return fmt.Errorf("repo %s/%s: empty default branch", owner, repo)
+			}
+			base = rp.DefaultBranch
 		}
-		base = rp.DefaultBranch
-	}
-
-	created, err := s.GitHub.CreatePR(r.Context(), cred.AccessToken, owner, repo, req.Head, base, req.Title, req.Body)
+		var cerr error
+		created, cerr = s.GitHub.CreatePR(r.Context(), token, owner, repo, req.Head, base, req.Title, req.Body)
+		return cerr
+	})
 	if err != nil {
 		switch {
+		case errors.Is(err, github.ErrReconnectGitHub):
+			writeError(w, http.StatusConflict, "reconnect_github")
 		case errors.Is(err, github.ErrNoPRCommits):
 			writeError(w, http.StatusUnprocessableEntity, "no_commits")
 		case errors.Is(err, github.ErrPRAlreadyExists):

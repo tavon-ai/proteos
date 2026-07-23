@@ -192,14 +192,42 @@ func (s *Server) handleGitClone(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, cloneResponse{OpID: opID})
 }
 
+// callGitHub runs fn with a valid access token, force-refreshing and retrying
+// once when GitHub rejects the token (github.ErrUnauthorized). A grant revoked
+// at github.com invalidates the stored token server-side while it still looks
+// unexpired locally, so the 401 is the only signal; the failed force-refresh
+// then marks the grant revoked and surfaces github.ErrReconnectGitHub.
+func (s *Server) callGitHub(ctx context.Context, uid string, fn func(token string) error) error {
+	cred, err := s.Tokens.Token(ctx, uid)
+	if err != nil {
+		return err
+	}
+	err = fn(cred.AccessToken)
+	if !errors.Is(err, github.ErrUnauthorized) {
+		return err
+	}
+	cred, err = s.Tokens.ForceRefresh(ctx, uid)
+	if err != nil {
+		return err
+	}
+	err = fn(cred.AccessToken)
+	if errors.Is(err, github.ErrUnauthorized) {
+		// Even a freshly-minted token is rejected — treat as a dead grant.
+		return github.ErrReconnectGitHub
+	}
+	return err
+}
+
 // listRepos resolves a valid token and lists the user's accessible repos,
 // translating a revoked grant to github.ErrReconnectGitHub.
 func (s *Server) listRepos(ctx context.Context, uid string) ([]github.Repo, error) {
-	cred, err := s.Tokens.Token(ctx, uid)
-	if err != nil {
-		return nil, err
-	}
-	return s.GitHub.ListUserRepos(ctx, cred.AccessToken)
+	var repos []github.Repo
+	err := s.callGitHub(ctx, uid, func(token string) error {
+		var lerr error
+		repos, lerr = s.GitHub.ListUserRepos(ctx, token)
+		return lerr
+	})
+	return repos, err
 }
 
 // grantsURL builds the App installation-management URL, or "" if the slug is

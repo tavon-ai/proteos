@@ -194,6 +194,130 @@ func TestGitRepos_409ReconnectWhenRevoked(t *testing.T) {
 	}
 }
 
+// setupGitRevokedAtGitHub builds a repos fixture whose fake GitHub rejects the
+// seeded (unexpired-looking) access token with 401 — the signature of a grant
+// revoked at github.com — and serves the OAuth refresh endpoint. refreshOK
+// selects whether the refresh succeeds (rotated pair) or reports a dead
+// refresh token.
+func setupGitRevokedAtGitHub(t *testing.T, refreshOK bool) gitFixture {
+	t.Helper()
+	ctx := context.Background()
+	pool, q := testutil.Postgres(t)
+
+	user, err := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 9, Login: "octocat", Email: "o@example.com"})
+	if err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	uid := machine.UUIDString(user.ID)
+
+	sec := secrets.NewMemStore()
+	if err := sec.Put(secrets.UserGitHubPath(uid), map[string]string{
+		"access_token":            "gho_stale",
+		"refresh_token":           "ghr_valid",
+		"access_token_expires_at": time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+	meta, _ := json.Marshal(map[string]any{"revoked": false})
+	if _, err := q.UpsertGitHubLink(ctx, store.UpsertGitHubLinkParams{UserID: user.ID, Metadata: meta, SecretRef: secrets.UserGitHubPath(uid)}); err != nil {
+		t.Fatalf("seed link: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login/oauth/access_token", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if refreshOK {
+			_, _ = w.Write([]byte(`{"access_token":"gho_fresh","refresh_token":"ghr_fresh","token_type":"bearer","scope":"repo","expires_in":3600,"refresh_token_expires_in":15897600}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"error":"bad_refresh_token"}`))
+	})
+	mux.HandleFunc("/user/installations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer gho_fresh" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"total_count":1,"installations":[{"id":111}]}`))
+	})
+	mux.HandleFunc("/user/installations/111/repositories", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "1" {
+			_, _ = w.Write([]byte(`{"total_count":1,"repositories":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"total_count":1,"repositories":[{"full_name":"octocat/hello","private":true,"default_branch":"main","pushed_at":"2026-01-02T03:04:05Z"}]}`))
+	})
+	ghSrv := httptest.NewServer(mux)
+	t.Cleanup(ghSrv.Close)
+
+	sessions := session.NewManager(q, time.Hour)
+	token, err := sessions.Create(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
+	gh := github.NewClient(github.Config{ClientID: "id", ClientSecret: "s", APIBaseURL: ghSrv.URL, TokenURL: ghSrv.URL + "/login/oauth/access_token"})
+	srv := &httpapi.Server{
+		Sessions:   sessions,
+		Queries:    q,
+		Audit:      audit.NewRecorder(q),
+		Machines:   machine.NewService(pool, nil, machine.NewBroker(), sec, machine.Spec{}),
+		GitHub:     gh,
+		Tokens:     github.NewTokenSource(gh, q, sec),
+		GitChannel: &fakeChannel{},
+		GitHost:    "github.com",
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return gitFixture{url: ts.URL, token: token, uid: uid, q: q, pool: pool}
+}
+
+func TestGitRepos_ForceRefreshOn401(t *testing.T) {
+	t.Parallel()
+	fx := setupGitRevokedAtGitHub(t, true)
+	resp := fx.do(t, http.MethodGet, "/api/git/repos", "", false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (401 on a stale token should force-refresh and retry)", resp.StatusCode)
+	}
+	var body struct {
+		Repos []struct {
+			FullName string `json:"full_name"`
+		} `json:"repos"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if len(body.Repos) != 1 || body.Repos[0].FullName != "octocat/hello" {
+		t.Fatalf("unexpected repos: %+v", body.Repos)
+	}
+}
+
+func TestGitRepos_409WhenGrantRevokedAtGitHub(t *testing.T) {
+	t.Parallel()
+	fx := setupGitRevokedAtGitHub(t, false)
+	resp := fx.do(t, http.MethodGet, "/api/git/repos", "", false)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (dead refresh token must surface reconnect_github, not github_unavailable)", resp.StatusCode)
+	}
+	if code := errorCode(t, resp); code != "reconnect_github" {
+		t.Fatalf("error = %q, want reconnect_github", code)
+	}
+
+	// The failed refresh marks the grant revoked, so subsequent calls fail
+	// fast without hitting GitHub.
+	var meta []byte
+	if err := fx.pool.QueryRow(context.Background(),
+		`SELECT metadata FROM github_links WHERE user_id = (SELECT id FROM users WHERE login = 'octocat')`).Scan(&meta); err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Revoked bool `json:"revoked"`
+	}
+	_ = json.Unmarshal(meta, &m)
+	if !m.Revoked {
+		t.Fatal("grant should be marked revoked after a dead refresh")
+	}
+}
+
 func TestGitClone_202(t *testing.T) {
 	t.Parallel()
 	fx := setupGit(t, false, string(machine.StateRunning))

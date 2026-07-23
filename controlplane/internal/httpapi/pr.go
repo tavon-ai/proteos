@@ -228,6 +228,8 @@ func (s *Server) handleMergePR(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "head_changed")
 		case errors.Is(err, github.ErrPRMergeForbidden):
 			writeError(w, http.StatusForbidden, "merge_forbidden")
+		case errors.Is(err, github.ErrUnauthorized):
+			writeError(w, http.StatusConflict, "reconnect_github")
 		default:
 			writeError(w, http.StatusBadGateway, "github_unavailable")
 		}
@@ -270,6 +272,10 @@ func (s *Server) handleCommentPR(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, github.ErrPRNotFound) {
 			writeError(w, http.StatusNotFound, "no_pr")
+			return
+		}
+		if errors.Is(err, github.ErrUnauthorized) {
+			writeError(w, http.StatusConflict, "reconnect_github")
 			return
 		}
 		writeError(w, http.StatusBadGateway, "github_unavailable")
@@ -334,6 +340,12 @@ func (s *Server) prContext(w http.ResponseWriter, r *http.Request) (prReqContext
 func writePRFetchOK(w http.ResponseWriter, err error) bool {
 	if err == nil {
 		return true
+	}
+	if errors.Is(err, github.ErrUnauthorized) {
+		// GitHub rejected a token that looked valid locally — the grant was
+		// revoked at github.com; the UI's reconnect banner is the remedy.
+		writeError(w, http.StatusConflict, "reconnect_github")
+		return false
 	}
 	if errors.Is(err, github.ErrPRNotFound) {
 		writeError(w, http.StatusNotFound, "no_pr")
