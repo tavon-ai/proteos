@@ -347,6 +347,8 @@ func TestLoadProvidersEnabledList(t *testing.T) {
 
 func TestValidateOAuth(t *testing.T) {
 	good := &Config{
+		ZitadelDomain:      "auth.example.com",
+		ZitadelClientID:    "zid",
 		GitHubClientID:     "id",
 		GitHubClientSecret: "secret",
 		StateSigningKey:    []byte("key"),
@@ -360,7 +362,7 @@ func TestValidateOAuth(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty config should fail ValidateOAuth")
 	}
-	for _, want := range []string{"GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "PROTEOS_STATE_KEY"} {
+	for _, want := range []string{"ZITADEL_DOMAIN", "ZITADEL_CLIENT_ID", "GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "PROTEOS_STATE_KEY"} {
 		if !contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}

@@ -14,6 +14,10 @@ type meResponse struct {
 	Prefs        userPrefs        `json:"prefs"`
 	Machines     []MachineSummary `json:"machines"`
 	MachineLimit int              `json:"machine_limit"`
+	// GitHubConnected gates the SPA (TAV-149): login is Zitadel, but git
+	// operations need a linked GitHub account, so the UI blocks on the
+	// Connect GitHub screen until this is true.
+	GitHubConnected bool `json:"github_connected"`
 }
 
 type meUser struct {
@@ -46,6 +50,24 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGitHubConnect starts the Connect GitHub OAuth flow (TAV-149). It sits
+// behind requireAuth so only a logged-in user can begin linking.
+func (s *Server) handleGitHubConnect(w http.ResponseWriter, r *http.Request) {
+	s.Auth.GitHubConnect(w, r)
+}
+
+// handleGitHubCallback completes Connect GitHub for the authenticated user.
+// requireAuth resolved the session cookie (the callback is a top-level GET, so
+// SameSite=Lax sends it); the auth handler needs the user to record the link.
+func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	s.Auth.GitHubCallback(w, r, user)
+}
+
 // handleMe returns the authenticated user and their machine summary (or null).
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
@@ -60,9 +82,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			Email:     user.Email,
 			AvatarURL: user.AvatarUrl,
 		},
-		Prefs:        prefsView(user),
-		Machines:     []MachineSummary{},
-		MachineLimit: s.Machines.MaxPerUser(),
+		Prefs:           prefsView(user),
+		Machines:        []MachineSummary{},
+		MachineLimit:    s.Machines.MaxPerUser(),
+		GitHubConnected: user.GithubUserID != nil,
 	}
 	ms, err := s.Machines.List(r.Context(), user.ID)
 	if err != nil {
