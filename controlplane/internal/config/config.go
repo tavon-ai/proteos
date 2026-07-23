@@ -37,7 +37,16 @@ type Config struct {
 	// build OAuth callback URLs and cookie scoping (e.g. http://localhost:8080).
 	BaseURL string
 
-	// GitHub App user-authorization credentials.
+	// Zitadel OIDC login (TAV-149). ZitadelDomain is the IdP host (e.g.
+	// auth.tavon.io; a full URL is also accepted for dev/test IdPs);
+	// ZitadelClientID is the app's OIDC client id (public client + PKCE, no
+	// secret). Access control lives in Zitadel — only users granted the
+	// ProteOS project there can complete login.
+	ZitadelDomain   string
+	ZitadelClientID string
+
+	// GitHub App user-authorization credentials — since TAV-149 these back the
+	// authenticated "Connect GitHub" flow (git operations), not login.
 	GitHubClientID     string
 	GitHubClientSecret string
 
@@ -222,6 +231,8 @@ func Load() (*Config, error) {
 		Addr:                getenv("PROTEOS_ADDR", ":8080"),
 		DatabaseURL:         getenv("DATABASE_URL", "postgres://proteos:proteos@localhost:5432/proteos?sslmode=disable"),
 		BaseURL:             getenv("PROTEOS_BASE_URL", "http://localhost:8080"),
+		ZitadelDomain:       os.Getenv("ZITADEL_DOMAIN"),
+		ZitadelClientID:     os.Getenv("ZITADEL_CLIENT_ID"),
 		GitHubClientID:      os.Getenv("GITHUB_APP_CLIENT_ID"),
 		GitHubClientSecret:  os.Getenv("GITHUB_APP_CLIENT_SECRET"),
 		GitHubAppSlug:       os.Getenv("GITHUB_APP_SLUG"),
@@ -370,10 +381,27 @@ func loadAdditionalHosts() ([]HostConfig, error) {
 	return hosts, nil
 }
 
-// ValidateOAuth returns an error if the settings required for the GitHub OAuth
-// flow are missing. Called at startup once we know the server will serve auth.
+// OIDCIssuer returns the Zitadel issuer URL derived from ZitadelDomain: a bare
+// host gains https://; a value already carrying a scheme (dev/test IdPs) is
+// used as-is.
+func (c *Config) OIDCIssuer() string {
+	if c.ZitadelDomain == "" || strings.Contains(c.ZitadelDomain, "://") {
+		return c.ZitadelDomain
+	}
+	return "https://" + c.ZitadelDomain
+}
+
+// ValidateOAuth returns an error if the settings required for the login (OIDC)
+// and Connect GitHub (OAuth) flows are missing. Called at startup once we know
+// the server will serve auth.
 func (c *Config) ValidateOAuth() error {
 	var missing []string
+	if c.ZitadelDomain == "" {
+		missing = append(missing, "ZITADEL_DOMAIN")
+	}
+	if c.ZitadelClientID == "" {
+		missing = append(missing, "ZITADEL_CLIENT_ID")
+	}
 	if c.GitHubClientID == "" {
 		missing = append(missing, "GITHUB_APP_CLIENT_ID")
 	}

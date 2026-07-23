@@ -193,7 +193,13 @@ services:
       # them, e.g. PROTEOS_PROVIDERS_ENABLED=claude,openai,pi.
       PROTEOS_PROVIDERS_ENABLED: ${PROTEOS_PROVIDERS_ENABLED:-claude}
 
-      # GitHub OAuth (Phase 1 auth).
+      # Zitadel OIDC login (TAV-149). Access control (who may sign in) lives in
+      # Zitadel; register the app there with redirect URI
+      # <PROTEOS_BASE_URL>/api/auth/callback (public client + PKCE, no secret).
+      ZITADEL_DOMAIN: ${ZITADEL_DOMAIN:?}
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:?}
+      # GitHub OAuth — since TAV-149 the post-login "Connect GitHub" flow that
+      # backs git operations, not login.
       GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:?}
       GITHUB_APP_CLIENT_SECRET: ${GITHUB_APP_CLIENT_SECRET:?}
       PROTEOS_STATE_KEY: ${PROTEOS_STATE_KEY:?32+ byte random hex}
