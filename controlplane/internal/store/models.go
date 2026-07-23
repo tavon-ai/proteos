@@ -161,7 +161,7 @@ type Snapshot struct {
 
 type User struct {
 	ID                pgtype.UUID        `json:"id"`
-	GithubUserID      int64              `json:"github_user_id"`
+	GithubUserID      *int64             `json:"github_user_id"`
 	Login             string             `json:"login"`
 	Email             string             `json:"email"`
 	AvatarUrl         string             `json:"avatar_url"`
@@ -169,6 +169,8 @@ type User struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	DownloadAsIs      bool               `json:"download_as_is"`
 	ClaudeAttribution bool               `json:"claude_attribution"`
+	OidcIssuer        *string            `json:"oidc_issuer"`
+	OidcSubject       *string            `json:"oidc_subject"`
 }
 
 type UserGitIdentity struct {

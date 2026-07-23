@@ -1,13 +1,50 @@
 -- name: UpsertUser :one
 -- Insert a user keyed by their GitHub user id, updating profile fields on
--- repeat logins. Returns the full row (id is stable across logins).
+-- repeat logins. Returns the full row (id is stable across logins). Since
+-- TAV-149 login identity is OIDC; this remains for test seeding and the
+-- legacy shape (the cast keeps the param a non-null bigint now that the
+-- column is nullable).
 INSERT INTO users (github_user_id, login, email, avatar_url)
-VALUES ($1, $2, $3, $4)
+VALUES (sqlc.arg(github_user_id)::bigint, sqlc.arg(login), sqlc.arg(email), sqlc.arg(avatar_url))
 ON CONFLICT (github_user_id) DO UPDATE
     SET login = EXCLUDED.login,
         email = EXCLUDED.email,
         avatar_url = EXCLUDED.avatar_url
 RETURNING *;
+
+-- name: GetUserByOIDC :one
+-- Look up a user by their OIDC identity (TAV-149: Zitadel login).
+SELECT * FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2;
+
+-- name: CreateOIDCUser :one
+-- First Zitadel login with no linkable existing account: create the user.
+-- github_user_id stays NULL until the user completes "Connect GitHub".
+INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: UpdateOIDCUserProfile :one
+-- Refresh profile fields from the IdP on repeat logins.
+UPDATE users
+    SET login = $3, email = $4, avatar_url = $5
+WHERE oidc_issuer = $1 AND oidc_subject = $2
+RETURNING *;
+
+-- name: ListLinkableUsersByEmail :many
+-- Candidate GitHub-era rows for verified-email linking: same email, no OIDC
+-- identity yet. The caller links only when exactly one row matches.
+SELECT * FROM users WHERE email = $1 AND oidc_subject IS NULL;
+
+-- name: LinkUserOIDC :one
+-- Attach an OIDC identity to a pre-Zitadel user (one-time, first OIDC login).
+UPDATE users SET oidc_issuer = $2, oidc_subject = $3
+WHERE id = $1 AND oidc_subject IS NULL
+RETURNING *;
+
+-- name: SetUserGitHub :one
+-- "Connect GitHub" (TAV-149): record which GitHub account backs the user's git
+-- operations. Fails with a unique violation if another user already linked it.
+UPDATE users SET github_user_id = $2 WHERE id = $1 RETURNING *;
 
 -- name: GetUserByID :one
 SELECT * FROM users WHERE id = $1;
