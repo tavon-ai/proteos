@@ -27,10 +27,10 @@ export function DestroyAllDialog({
   const destroyedSoFar = Math.max(0, totalRef.current - machines.length);
   const inFlight = Math.min(destroyedSoFar + 1, totalRef.current);
 
-  const onConfirm = () => {
+  const runDestroy = (force: boolean) => {
     totalRef.current = machines.length;
     setStep('running');
-    destroyAll.mutate(undefined, {
+    destroyAll.mutate(force, {
       onSuccess: (res) => {
         setResult(res);
         setStep('done');
@@ -38,6 +38,13 @@ export function DestroyAllDialog({
       onError: () => setStep('confirm'),
     });
   };
+  const onConfirm = () => runDestroy(false);
+  // TAV-141: retry the whole batch bypassing a blocked session export. Only
+  // the machines still around (the ones that failed) are actually destroyed
+  // again — the rest are already gone.
+  const onForceRemaining = () => runDestroy(true);
+
+  const exportBlockedRemaining = result?.results.some((r) => !r.ok && r.export_failed) ?? false;
 
   // Block closing mid-run — losing the dialog would also lose the final summary.
   const handleClose = step === 'running' ? () => {} : onClose;
@@ -109,7 +116,18 @@ export function DestroyAllDialog({
                 ))}
             </ul>
           )}
+          {exportBlockedRemaining && (
+            <p className="destroy-all-warning">
+              Some machines were kept because exporting their Claude sessions failed. Force delete
+              to skip the export and destroy them anyway.
+            </p>
+          )}
           <div className="modal-actions">
+            {exportBlockedRemaining && (
+              <button type="button" className="btn-danger" onClick={onForceRemaining}>
+                Force delete remaining
+              </button>
+            )}
             <button type="button" className="btn-primary" onClick={onClose}>
               Done
             </button>

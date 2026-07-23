@@ -8,6 +8,7 @@ import { useClickOutside } from './useClickOutside';
 import { CreateMachineDialog } from './CreateMachineDialog';
 import { CreateUpToLimitDialog } from './CreateUpToLimitDialog';
 import { DestroyAllDialog } from './DestroyAllDialog';
+import { DestroyMachineDialog } from './DestroyMachineDialog';
 import { MachineDetails } from './MachineDetails';
 
 // FALLBACK_MACHINE_LIMIT mirrors the control plane's own default (see
@@ -65,9 +66,9 @@ function MachinePill() {
   const { data: me } = useMe();
   const machineLimit = me?.machine_limit ?? FALLBACK_MACHINE_LIMIT;
   const [open, setOpen] = useState(false);
-  const [modal, setModal] = useState<'none' | 'create' | 'details' | 'destroy-all' | 'create-all'>(
-    'none',
-  );
+  const [modal, setModal] = useState<
+    'none' | 'create' | 'details' | 'destroy-one' | 'destroy-all' | 'create-all'
+  >('none');
   const wrapRef = useRef<HTMLDivElement | null>(null);
   useClickOutside(open, [wrapRef], () => setOpen(false));
 
@@ -86,11 +87,7 @@ function MachinePill() {
 
   const onDestroy = () => {
     if (!selectedId) return;
-    if (
-      window.confirm('Destroy this machine? Its persistent disk is wiped and cannot be recovered.')
-    ) {
-      destroy.mutate(selectedId);
-    }
+    setModal('destroy-one');
     setOpen(false);
   };
 
@@ -244,6 +241,13 @@ function MachinePill() {
       )}
       {modal === 'details' && selected && (
         <MachineDetails machine={selected} templates={templates} onClose={() => setModal('none')} />
+      )}
+      {modal === 'destroy-one' && selected && (
+        <DestroyMachineDialog
+          machine={selected}
+          destroy={destroy}
+          onClose={() => setModal('none')}
+        />
       )}
       {modal === 'destroy-all' && (
         <DestroyAllDialog machines={machines} onClose={() => setModal('none')} />

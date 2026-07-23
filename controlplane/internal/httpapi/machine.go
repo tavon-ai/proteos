@@ -246,9 +246,14 @@ func (s *Server) handleRenameMachine(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleDestroyMachine tears down and removes one of the user's machines by id.
-// 204 on success, 404 no_machine. Irreversible: the persistent disk is wiped
-// (unlike stop, which hibernates).
+// handleDestroyMachine tears down and removes one of the user's machines by
+// id. 204 on success, 404 no_machine. Irreversible: the persistent disk is
+// wiped (unlike stop, which hibernates).
+//
+// TAV-141: Destroy exports the machine's Claude coding-agent sessions first;
+// if that export fails (or is incomplete), the destroy is blocked with 409
+// session_export_failed unless ?force=true is set, which deletes the machine
+// regardless of the export outcome.
 func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
@@ -260,21 +265,28 @@ func (s *Server) handleDestroyMachine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no_machine")
 		return
 	}
-	err := s.Machines.Destroy(r.Context(), user.ID, id)
+	force := r.URL.Query().Get("force") == "true"
+	err := s.Machines.Destroy(r.Context(), user.ID, id, force)
 	switch {
 	case errors.Is(err, machine.ErrNoMachine):
 		writeError(w, http.StatusNotFound, "no_machine")
+	case errors.Is(err, machine.ErrSessionExportFailed):
+		writeErrorDetail(w, http.StatusConflict, "session_export_failed", err.Error())
 	case err != nil:
 		slog.Error("destroy machine failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
 	default:
 		uid := uuidString(user.ID)
-		s.Audit.Record(r.Context(), audit.Entry{
+		entry := audit.Entry{
 			UserID: uid,
 			Actor:  audit.UserActor(uid),
 			Action: audit.ActionMachineDestroy,
 			Target: machine.UUIDString(id),
-		})
+		}
+		if force {
+			entry.Metadata = map[string]any{"forced": true}
+		}
+		s.Audit.Record(r.Context(), entry)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -285,6 +297,10 @@ type DestroyAllResult struct {
 	Name  string  `json:"name"`
 	Ok    bool    `json:"ok"`
 	Error *string `json:"error,omitempty"`
+	// ExportFailed (TAV-141) is true when this machine's failure was a blocked
+	// session export specifically — the UI uses it to offer a "force delete
+	// anyway" retry rather than a generic failure message.
+	ExportFailed bool `json:"export_failed,omitempty"`
 }
 
 // DestroyAllResponse summarizes a bulk destroy-all-machines call.
@@ -298,14 +314,16 @@ type DestroyAllResponse struct {
 // handleDestroyAllMachines tears down and removes every machine the user owns.
 // Always 200 (even with zero machines), with a per-machine breakdown of
 // success/failure in the body — a partial failure does not fail the request.
-// Irreversible, same as handleDestroyMachine.
+// Irreversible, same as handleDestroyMachine. ?force=true (TAV-141) is
+// forwarded to every machine's Destroy, bypassing a blocked session export.
 func (s *Server) handleDestroyAllMachines(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	results, err := s.Machines.DestroyAll(r.Context(), user.ID)
+	force := r.URL.Query().Get("force") == "true"
+	results, err := s.Machines.DestroyAll(r.Context(), user.ID, force)
 	if err != nil {
 		slog.Error("destroy all machines failed", "err", err, "user", user.ID)
 		writeError(w, http.StatusInternalServerError, "internal")
@@ -319,15 +337,20 @@ func (s *Server) handleDestroyAllMachines(w http.ResponseWriter, r *http.Request
 			resp.Failed++
 			msg := res.Err.Error()
 			out.Error = &msg
+			out.ExportFailed = errors.Is(res.Err, machine.ErrSessionExportFailed)
 			slog.Error("destroy-all: machine destroy failed", "err", res.Err, "user", user.ID, "machine", out.ID)
 		} else {
 			resp.Destroyed++
-			s.Audit.Record(r.Context(), audit.Entry{
+			entry := audit.Entry{
 				UserID: uid,
 				Actor:  audit.UserActor(uid),
 				Action: audit.ActionMachineDestroy,
 				Target: out.ID,
-			})
+			}
+			if force {
+				entry.Metadata = map[string]any{"forced": true}
+			}
+			s.Audit.Record(r.Context(), entry)
 		}
 		resp.Results = append(resp.Results, out)
 	}

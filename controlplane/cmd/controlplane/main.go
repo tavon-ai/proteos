@@ -302,14 +302,15 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	slog.Info("machine templates loaded", "count", len(catalog.Templates()), "source", tmplSource)
 
 	machineSvc := machine.NewService(pool, nodes, broker, sec, machine.Spec{
-		Vcpus:      cfg.MachineVcpus,
-		MemMiB:     cfg.MachineMemMiB,
-		DiskMiB:    cfg.MachineDiskMiB,
-		KernelRef:  cfg.KernelRef,
-		RootfsRef:  cfg.RootfsRef,
-		MaxPerUser: cfg.MachineMaxPerUser,
-		Catalog:    catalog,
-		Limits:     limits,
+		Vcpus:            cfg.MachineVcpus,
+		MemMiB:           cfg.MachineMemMiB,
+		DiskMiB:          cfg.MachineDiskMiB,
+		KernelRef:        cfg.KernelRef,
+		RootfsRef:        cfg.RootfsRef,
+		MaxPerUser:       cfg.MachineMaxPerUser,
+		Catalog:          catalog,
+		Limits:           limits,
+		SessionExportDir: cfg.SessionExportDir,
 	})
 	poller := machine.NewPoller(pool, nodes, broker)
 	// TAV-134: retry starting a newly created/started machine (up to

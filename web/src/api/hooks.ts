@@ -132,10 +132,10 @@ export function useMachineMutations() {
     onSuccess,
   });
   // Destroy returns 204 (no body); drop it from the cache immediately, before the
-  // SSE `destroyed` event lands.
+  // SSE `destroyed` event lands. force (TAV-141) bypasses a blocked session export.
   const destroy = useMutation({
-    mutationFn: (id: string) => api.destroyMachine(id),
-    onSuccess: (_void, id) => removeMachine(qc, id),
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) => api.destroyMachine(id, force),
+    onSuccess: (_void, { id }) => removeMachine(qc, id),
   });
   return { create, start, stop, rename, destroy };
 }
@@ -149,7 +149,7 @@ export function useMachineMutations() {
 export function useDestroyAllMachines() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.destroyAllMachines(),
+    mutationFn: (force?: boolean) => api.destroyAllMachines(force),
     onSuccess: (res: DestroyAllResponse) => {
       const destroyedIds = new Set(res.results.filter((r) => r.ok).map((r) => r.id));
       qc.setQueryData<MachineSummary[]>(machinesKey, (prev = []) =>
