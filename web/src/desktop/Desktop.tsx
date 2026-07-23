@@ -10,6 +10,7 @@ import { TasksWindow } from '../windows/TasksWindow';
 import { LogsWindow } from '../windows/LogsWindow';
 import { AppLogsWindow } from '../windows/AppLogsWindow';
 import { SessionsWindow } from '../windows/SessionsWindow';
+import { SessionDetailWindow } from '../windows/SessionDetailWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
@@ -22,8 +23,8 @@ import { OpenAppDialog } from './OpenAppDialog';
 import { openPreview } from './openers';
 import { Window, WindowErrorBoundary } from './Window';
 import { WindowManagerProvider } from './WindowManager';
-import { useWindowManager } from './windowManagerContext';
-import { openProjects } from './openers';
+import { useWindowManager, type WindowManagerContext } from './windowManagerContext';
+import { openProjects, openSessionDetail, openSessions } from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';
 import { WallpaperProvider } from './wallpaperContext';
@@ -155,6 +156,7 @@ function DesktopShell({
                     machineState={winMachine?.state ?? 'stopped'}
                     lastError={winMachine?.last_error ?? null}
                     events={events}
+                    wm={wm}
                   />
                 </WindowErrorBoundary>
               </Window>
@@ -196,11 +198,13 @@ function WindowBody({
   machineState,
   lastError,
   events,
+  wm,
 }: {
   win: WindowState;
   machineState: MachineState;
   lastError: string | null;
   events: MachineEvent[];
+  wm: WindowManagerContext;
 }) {
   // Machine-scoped windows show the error reason instead of their normal content
   // so users know why the machine is unavailable without opening machine details.
@@ -276,7 +280,17 @@ function WindowBody({
     case 'applogs':
       return <AppLogsWindow />;
     case 'sessions':
-      return <SessionsWindow />;
+      return <SessionsWindow onOpenDetail={(session) => openSessionDetail(wm, session)} />;
+    case 'session-detail':
+      return (
+        <SessionDetailWindow
+          sessionId={win.sessionId ?? null}
+          onBack={() => {
+            wm.close(win.id);
+            openSessions(wm);
+          }}
+        />
+      );
     case 'settings':
       return <SettingsWindow />;
     case 'placeholder':

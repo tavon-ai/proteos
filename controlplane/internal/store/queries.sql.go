@@ -305,6 +305,53 @@ func (q *Queries) GetAgentTask(ctx context.Context, id pgtype.UUID) (AgentTask, 
 	return i, err
 }
 
+const getAgentTaskByUser = `-- name: GetAgentTaskByUser :one
+SELECT
+    agent_tasks.id, agent_tasks.machine_id, agent_tasks.user_id, agent_tasks.provider, agent_tasks.project, agent_tasks.prompt, agent_tasks.status, agent_tasks.agent_session_id, agent_tasks.usage, agent_tasks.result_summary, agent_tasks.error, agent_tasks.created_at, agent_tasks.started_at, agent_tasks.ended_at,
+    m.name AS machine_name
+FROM agent_tasks
+JOIN machines m ON m.id = agent_tasks.machine_id
+WHERE agent_tasks.id = $1 AND agent_tasks.user_id = $2
+`
+
+type GetAgentTaskByUserParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+type GetAgentTaskByUserRow struct {
+	AgentTask   AgentTask `json:"agent_task"`
+	MachineName string    `json:"machine_name"`
+}
+
+// One coding agent session by id, scoped to its owning user (TAV-142 session
+// detail) and joined with the owning machine's display name, matching
+// ListAgentTasksByUser's shape. Scoping to user_id in the query itself means a
+// session belonging to another user comes back as "no rows" rather than a row
+// the handler must remember to ownership-check.
+func (q *Queries) GetAgentTaskByUser(ctx context.Context, arg GetAgentTaskByUserParams) (GetAgentTaskByUserRow, error) {
+	row := q.db.QueryRow(ctx, getAgentTaskByUser, arg.ID, arg.UserID)
+	var i GetAgentTaskByUserRow
+	err := row.Scan(
+		&i.AgentTask.ID,
+		&i.AgentTask.MachineID,
+		&i.AgentTask.UserID,
+		&i.AgentTask.Provider,
+		&i.AgentTask.Project,
+		&i.AgentTask.Prompt,
+		&i.AgentTask.Status,
+		&i.AgentTask.AgentSessionID,
+		&i.AgentTask.Usage,
+		&i.AgentTask.ResultSummary,
+		&i.AgentTask.Error,
+		&i.AgentTask.CreatedAt,
+		&i.AgentTask.StartedAt,
+		&i.AgentTask.EndedAt,
+		&i.MachineName,
+	)
+	return i, err
+}
+
 const getDiskByMachineID = `-- name: GetDiskByMachineID :one
 SELECT id, machine_id, size_mib, created_at FROM disks WHERE machine_id = $1
 `

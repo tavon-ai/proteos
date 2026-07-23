@@ -309,6 +309,34 @@ describe('layout serialization', () => {
     expect(s.windows.map((w) => w.id)).toEqual(['preview-m1-3000', 'preview-m1-8080']);
   });
 
+  it('scopes session-detail dedupe per session id, and excludes it from the persisted layout', () => {
+    let s = initialDesktop;
+    s = open(s, {
+      id: 'session-detail-s1',
+      kind: 'session-detail',
+      sessionId: 's1',
+      dedupeKey: 'session-detail|s1',
+    });
+    s = open(s, {
+      id: 'session-detail-s2',
+      kind: 'session-detail',
+      sessionId: 's2',
+      dedupeKey: 'session-detail|s2',
+    });
+    // A different session opens its own window (prior detail window unaffected).
+    expect(s.windows.map((w) => w.id)).toEqual(['session-detail-s1', 'session-detail-s2']);
+    // Re-opening the same session collapses onto the existing window (no third).
+    s = open(s, {
+      id: 'session-detail-s1-again',
+      kind: 'session-detail',
+      sessionId: 's1',
+      dedupeKey: 'session-detail|s1',
+    });
+    expect(s.windows.map((w) => w.id)).toEqual(['session-detail-s1', 'session-detail-s2']);
+    // Ephemeral like Tasks/Changes: never persisted, so a reload does not restore it.
+    expect(serializeLayout(s).windows.map((w) => w.kind)).not.toContain('session-detail');
+  });
+
   it('round-trips a preview window port through serialize → parse → hydrate', () => {
     let s = initialDesktop;
     s = open(s, {

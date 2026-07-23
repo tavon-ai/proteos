@@ -1,4 +1,4 @@
-import type { Project } from '../api/client';
+import type { AgentSession, Project } from '../api/client';
 import type { WindowManagerContext } from './windowManagerContext';
 
 // openers builds the OpenSpec for each window kind and hands it to the window
@@ -159,6 +159,20 @@ export function openAppLogs(wm: WindowManagerContext): void {
 // owns. Global window (no machine scope), one singleton like Logs/Settings.
 export function openSessions(wm: WindowManagerContext): void {
   wm.open({ id: 'sessions', kind: 'sessions', title: 'Sessions', dedupeKey: 'sessions' });
+}
+
+// openSessionDetail opens the detail view for one coding agent session
+// (TAV-142): one window per session id, so reopening (e.g. clicking the same
+// row again) focuses the existing window instead of stacking a duplicate.
+// Global window (no machine scope), since Sessions itself is global.
+export function openSessionDetail(wm: WindowManagerContext, session: AgentSession): void {
+  wm.open({
+    id: `session-detail-${session.id}`,
+    kind: 'session-detail',
+    title: `Session — ${session.project}`,
+    sessionId: session.id,
+    dedupeKey: `session-detail|${session.id}`,
+  });
 }
 
 export function openProjects(wm: WindowManagerContext, machineId: string): void {

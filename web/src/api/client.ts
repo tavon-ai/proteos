@@ -976,6 +976,9 @@ export const api = {
     const qs = params.toString();
     return request<SessionsResponse>(`/api/sessions${qs ? `?${qs}` : ''}`);
   },
+  // One session by id, full detail (TAV-142). 404 no_session if it does not
+  // exist or belongs to another user.
+  getSession: (id: string) => request<AgentSession>(`/api/sessions/${encodeURIComponent(id)}`),
 };
 
 // logsExportUrl is the GET URL that downloads captured logs as a plain-text
@@ -990,6 +993,13 @@ export function logsExportUrl(source?: LogSource): string {
 // call — the body is a CSV stream, not JSON; same pattern as logsExportUrl.
 export function sessionsExportUrl(status?: SessionStatusFilter): string {
   return `/api/sessions/export${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`;
+}
+
+// sessionExportUrl is the GET URL that downloads one session as a JSON
+// attachment (TAV-142 detail view's Export button). Not a request() call —
+// same <a download> pattern as sessionsExportUrl/logsExportUrl.
+export function sessionExportUrl(id: string): string {
+  return `/api/sessions/${encodeURIComponent(id)}/export`;
 }
 
 // taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),
