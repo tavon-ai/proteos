@@ -47,4 +47,4 @@
     mode: "0644"
     content: |
       # Managed by ProteOS ansible (roles/go) — do not edit.
-      export PATH="$PATH:{{ proteos_go_root }}/bin:${GOPATH:-$HOME/go}/bin"
+      export PATH="$PATH:{{ proteos_go_root }}/bin:${GOPATH:-$HOME/go}/bin:/home/dev/go/bin"
