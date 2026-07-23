@@ -273,5 +273,9 @@ func (c *Client) do(ctx context.Context, accessToken, method, path string, paylo
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode == http.StatusUnauthorized {
+		// See ErrUnauthorized: a revoked-at-GitHub grant is only visible here.
+		return resp.StatusCode, body, ErrUnauthorized
+	}
 	return resp.StatusCode, body, nil
 }

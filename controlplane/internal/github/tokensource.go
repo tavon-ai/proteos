@@ -114,15 +114,52 @@ func (ts *TokenSource) Token(ctx context.Context, userID string) (Credential, er
 		return Credential{AccessToken: access, Expiry: accessExp}, nil
 	}
 
-	// Refresh. The rotated pair is persisted before the access token is returned,
-	// so a crash after refresh never strands the user with a dead refresh token.
+	return ts.refreshLocked(ctx, uid, link.SecretRef, link.Metadata, data)
+}
+
+// ForceRefresh rotates the token pair even when the stored access token looks
+// unexpired. Callers use it after GitHub rejects a token (ErrUnauthorized): a
+// grant revoked at github.com invalidates tokens server-side without touching
+// the local expiry, so the stored pair cannot be trusted. A dead refresh token
+// marks the grant revoked and returns ErrReconnectGitHub.
+func (ts *TokenSource) ForceRefresh(ctx context.Context, userID string) (Credential, error) {
+	lock := ts.userLock(userID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	var uid pgtype.UUID
+	if err := uid.Scan(userID); err != nil {
+		return Credential{}, fmt.Errorf("bad user id: %w", err)
+	}
+
+	link, err := ts.q.GetGitHubLink(ctx, uid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Credential{}, ErrReconnectGitHub
+	}
+	if err != nil {
+		return Credential{}, fmt.Errorf("load github link: %w", err)
+	}
+	data, err := ts.secrets.Get(link.SecretRef)
+	if errors.Is(err, secrets.ErrNotFound) {
+		return Credential{}, ErrReconnectGitHub
+	}
+	if err != nil {
+		return Credential{}, fmt.Errorf("read github tokens: %w", err)
+	}
+	return ts.refreshLocked(ctx, uid, link.SecretRef, link.Metadata, data)
+}
+
+// refreshLocked rotates the token pair (caller holds the user lock). The
+// rotated pair is persisted before the access token is returned, so a crash
+// after refresh never strands the user with a dead refresh token.
+func (ts *TokenSource) refreshLocked(ctx context.Context, uid pgtype.UUID, secretRef string, metadata []byte, data map[string]string) (Credential, error) {
 	refresh := data[fieldRefreshToken]
 	if refresh == "" {
 		return Credential{}, ErrReconnectGitHub
 	}
 	tok, err := ts.gh.Refresh(ctx, refresh)
 	if errors.Is(err, ErrBadRefreshToken) {
-		if mErr := ts.markRevoked(ctx, uid, link.Metadata); mErr != nil {
+		if mErr := ts.markRevoked(ctx, uid, metadata); mErr != nil {
 			return Credential{}, fmt.Errorf("mark revoked: %w", mErr)
 		}
 		return Credential{}, ErrReconnectGitHub
@@ -134,7 +171,7 @@ func (ts *TokenSource) Token(ctx context.Context, userID string) (Credential, er
 	now := time.Now()
 	newAccessExp := now.Add(time.Duration(tok.ExpiresIn) * time.Second)
 	newRefreshExp := now.Add(time.Duration(tok.RefreshTokenExpiresIn) * time.Second)
-	if err := ts.secrets.Put(link.SecretRef, map[string]string{
+	if err := ts.secrets.Put(secretRef, map[string]string{
 		fieldAccessToken:      tok.AccessToken,
 		fieldRefreshToken:     tok.RefreshToken,
 		fieldTokenType:        tok.TokenType,
@@ -155,7 +192,7 @@ func (ts *TokenSource) Token(ctx context.Context, userID string) (Credential, er
 	if _, err := ts.q.UpsertGitHubLink(ctx, store.UpsertGitHubLinkParams{
 		UserID:    uid,
 		Metadata:  meta,
-		SecretRef: link.SecretRef,
+		SecretRef: secretRef,
 	}); err != nil {
 		return Credential{}, fmt.Errorf("update github link metadata: %w", err)
 	}
