@@ -52,6 +52,9 @@ export interface Me {
   machines: MachineSummary[];
   // The per-user machine cap (global, deployment-configured; currently 5).
   machine_limit: number;
+  // False until the user completes Connect GitHub (TAV-149); the SPA blocks on
+  // the connect screen until then, since git operations need the linked account.
+  github_connected: boolean;
 }
 
 // MachineState mirrors the control-plane machines.state CHECK constraint.
@@ -1014,5 +1017,8 @@ export function taskEventsUrl(machineID: string, taskID: string): string {
 export const machineEventsUrl = '/api/machine/events';
 
 // The login redirect is a full navigation (not fetch) so the browser follows
-// GitHub's 302 chain and cookies are set on the top-level document.
-export const loginUrl = '/api/auth/github/login';
+// the IdP's 302 chain and cookies are set on the top-level document. Login is
+// Zitadel OIDC (TAV-149); Connect GitHub is the post-login linking flow that
+// unlocks git operations.
+export const loginUrl = '/api/auth/login';
+export const githubConnectUrl = '/api/auth/github/connect';

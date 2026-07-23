@@ -101,6 +101,47 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 	return i, err
 }
 
+const createOIDCUser = `-- name: CreateOIDCUser :one
+INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+`
+
+type CreateOIDCUserParams struct {
+	OidcIssuer  *string `json:"oidc_issuer"`
+	OidcSubject *string `json:"oidc_subject"`
+	Login       string  `json:"login"`
+	Email       string  `json:"email"`
+	AvatarUrl   string  `json:"avatar_url"`
+}
+
+// First Zitadel login with no linkable existing account: create the user.
+// github_user_id stays NULL until the user completes "Connect GitHub".
+func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createOIDCUser,
+		arg.OidcIssuer,
+		arg.OidcSubject,
+		arg.Login,
+		arg.Email,
+		arg.AvatarUrl,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+	)
+	return i, err
+}
+
 const createPAT = `-- name: CreatePAT :one
 INSERT INTO personal_access_tokens (user_id, name, token_hash, prefix, expires_at)
 VALUES ($1, $2, $3, $4, $5)
@@ -548,7 +589,7 @@ func (q *Queries) GetNetworkPolicy(ctx context.Context, machineID pgtype.UUID) (
 const getPATByTokenHash = `-- name: GetPATByTokenHash :one
 SELECT
     personal_access_tokens.id, personal_access_tokens.user_id, personal_access_tokens.name, personal_access_tokens.token_hash, personal_access_tokens.prefix, personal_access_tokens.created_at, personal_access_tokens.expires_at, personal_access_tokens.last_used_at, personal_access_tokens.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject
 FROM personal_access_tokens
 JOIN users ON users.id = personal_access_tokens.user_id
 WHERE personal_access_tokens.token_hash = $1
@@ -584,6 +625,8 @@ func (q *Queries) GetPATByTokenHash(ctx context.Context, tokenHash []byte) (GetP
 		&i.User.CreatedAt,
 		&i.User.DownloadAsIs,
 		&i.User.ClaudeAttribution,
+		&i.User.OidcIssuer,
+		&i.User.OidcSubject,
 	)
 	return i, err
 }
@@ -610,7 +653,7 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 const getSessionByID = `-- name: GetSessionByID :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.id = $1
@@ -646,6 +689,8 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 		&i.User.CreatedAt,
 		&i.User.DownloadAsIs,
 		&i.User.ClaudeAttribution,
+		&i.User.OidcIssuer,
+		&i.User.OidcSubject,
 	)
 	return i, err
 }
@@ -653,7 +698,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -687,6 +732,8 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.CreatedAt,
 		&i.User.DownloadAsIs,
 		&i.User.ClaudeAttribution,
+		&i.User.OidcIssuer,
+		&i.User.OidcSubject,
 	)
 	return i, err
 }
@@ -710,7 +757,7 @@ func (q *Queries) GetSnapshot(ctx context.Context, machineID pgtype.UUID) (Snaps
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution FROM users WHERE id = $1
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -726,6 +773,37 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.CreatedAt,
 		&i.DownloadAsIs,
 		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+	)
+	return i, err
+}
+
+const getUserByOIDC = `-- name: GetUserByOIDC :one
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
+`
+
+type GetUserByOIDCParams struct {
+	OidcIssuer  *string `json:"oidc_issuer"`
+	OidcSubject *string `json:"oidc_subject"`
+}
+
+// Look up a user by their OIDC identity (TAV-149: Zitadel login).
+func (q *Queries) GetUserByOIDC(ctx context.Context, arg GetUserByOIDCParams) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByOIDC, arg.OidcIssuer, arg.OidcSubject)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
 	)
 	return i, err
 }
@@ -845,6 +923,38 @@ func (q *Queries) InsertMachineEvent(ctx context.Context, arg InsertMachineEvent
 		&i.Actor,
 		&i.Payload,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const linkUserOIDC = `-- name: LinkUserOIDC :one
+UPDATE users SET oidc_issuer = $2, oidc_subject = $3
+WHERE id = $1 AND oidc_subject IS NULL
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+`
+
+type LinkUserOIDCParams struct {
+	ID          pgtype.UUID `json:"id"`
+	OidcIssuer  *string     `json:"oidc_issuer"`
+	OidcSubject *string     `json:"oidc_subject"`
+}
+
+// Attach an OIDC identity to a pre-Zitadel user (one-time, first OIDC login).
+func (q *Queries) LinkUserOIDC(ctx context.Context, arg LinkUserOIDCParams) (User, error) {
+	row := q.db.QueryRow(ctx, linkUserOIDC, arg.ID, arg.OidcIssuer, arg.OidcSubject)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
 	)
 	return i, err
 }
@@ -1032,6 +1142,44 @@ func (q *Queries) ListGitHostLinks(ctx context.Context, userID pgtype.UUID) ([]G
 			&i.SecretRef,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLinkableUsersByEmail = `-- name: ListLinkableUsersByEmail :many
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject FROM users WHERE email = $1 AND oidc_subject IS NULL
+`
+
+// Candidate GitHub-era rows for verified-email linking: same email, no OIDC
+// identity yet. The caller links only when exactly one row matches.
+func (q *Queries) ListLinkableUsersByEmail(ctx context.Context, email string) ([]User, error) {
+	rows, err := q.db.Query(ctx, listLinkableUsersByEmail, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.GithubUserID,
+			&i.Login,
+			&i.Email,
+			&i.AvatarUrl,
+			&i.Status,
+			&i.CreatedAt,
+			&i.DownloadAsIs,
+			&i.ClaudeAttribution,
+			&i.OidcIssuer,
+			&i.OidcSubject,
 		); err != nil {
 			return nil, err
 		}
@@ -1714,7 +1862,7 @@ func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error 
 }
 
 const setUserClaudeAttribution = `-- name: SetUserClaudeAttribution :one
-UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution
+UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
 `
 
 type SetUserClaudeAttributionParams struct {
@@ -1738,12 +1886,14 @@ func (q *Queries) SetUserClaudeAttribution(ctx context.Context, arg SetUserClaud
 		&i.CreatedAt,
 		&i.DownloadAsIs,
 		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
 	)
 	return i, err
 }
 
 const setUserDownloadAsIs = `-- name: SetUserDownloadAsIs :one
-UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution
+UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
 `
 
 type SetUserDownloadAsIsParams struct {
@@ -1767,6 +1917,38 @@ func (q *Queries) SetUserDownloadAsIs(ctx context.Context, arg SetUserDownloadAs
 		&i.CreatedAt,
 		&i.DownloadAsIs,
 		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+	)
+	return i, err
+}
+
+const setUserGitHub = `-- name: SetUserGitHub :one
+UPDATE users SET github_user_id = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+`
+
+type SetUserGitHubParams struct {
+	ID           pgtype.UUID `json:"id"`
+	GithubUserID *int64      `json:"github_user_id"`
+}
+
+// "Connect GitHub" (TAV-149): record which GitHub account backs the user's git
+// operations. Fails with a unique violation if another user already linked it.
+func (q *Queries) SetUserGitHub(ctx context.Context, arg SetUserGitHubParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserGitHub, arg.ID, arg.GithubUserID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
 	)
 	return i, err
 }
@@ -1842,6 +2024,47 @@ func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineState
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+	)
+	return i, err
+}
+
+const updateOIDCUserProfile = `-- name: UpdateOIDCUserProfile :one
+UPDATE users
+    SET login = $3, email = $4, avatar_url = $5
+WHERE oidc_issuer = $1 AND oidc_subject = $2
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+`
+
+type UpdateOIDCUserProfileParams struct {
+	OidcIssuer  *string `json:"oidc_issuer"`
+	OidcSubject *string `json:"oidc_subject"`
+	Login       string  `json:"login"`
+	Email       string  `json:"email"`
+	AvatarUrl   string  `json:"avatar_url"`
+}
+
+// Refresh profile fields from the IdP on repeat logins.
+func (q *Queries) UpdateOIDCUserProfile(ctx context.Context, arg UpdateOIDCUserProfileParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateOIDCUserProfile,
+		arg.OidcIssuer,
+		arg.OidcSubject,
+		arg.Login,
+		arg.Email,
+		arg.AvatarUrl,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
 	)
 	return i, err
 }
@@ -2091,12 +2314,12 @@ func (q *Queries) UpsertSnapshot(ctx context.Context, arg UpsertSnapshotParams) 
 
 const upsertUser = `-- name: UpsertUser :one
 INSERT INTO users (github_user_id, login, email, avatar_url)
-VALUES ($1, $2, $3, $4)
+VALUES ($1::bigint, $2, $3, $4)
 ON CONFLICT (github_user_id) DO UPDATE
     SET login = EXCLUDED.login,
         email = EXCLUDED.email,
         avatar_url = EXCLUDED.avatar_url
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
 `
 
 type UpsertUserParams struct {
@@ -2107,7 +2330,10 @@ type UpsertUserParams struct {
 }
 
 // Insert a user keyed by their GitHub user id, updating profile fields on
-// repeat logins. Returns the full row (id is stable across logins).
+// repeat logins. Returns the full row (id is stable across logins). Since
+// TAV-149 login identity is OIDC; this remains for test seeding and the
+// legacy shape (the cast keeps the param a non-null bigint now that the
+// column is nullable).
 func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, upsertUser,
 		arg.GithubUserID,
@@ -2126,6 +2352,8 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.CreatedAt,
 		&i.DownloadAsIs,
 		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
 	)
 	return i, err
 }
