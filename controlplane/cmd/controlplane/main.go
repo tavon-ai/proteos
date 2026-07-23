@@ -29,6 +29,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 	cpmetrics "github.com/tavon-ai/proteos/controlplane/internal/metrics"
 	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
+	"github.com/tavon-ai/proteos/controlplane/internal/oidc"
 	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 	"github.com/tavon-ai/proteos/controlplane/internal/providers"
 	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
@@ -379,11 +380,15 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	var tokenSrc *github.TokenSource
 	var guestCtl *guestctl.Manager
 	if err := cfg.ValidateOAuth(); err != nil {
-		// Without OAuth config the server still serves /healthz and the
+		// Without auth config the server still serves /healthz and the
 		// authenticated API (which simply 401s) — useful for the 1.0 smoke
 		// path and CI before secrets are wired. Warn loudly.
-		slog.Warn("GitHub OAuth not configured; login + git routes disabled", "reason", err.Error())
+		slog.Warn("Zitadel/GitHub auth not configured; login + git routes disabled", "reason", err.Error())
 	} else {
+		oidcClient := oidc.NewClient(oidc.Config{
+			Issuer:   cfg.OIDCIssuer(),
+			ClientID: cfg.ZitadelClientID,
+		})
 		ghClient = github.NewClient(github.Config{
 			ClientID:     cfg.GitHubClientID,
 			ClientSecret: cfg.GitHubClientSecret,
@@ -394,7 +399,7 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 			CookieSecure:        cfg.CookieSecure,
 			SessionTTL:          cfg.SessionTTL,
 			AllowedGitHubLogins: cfg.AllowedGitHubLogins,
-		}, ghClient, sessions, q, sec, auditRec)
+		}, oidcClient, ghClient, sessions, q, sec, auditRec)
 
 		// Phase 7: per-user token lifecycle + the persistent guest control channel
 		// manager. The manager watches machine state (via the broker) and keeps one
