@@ -337,6 +337,48 @@ func TestConnectGitHubLinksAndStoresTokens(t *testing.T) {
 	}
 }
 
+func TestReconnectHealsRevokedGrant(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	h := newHarness(t, idp, gh, nil)
+
+	h.callback(t, "code", h.login(t)).Body.Close()
+	h.githubCallback(t, "gh-code", h.connect(t)).Body.Close()
+
+	// Simulate a dead grant (what the TokenSource records when GitHub rejects
+	// the refresh token) and rotate the fake's next token pair.
+	userID := userIDByOIDCSub(t, h, "sub-1")
+	ctx := context.Background()
+	if _, err := h.pool.Exec(ctx,
+		`UPDATE github_links SET metadata = metadata || '{"revoked":true}' WHERE user_id = $1`, userID); err != nil {
+		t.Fatal(err)
+	}
+	gh.tokenBody = `{"access_token":"gho_fresh","refresh_token":"ghr_fresh","token_type":"bearer","scope":"repo","expires_in":3600,"refresh_token_expires_in":15897600}`
+
+	// Re-running the connect flow (the Reconnect GitHub banner) heals it.
+	h.githubCallback(t, "gh-code-2", h.connect(t)).Body.Close()
+
+	link, err := h.queries.GetGitHubLink(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta struct {
+		Revoked bool `json:"revoked"`
+	}
+	if err := json.Unmarshal(link.Metadata, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Revoked {
+		t.Fatal("reconnect should clear the revoked flag")
+	}
+	stored, err := h.secrets.Get(link.SecretRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored["access_token"] != "gho_fresh" || stored["refresh_token"] != "ghr_fresh" {
+		t.Fatalf("reconnect should store the fresh token pair: %+v", stored)
+	}
+}
+
 func TestConnectGitHubRequiresAuth(t *testing.T) {
 	idp, gh := newFakeIdP(t), newFakeGitHub(t)
 	h := newHarness(t, idp, gh, nil)

@@ -363,6 +363,7 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request, user st
 		"refresh_token_expires_at": now.Add(time.Duration(tok.RefreshTokenExpiresIn) * time.Second).UTC().Format(time.RFC3339),
 	}); err != nil {
 		slog.Error("store github tokens failed", "err", err)
+		h.unsetUserGitHub(r.Context(), user.ID)
 		h.redirectConnectError(w, r, "internal")
 		return
 	}
@@ -381,6 +382,7 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request, user st
 		SecretRef: secretRef,
 	}); err != nil {
 		slog.Error("upsert github link failed", "err", err)
+		h.unsetUserGitHub(r.Context(), user.ID)
 		h.redirectConnectError(w, r, "internal")
 		return
 	}
@@ -393,6 +395,16 @@ func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request, user st
 		Metadata: map[string]any{"github_login": ghUser.Login},
 	})
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// unsetUserGitHub rolls github_user_id back to NULL after a partial Connect
+// GitHub failure, so /api/me github_connected stays false and the SPA keeps
+// gating — a "connected" user with no stored tokens would be stuck with
+// reconnect_github on every git operation instead.
+func (h *Handler) unsetUserGitHub(ctx context.Context, userID pgtype.UUID) {
+	if _, err := h.store.SetUserGitHub(ctx, store.SetUserGitHubParams{ID: userID, GithubUserID: nil}); err != nil {
+		slog.Error("rollback github link failed", "err", err)
+	}
 }
 
 // Logout revokes the current session and clears the cookie.
