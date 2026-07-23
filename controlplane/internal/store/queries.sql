@@ -359,6 +359,19 @@ WHERE agent_tasks.user_id = $1
 ORDER BY agent_tasks.created_at DESC
 LIMIT $2;
 
+-- name: GetAgentTaskByUser :one
+-- One coding agent session by id, scoped to its owning user (TAV-142 session
+-- detail) and joined with the owning machine's display name, matching
+-- ListAgentTasksByUser's shape. Scoping to user_id in the query itself means a
+-- session belonging to another user comes back as "no rows" rather than a row
+-- the handler must remember to ownership-check.
+SELECT
+    sqlc.embed(agent_tasks),
+    m.name AS machine_name
+FROM agent_tasks
+JOIN machines m ON m.id = agent_tasks.machine_id
+WHERE agent_tasks.id = $1 AND agent_tasks.user_id = $2;
+
 -- name: MarkAgentTaskRunning :exec
 -- Move a queued task to running once the run is dispatched.
 UPDATE agent_tasks

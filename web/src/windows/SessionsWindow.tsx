@@ -13,7 +13,12 @@ const TABS: { key: SessionStatusFilter; label: string }[] = [
 // machine they own — past and in-progress. Unlike the per-machine Tasks
 // window, this is a global window (no project/machine selection needed) meant
 // to answer "what is/was happening across all my machines" at a glance.
-export function SessionsWindow() {
+// onOpenDetail opens a session's detail view (TAV-142) when its row is clicked.
+export function SessionsWindow({
+  onOpenDetail,
+}: {
+  onOpenDetail: (session: AgentSession) => void;
+}) {
   const [status, setStatus] = useState<SessionStatusFilter>('all');
   const { data, isLoading, isError } = useSessions(status);
   const sessions = data?.sessions ?? [];
@@ -58,7 +63,7 @@ export function SessionsWindow() {
       {!isLoading && !isError && sessions.length > 0 && (
         <ul className="sessions-list">
           {sessions.map((s) => (
-            <SessionRow key={s.id} session={s} />
+            <SessionRow key={s.id} session={s} onOpen={() => onOpenDetail(s)} />
           ))}
         </ul>
       )}
@@ -66,21 +71,23 @@ export function SessionsWindow() {
   );
 }
 
-function SessionRow({ session }: { session: AgentSession }) {
+function SessionRow({ session, onOpen }: { session: AgentSession; onOpen: () => void }) {
   return (
     <li className="sessions-row">
-      <div className="sessions-row-head">
-        <span className={`sessions-status sessions-${session.status.toLowerCase()}`}>
-          {session.status}
-        </span>
-        <span className="sessions-row-meta">
-          {session.machine_name} · {session.project} · {session.provider} ·{' '}
-          {fmtTime(session.created_at)}
-        </span>
-      </div>
-      <p className="sessions-row-prompt">{session.prompt}</p>
-      {session.result_summary && <p className="sessions-row-summary">{session.result_summary}</p>}
-      {session.error && <p className="sessions-row-error">{session.error}</p>}
+      <button className="sessions-row-btn" onClick={onOpen}>
+        <div className="sessions-row-head">
+          <span className={`sessions-status sessions-${session.status.toLowerCase()}`}>
+            {session.status}
+          </span>
+          <span className="sessions-row-meta">
+            {session.machine_name} · {session.project} · {session.provider} ·{' '}
+            {fmtTime(session.created_at)}
+          </span>
+        </div>
+        <p className="sessions-row-prompt">{session.prompt}</p>
+        {session.result_summary && <p className="sessions-row-summary">{session.result_summary}</p>}
+        {session.error && <p className="sessions-row-error">{session.error}</p>}
+      </button>
     </li>
   );
 }

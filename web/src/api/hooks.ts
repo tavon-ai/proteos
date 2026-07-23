@@ -131,11 +131,16 @@ export function useMachineMutations() {
     mutationFn: ({ id, name }: { id: string; name: string }) => api.renameMachine(id, name),
     onSuccess,
   });
-  // Destroy returns 204 (no body); drop it from the cache immediately, before the
-  // SSE `destroyed` event lands.
+  // Destroy returns 204 (no body); drop it from the cache immediately, before
+  // the SSE `destroyed` event lands. Accepts either a bare machine id (normal
+  // destroy) or {id, force} (TAV-141: force=true bypasses a blocked Claude
+  // session export — see api.destroyMachine).
   const destroy = useMutation({
-    mutationFn: (id: string) => api.destroyMachine(id),
-    onSuccess: (_void, id) => removeMachine(qc, id),
+    mutationFn: (arg: string | { id: string; force?: boolean }) => {
+      const { id, force } = typeof arg === 'string' ? { id: arg, force: undefined } : arg;
+      return api.destroyMachine(id, force);
+    },
+    onSuccess: (_void, arg) => removeMachine(qc, typeof arg === 'string' ? arg : arg.id),
   });
   return { create, start, stop, rename, destroy };
 }
@@ -145,11 +150,12 @@ export function useMachineMutations() {
 // destroy mutation); machines that failed to destroy are left in place. The SSE
 // `destroyed` event does the same removal independently and in real time as the
 // backend works through the list, so callers can read the live cache to show
-// per-machine progress while the request is in flight.
+// per-machine progress while the request is in flight. force=true (TAV-141) is
+// forwarded to every machine's destroy, bypassing a blocked session export.
 export function useDestroyAllMachines() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.destroyAllMachines(),
+    mutationFn: (force?: boolean) => api.destroyAllMachines(force),
     onSuccess: (res: DestroyAllResponse) => {
       const destroyedIds = new Set(res.results.filter((r) => r.ok).map((r) => r.id));
       qc.setQueryData<MachineSummary[]>(machinesKey, (prev = []) =>
@@ -810,5 +816,23 @@ export function useSessions(status: SessionStatusFilter) {
     queryKey: ['sessions', status],
     queryFn: () => api.listSessions(status, 1000),
     refetchInterval: 5_000,
+  });
+}
+
+// useSession polls GET /api/sessions/{id} for the session detail view
+// (TAV-142). A short poll keeps an in-progress session's metadata (status,
+// usage once it lands) live while the window is open; disabled when no id is
+// selected.
+export function useSession(id: string | null) {
+  return useQuery({
+    queryKey: ['session', id],
+    queryFn: () => api.getSession(id as string),
+    enabled: !!id,
+    refetchInterval: 5_000,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
   });
 }
