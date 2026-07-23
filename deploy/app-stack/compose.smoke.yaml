@@ -37,8 +37,10 @@ services:
       PROTEOS_ADDR: ":8080"
       DATABASE_URL: "postgres://proteos:proteos@postgres:5432/proteos?sslmode=disable"
       PROTEOS_BASE_URL: "http://localhost:8080"
-      # Dummy OAuth: the server serves /healthz and 401s the API without a real
-      # GitHub App; the smoke only proves wiring, not login.
+      # Dummy auth config: the server serves /healthz and 401s the API without a
+      # real Zitadel/GitHub App; the smoke only proves wiring, not login.
+      ZITADEL_DOMAIN: auth.smoke.invalid
+      ZITADEL_CLIENT_ID: smoke-zitadel-client
       GITHUB_APP_CLIENT_ID: smoke-client-id
       GITHUB_APP_CLIENT_SECRET: smoke-client-secret
       PROTEOS_STATE_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

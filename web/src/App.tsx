@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useMe } from './api/hooks';
 import { SessionExpiredError, type Me } from './api/client';
 import { Login } from './routes/Login';
+import { ConnectGitHub } from './routes/ConnectGitHub';
 import { Desktop } from './desktop/Desktop';
 import { MobileApp } from './mobile/MobileApp';
 import { PHONE_MEDIA_QUERY, shouldRedirectToMobile } from './mobileGate';
@@ -65,6 +66,11 @@ function RequireAuth({ render }: { render: (me: Me) => React.ReactNode }) {
   }
   if (!data) {
     return <Navigate to="/login" replace />;
+  }
+  // TAV-149: signed in via Zitadel, but the workspace needs a linked GitHub
+  // account for git operations — block on the one-time connect screen.
+  if (!data.github_connected) {
+    return <ConnectGitHub login={data.user.login} />;
   }
   return render(data);
 }
