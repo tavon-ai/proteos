@@ -3,10 +3,13 @@ package httpapi
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
@@ -73,13 +76,42 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]sessionView, 0, len(rows))
 	for _, row := range rows {
-		v := toSessionView(row)
+		v := toSessionView(row.AgentTask, row.MachineName)
 		if status != "" && sessionStatusGroup(v.Status) != status {
 			continue
 		}
 		views = append(views, v)
 	}
 	writeJSON(w, http.StatusOK, sessionsResponse{Sessions: views})
+}
+
+// handleGetSession returns one of the caller's coding agent sessions by id —
+// the same row shape as handleListSessions, for the Sessions page's detail
+// view (TAV-142). Scoped to the caller: a session belonging to another user
+// 404s as no_session rather than leaking its existence.
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := machine.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no_session")
+		return
+	}
+	row, err := s.Queries.GetAgentTaskByUser(r.Context(), store.GetAgentTaskByUserParams{
+		ID: id, UserID: user.ID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "no_session")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, toSessionView(row.AgentTask, row.MachineName))
 }
 
 // handleExportSessions streams the same sessions handleListSessions would
@@ -121,7 +153,7 @@ func (s *Server) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 		"result_summary", "error", "created_at", "started_at", "ended_at",
 	})
 	for _, row := range rows {
-		v := toSessionView(row)
+		v := toSessionView(row.AgentTask, row.MachineName)
 		if status != "" && sessionStatusGroup(v.Status) != status {
 			continue
 		}
@@ -132,6 +164,42 @@ func (s *Server) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	cw.Flush()
+}
+
+// handleExportSession downloads one session as a JSON attachment — the detail
+// view's "Export" button (TAV-142). Unlike the CSV export above (a flat table
+// row), this is the full sessionView, usage included, since a single-session
+// download is meant for someone inspecting one run in depth.
+func (s *Server) handleExportSession(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := machine.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no_session")
+		return
+	}
+	row, err := s.Queries.GetAgentTaskByUser(r.Context(), store.GetAgentTaskByUserParams{
+		ID: id, UserID: user.ID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "no_session")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get_failed")
+		return
+	}
+	v := toSessionView(row.AgentTask, row.MachineName)
+
+	name := fmt.Sprintf("proteos-session-%s.json", v.ID)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
 }
 
 // csvSafe guards against CSV/formula injection: a cell starting with
@@ -190,12 +258,11 @@ func parseSessionsLimit(raw string) int {
 	return n
 }
 
-func toSessionView(row store.ListAgentTasksByUserRow) sessionView {
-	t := row.AgentTask
+func toSessionView(t store.AgentTask, machineName string) sessionView {
 	v := sessionView{
 		ID:             machine.UUIDString(t.ID),
 		MachineID:      machine.UUIDString(t.MachineID),
-		MachineName:    row.MachineName,
+		MachineName:    machineName,
 		Status:         t.Status,
 		Provider:       t.Provider,
 		Project:        t.Project,

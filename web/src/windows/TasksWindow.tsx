@@ -8,6 +8,7 @@ import {
   useTaskEvents,
   useTasks,
 } from '../api/hooks';
+import { EventRow, resultGlyph, resultText } from './agentEvents';
 
 // TasksWindow is the headless task lane's live view (AT1/AT2): hand a project a
 // natural-language task, watch the coding agent work in real time as structured
@@ -297,53 +298,6 @@ function FollowUpForm({
       )}
     </form>
   );
-}
-
-// EventRow renders one normalized agent event by kind.
-function EventRow({ ev }: { ev: TaskEvent }) {
-  switch (ev.kind) {
-    case 'assistant_text':
-      return <div className="tasks-ev tasks-ev-text">{ev.text}</div>;
-    case 'tool_use':
-      return (
-        <div className="tasks-ev tasks-ev-tool">
-          <span className="tasks-ev-toolname">{ev.tool || 'tool'}</span>
-          {ev.input != null && <code className="tasks-ev-input">{summarizeInput(ev.input)}</code>}
-        </div>
-      );
-    case 'tool_result':
-      return (
-        <div className={`tasks-ev tasks-ev-result${ev.is_error ? ' is-error' : ''}`}>
-          <pre className="tasks-ev-output">{clip(ev.output ?? '')}</pre>
-        </div>
-      );
-    default:
-      return null; // the terminal `result` is rendered by TaskStream
-  }
-}
-
-function resultGlyph(ev: TaskEvent): string {
-  if (ev.status === 'canceled') return '⊘';
-  return ev.is_error ? '✗' : '✓';
-}
-
-function resultText(ev: TaskEvent): string {
-  if (ev.status === 'canceled') return 'Canceled';
-  if (ev.text) return ev.text;
-  return ev.is_error ? ev.error || 'failed' : 'done';
-}
-
-function summarizeInput(input: unknown): string {
-  try {
-    const s = typeof input === 'string' ? input : JSON.stringify(input);
-    return clip(s, 200);
-  } catch {
-    return '';
-  }
-}
-
-function clip(s: string, max = 2000): string {
-  return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
 function basename(path?: string): string {

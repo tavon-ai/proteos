@@ -2331,11 +2331,23 @@ body {
   min-height: 0;
 }
 .sessions-row {
+  border-bottom: 1px solid var(--border);
+}
+.sessions-row-btn {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 0.2rem;
+  width: 100%;
   padding: 0.5rem 0.2rem;
-  border-bottom: 1px solid var(--border);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.sessions-row-btn:hover {
+  background: var(--panel);
 }
 .sessions-row-head {
   display: flex;
@@ -2390,6 +2402,80 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Session detail window (TAV-142): one session's metadata + conversation. */
+.session-detail-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+.session-detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+.session-detail-empty {
+  padding: 1rem;
+}
+.session-detail-meta {
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.session-detail-meta-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.session-detail-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+.session-detail-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.4rem 1rem;
+  margin: 0 0 0.6rem;
+}
+.session-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.session-detail-field dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.session-detail-field dd {
+  margin: 0;
+  font-size: 0.85rem;
+  overflow-wrap: break-word;
+}
+.session-detail-id {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+}
+.session-detail-prompt {
+  margin: 0;
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+}
+.session-detail-events {
+  flex: 1 1 auto;
 }
 
 .placeholder-body {

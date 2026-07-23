@@ -318,6 +318,10 @@ func (s *Server) Handler() http.Handler {
 	// header is required. Needs only Queries, which is always wired.
 	mux.Handle("GET /api/sessions", s.requireAuth(http.HandlerFunc(s.handleListSessions)))
 	mux.Handle("GET /api/sessions/export", s.requireAuth(http.HandlerFunc(s.handleExportSessions)))
+	// One session by id, and its single-session JSON download (TAV-142 detail
+	// view). Both GETs — no CSRF header required.
+	mux.Handle("GET /api/sessions/{id}", s.requireAuth(http.HandlerFunc(s.handleGetSession)))
+	mux.Handle("GET /api/sessions/{id}/export", s.requireAuth(http.HandlerFunc(s.handleExportSession)))
 
 	// AT2: live agent-event SSE for one task. A GET stream (no CSRF — like the
 	// machine SSE; EventSource cannot set headers and it is read-only). It only
