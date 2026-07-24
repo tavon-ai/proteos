@@ -19,12 +19,18 @@ export function TasksWindow({
   machineId,
   machineState,
   projectPath,
+  onOpenDetail,
 }: {
   machineId: string | null;
   machineState: MachineState;
   // Absolute /workspace path; the project name (the API parameter) is its
   // basename, since clones land at /workspace/<name>.
   projectPath?: string;
+  // Opens the full task detail view for one row, alongside this window's own
+  // inline live-stream selection (onClick below) — a secondary "Details" link
+  // per row rather than overloading the row click, which stays the create/
+  // watch flow's primary interaction.
+  onOpenDetail: (task: AgentTask) => void;
 }) {
   const running = machineState === 'running';
   const project = basename(projectPath);
@@ -80,7 +86,7 @@ export function TasksWindow({
         <ul className="tasks-list">
           {rows.length === 0 && <li className="muted tasks-empty">No tasks yet.</li>}
           {rows.map((t) => (
-            <li key={t.id}>
+            <li key={t.id} className="tasks-row-item">
               <button
                 className={`tasks-row${selected === t.id ? ' is-selected' : ''}`}
                 onClick={() => setSelected(t.id)}
@@ -91,6 +97,14 @@ export function TasksWindow({
                 </span>
                 {t.result_summary && <span className="tasks-row-summary">{t.result_summary}</span>}
                 {t.error && <span className="tasks-row-error">{t.error}</span>}
+              </button>
+              <button
+                type="button"
+                className="tasks-row-detail-link"
+                onClick={() => onOpenDetail(t)}
+                aria-label="View task details"
+              >
+                Details →
               </button>
             </li>
           ))}

@@ -2533,6 +2533,10 @@ body {
 .session-detail-events {
   flex: 1 1 auto;
 }
+.session-detail-session-link {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+}
 
 .placeholder-body {
   padding: 1rem;
@@ -2603,7 +2607,6 @@ body {
   text-align: left;
   padding: 0.5rem 0.6rem;
   border: none;
-  border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -2646,6 +2649,24 @@ body {
 }
 .tasks-row-error {
   color: var(--error);
+}
+.tasks-row-item {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+.tasks-row-detail-link {
+  align-self: flex-end;
+  margin: 0.2rem 0.6rem 0.4rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.tasks-row-detail-link:hover {
+  text-decoration: underline;
 }
 .tasks-stream {
   flex: 1 1 auto;

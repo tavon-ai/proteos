@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,10 +109,49 @@ func TestCreateTask_202(t *testing.T) {
 		ID       string `json:"id"`
 		Status   string `json:"status"`
 		Provider string `json:"provider"`
+		Prompt   string `json:"prompt"`
 	}
 	_ = json.NewDecoder(get.Body).Decode(&tv)
-	if tv.Status != "running" || tv.Provider != "claude" || tv.ID != body.TaskID {
+	if tv.Status != "running" || tv.Provider != "claude" || tv.ID != body.TaskID ||
+		tv.Prompt != "make it responsive" {
 		t.Fatalf("unexpected task view: %+v", tv)
+	}
+}
+
+// TestExportTask_DownloadsJSONAttachment exercises GET
+// /api/machines/{id}/tasks/{tid}/export: it requires auth, needs no CSRF
+// header (a GET), and returns the full task (including prompt) as a JSON
+// attachment scoped to its machine.
+func TestExportTask_DownloadsJSONAttachment(t *testing.T) {
+	t.Parallel()
+	fx := setupTasks(t, string(machine.StateRunning), true)
+	taskID := createTaskFor(t, fx)
+
+	resp := fx.get(t, "/api/machines/"+fx.mid+"/tasks/"+taskID+"/export")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("content-type = %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Fatalf("content-disposition = %q", cd)
+	}
+	var body struct {
+		ID     string `json:"id"`
+		Prompt string `json:"prompt"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.ID != taskID || body.Prompt != "do it" {
+		t.Fatalf("unexpected export body: %+v", body)
+	}
+
+	resp = fx.get(t, "/api/machines/"+fx.mid+"/tasks/00000000-0000-0000-0000-000000000000/export")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown id export status = %d, want 404", resp.StatusCode)
 	}
 }
 

@@ -310,6 +310,9 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /api/machines/{id}/tasks", s.requireAuth(s.csrfHeader(s.userLimit(s.taskRL, http.HandlerFunc(s.handleCreateTask)))))
 		mux.Handle("GET /api/machines/{id}/tasks", s.requireAuth(http.HandlerFunc(s.handleListTasks)))
 		mux.Handle("GET /api/machines/{id}/tasks/{tid}", s.requireAuth(http.HandlerFunc(s.handleGetTask)))
+		// Single-task JSON download (the task detail view's Export button). A GET
+		// — no CSRF header required.
+		mux.Handle("GET /api/machines/{id}/tasks/{tid}/export", s.requireAuth(http.HandlerFunc(s.handleExportTask)))
 		// Cancel a running task (AT3): a mutation, so CSRF-guarded.
 		mux.Handle("POST /api/machines/{id}/tasks/{tid}/cancel", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleCancelTask))))
 		// Follow-up turn on a finished task (AT4: resume the agent session). A

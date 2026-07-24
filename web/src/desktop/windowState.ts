@@ -20,6 +20,7 @@ type WindowKind =
   | 'applogs'
   | 'sessions'
   | 'session-detail'
+  | 'task-detail'
   | 'settings'
   | 'projects'
   | 'placeholder';
@@ -59,6 +60,10 @@ export interface WindowState {
   // shows (TAV-142). Distinct from `session` above — that field is an opaque
   // per-window PTY/agent reconnect id, not a coding-agent session id.
   sessionId?: string;
+  // The headless agent task (agent_tasks row) id a 'task-detail' window shows.
+  // Machine-scoped (unlike sessionId's global session-detail), so it is always
+  // paired with `machineId`.
+  taskId?: string;
 
   geometry: Geometry;
   zIndex: number;
@@ -92,6 +97,7 @@ const DEFAULT_SIZE: Record<WindowKind, { width: number; height: number }> = {
   applogs: { width: 760, height: 540 },
   sessions: { width: 820, height: 560 },
   'session-detail': { width: 820, height: 620 },
+  'task-detail': { width: 820, height: 620 },
   settings: { width: 640, height: 540 },
   projects: { width: 600, height: 480 },
   placeholder: { width: 480, height: 320 },
@@ -119,6 +125,7 @@ export interface OpenSpec {
   folder?: string;
   port?: number;
   sessionId?: string;
+  taskId?: string;
   dedupeKey?: string;
   geometry?: Partial<Geometry>;
 }
@@ -206,6 +213,8 @@ function dedupeKeyOf(w: WindowState): string | undefined {
       return `projects|${w.machineId ?? ''}`;
     case 'session-detail':
       return `session-detail|${w.sessionId ?? ''}`;
+    case 'task-detail':
+      return `task-detail|${w.machineId ?? ''}|${w.taskId ?? ''}`;
     case 'settings':
     case 'logs':
     case 'applogs':
@@ -245,6 +254,7 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
         folder: action.spec.folder,
         port: action.spec.port,
         sessionId: action.spec.sessionId,
+        taskId: action.spec.taskId,
         geometry,
         zIndex: z,
         mode: 'normal',
@@ -419,7 +429,8 @@ export function serializeLayout(state: DesktopState, machineId?: string): Persis
         w.kind !== 'projects' &&
         w.kind !== 'changes' &&
         w.kind !== 'tasks' &&
-        w.kind !== 'session-detail',
+        w.kind !== 'session-detail' &&
+        w.kind !== 'task-detail',
     )
     .filter((w) => machineId === undefined || w.machineId === machineId)
     .map<PersistedWindow>((w) => ({

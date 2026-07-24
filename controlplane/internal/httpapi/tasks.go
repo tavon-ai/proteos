@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -46,6 +47,7 @@ type taskView struct {
 	Status        string          `json:"status"`
 	Provider      string          `json:"provider"`
 	Project       string          `json:"project"`
+	Prompt        string          `json:"prompt"`
 	SessionID     string          `json:"agent_session_id,omitempty"`
 	Usage         json.RawMessage `json:"usage,omitempty"`
 	ResultSummary string          `json:"result_summary,omitempty"`
@@ -197,6 +199,40 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toTaskView(task))
+}
+
+// handleExportTask downloads one task as a JSON attachment — the task detail
+// view's "Export" button, mirroring handleExportSession. The task must belong
+// to the {id} machine (and thus the caller).
+func (s *Server) handleExportTask(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	mc, err := s.resolveTerminalMachine(r.Context(), user, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no_machine")
+		return
+	}
+	tid, err := machine.ParseUUID(r.PathValue("tid"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no_task")
+		return
+	}
+	task, err := s.Queries.GetAgentTask(r.Context(), tid)
+	if err != nil || machine.UUIDString(task.MachineID) != machine.UUIDString(mc.ID) {
+		writeError(w, http.StatusNotFound, "no_task")
+		return
+	}
+	v := toTaskView(task)
+
+	name := fmt.Sprintf("proteos-task-%s.json", v.ID)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
 }
 
 // handleCancelTask requests cancellation of a running task (AT3). It dispatches
@@ -366,6 +402,7 @@ func toTaskView(t store.AgentTask) taskView {
 		Status:        t.Status,
 		Provider:      t.Provider,
 		Project:       t.Project,
+		Prompt:        t.Prompt,
 		SessionID:     t.AgentSessionID,
 		ResultSummary: t.ResultSummary,
 		Error:         t.Error,
