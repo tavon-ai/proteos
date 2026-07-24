@@ -1,4 +1,5 @@
 import type { MachineSummary, MachineTemplate } from '../api/client';
+import { ExposeAppPanel } from '../components/ExposeAppPanel';
 import { NetworkPolicyPanel } from '../components/NetworkPolicyPanel';
 import { Modal } from './Modal';
 
@@ -58,6 +59,8 @@ export function MachineDetails({
         ))}
       </dl>
       {machine.last_error && <div className="form-error">{machine.last_error}</div>}
+
+      <ExposeAppPanel machineId={machine.id} machineState={machine.state} />
 
       <NetworkPolicyPanel machineId={machine.id} />
 
