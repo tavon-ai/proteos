@@ -632,6 +632,24 @@ export function useTasks(machineId: string | null, enabled: boolean) {
   });
 }
 
+// useTask polls GET /api/machines/{id}/tasks/{tid} for the task detail view: one
+// task's full metadata + result, scoped to its machine. A short poll keeps an
+// in-progress task's status/usage live while the window is open; disabled when
+// no machine/task id is selected.
+export function useTask(machineId: string | null, taskId: string | null) {
+  return useQuery({
+    queryKey: ['task', machineId, taskId],
+    queryFn: () => api.getTask(machineId as string, taskId as string),
+    enabled: !!machineId && !!taskId,
+    refetchInterval: 5_000,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      if (error instanceof ApiError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
 // useCreateTask dispatches a headless run; on success it invalidates the task
 // list so the new (queued/running) row appears immediately.
 export function useCreateTask(machineId: string | null) {

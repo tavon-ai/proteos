@@ -1,4 +1,4 @@
-import type { AgentSession, Project } from '../api/client';
+import type { AgentSession, AgentTask, Project } from '../api/client';
 import type { WindowManagerContext } from './windowManagerContext';
 
 // openers builds the OpenSpec for each window kind and hands it to the window
@@ -166,12 +166,40 @@ export function openSessions(wm: WindowManagerContext): void {
 // row again) focuses the existing window instead of stacking a duplicate.
 // Global window (no machine scope), since Sessions itself is global.
 export function openSessionDetail(wm: WindowManagerContext, session: AgentSession): void {
+  openSessionDetailById(wm, session.id, session.project);
+}
+
+// openSessionDetailById opens the same session-detail window as
+// openSessionDetail, for callers (e.g. the task detail view's "View session"
+// link) that only have the session id + its project, not the full
+// AgentSession — the window fetches the full record itself once open.
+export function openSessionDetailById(
+  wm: WindowManagerContext,
+  sessionId: string,
+  project: string,
+): void {
   wm.open({
-    id: `session-detail-${session.id}`,
+    id: `session-detail-${sessionId}`,
     kind: 'session-detail',
-    title: `Session — ${session.project}`,
-    sessionId: session.id,
-    dedupeKey: `session-detail|${session.id}`,
+    title: `Session — ${project}`,
+    sessionId,
+    dedupeKey: `session-detail|${sessionId}`,
+  });
+}
+
+// openTaskDetail opens the detail view for one headless agent task on a
+// machine's Tasks window: one window per (machine, task id), so reopening
+// (e.g. clicking the same row's details link again) focuses the existing
+// window instead of stacking a duplicate. Machine-scoped, unlike the global
+// session-detail window, since a task always belongs to one machine.
+export function openTaskDetail(wm: WindowManagerContext, machineId: string, task: AgentTask): void {
+  wm.open({
+    id: `task-detail-${machineId}-${task.id}`,
+    kind: 'task-detail',
+    title: `Task — ${task.project}`,
+    machineId,
+    taskId: task.id,
+    dedupeKey: `task-detail|${machineId}|${task.id}`,
   });
 }
 

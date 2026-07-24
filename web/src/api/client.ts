@@ -493,6 +493,7 @@ export interface AgentTask {
   status: 'queued' | 'running' | 'done' | 'failed' | 'canceled';
   provider: string;
   project: string;
+  prompt: string;
   agent_session_id?: string;
   usage?: Record<string, unknown>;
   result_summary?: string;
@@ -1003,6 +1004,13 @@ export function sessionsExportUrl(status?: SessionStatusFilter): string {
 // same <a download> pattern as sessionsExportUrl/logsExportUrl.
 export function sessionExportUrl(id: string): string {
   return `/api/sessions/${encodeURIComponent(id)}/export`;
+}
+
+// taskExportUrl is the GET URL that downloads one task as a JSON attachment
+// (the task detail view's Export button). Not a request() call — same
+// <a download> pattern as sessionExportUrl.
+export function taskExportUrl(machineID: string, taskID: string): string {
+  return `/api/machines/${encodeURIComponent(machineID)}/tasks/${encodeURIComponent(taskID)}/export`;
 }
 
 // taskEventsUrl is the SSE endpoint for one task's live agent events (AT2),

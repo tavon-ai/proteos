@@ -11,6 +11,7 @@ import { LogsWindow } from '../windows/LogsWindow';
 import { AppLogsWindow } from '../windows/AppLogsWindow';
 import { SessionsWindow } from '../windows/SessionsWindow';
 import { SessionDetailWindow } from '../windows/SessionDetailWindow';
+import { TaskDetailWindow } from '../windows/TaskDetailWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
 import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
@@ -24,7 +25,13 @@ import { openPreview } from './openers';
 import { Window, WindowErrorBoundary } from './Window';
 import { WindowManagerProvider } from './WindowManager';
 import { useWindowManager, type WindowManagerContext } from './windowManagerContext';
-import { openProjects, openSessionDetail, openSessions } from './openers';
+import {
+  openProjects,
+  openSessionDetail,
+  openSessionDetailById,
+  openSessions,
+  openTaskDetail,
+} from './openers';
 import { useLayoutLoader, useLayoutSaver } from './useLayout';
 import type { WindowState } from './windowState';
 import { WallpaperProvider } from './wallpaperContext';
@@ -154,6 +161,7 @@ function DesktopShell({
                   <WindowBody
                     win={win}
                     machineState={winMachine?.state ?? 'stopped'}
+                    machineName={winMachine?.name}
                     lastError={winMachine?.last_error ?? null}
                     events={events}
                     wm={wm}
@@ -196,12 +204,14 @@ function DesktopShell({
 function WindowBody({
   win,
   machineState,
+  machineName,
   lastError,
   events,
   wm,
 }: {
   win: WindowState;
   machineState: MachineState;
+  machineName?: string;
   lastError: string | null;
   events: MachineEvent[];
   wm: WindowManagerContext;
@@ -273,6 +283,7 @@ function WindowBody({
           machineId={win.machineId ?? null}
           machineState={machineState}
           projectPath={win.projectId}
+          onOpenDetail={(task) => win.machineId && openTaskDetail(wm, win.machineId, task)}
         />
       );
     case 'logs':
@@ -289,6 +300,16 @@ function WindowBody({
             wm.close(win.id);
             openSessions(wm);
           }}
+        />
+      );
+    case 'task-detail':
+      return (
+        <TaskDetailWindow
+          machineId={win.machineId ?? null}
+          taskId={win.taskId ?? null}
+          machineName={machineName}
+          onBack={() => wm.close(win.id)}
+          onOpenSession={(sessionId, project) => openSessionDetailById(wm, sessionId, project)}
         />
       );
     case 'settings':
