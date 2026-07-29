@@ -1,8 +1,14 @@
 name: CLI Release
 
 # Build the proteos CLI binary for every supported platform, stamp the chosen
-# version into it, and publish a GitHub release with the binaries (plus
-# checksums) attached.
+# version into it, push the Go module tag, and publish a GitHub release with the
+# binaries (plus checksums) attached.
+#
+# Two tags come out of a release, and they are not interchangeable:
+#   v1.2.3      — the release humans see, and what the binaries are named for.
+#   cli/v1.2.3  — the Go module tag. `go install .../cli/cmd/proteos@v1.2.3`
+#                 resolves against this one, because cli/ is a nested module.
+# See the "Tag the Go module" step for what goes wrong with only the first.
 #
 # Triggered either by pushing a tag matching v* (e.g., v1.2.3) or manually via
 # workflow_dispatch (useful for pre-releases and hotfixes from a branch).
@@ -83,6 +89,56 @@ jobs:
           cd dist
           sha256sum proteos-* > checksums.txt
           cat checksums.txt
+
+      # The Go module tag, which is NOT the release tag.
+      #
+      # The CLI is a nested module (github.com/tavon-ai/proteos/cli), so the Go
+      # toolchain resolves its versions against `cli/v*`. Given only the release
+      # tag, `go install github.com/tavon-ai/proteos/cli/cmd/proteos@v1.2.3`
+      # falls back to the ROOT module and fails with "found, but does not
+      # contain package" — which reads like a broken pin and sends people
+      # looking at entirely the wrong thing. v0.1.3 shipped without this and
+      # cost exactly that hunt.
+      #
+      # Placed after the build so a version that never shipped never gets a
+      # module tag, and before the publish so a failure here stops the release
+      # rather than leaving one nobody can `go install`.
+      #
+      # It cannot re-trigger this workflow: `cli/v1.2.3` does not match the
+      # `v*` filter above.
+      - name: Tag the Go module
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          ref_json=$(gh api "repos/${REPO}/git/ref/tags/cli/${VERSION}" 2>/dev/null || true)
+          if [[ -n "$ref_json" ]]; then
+            existing=$(jq -r .object.sha <<<"$ref_json")
+            # An annotated tag's ref points at a tag object, not at the commit,
+            # so peel it — otherwise the comparison below reports a moved tag
+            # for one that has not moved at all. cli/v0.1.3 was cut by hand and
+            # is annotated, so this is not hypothetical.
+            if [[ "$(jq -r .object.type <<<"$ref_json")" == "tag" ]]; then
+              existing=$(gh api "repos/${REPO}/git/tags/${existing}" --jq .object.sha)
+            fi
+            if [[ "$existing" == "$SHA" ]]; then
+              echo "cli/${VERSION} already points at ${SHA} — re-run, nothing to do"
+              exit 0
+            fi
+            # A module tag must never move. The Go checksum database records one
+            # hash per version, permanently, so re-pointing a tag the mirror has
+            # already seen breaks verification for everyone who fetched it —
+            # including builds that were working yesterday. Cut a new version
+            # instead.
+            echo "::error::cli/${VERSION} already exists at ${existing}; refusing to move it to ${SHA}"
+            exit 1
+          fi
+          gh api "repos/${REPO}/git/refs" \
+            -f ref="refs/tags/cli/${VERSION}" \
+            -f sha="${SHA}" > /dev/null
+          echo "created cli/${VERSION} at ${SHA}"
 
       - name: Publish release
         env:
