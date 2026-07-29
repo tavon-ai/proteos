@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -72,14 +73,24 @@ func (h *Handler) AuthenticateBearer(ctx context.Context, accessToken string) (s
 	info, err := h.oidc.GetUserInfo(ctx, accessToken)
 	if err != nil {
 		// Every failure mode here — a rejected token, an unreachable IdP — is
-		// reported to the caller as 401. Distinguishing them would tell an
-		// unauthenticated caller about the IdP's state.
+		// reported to the CALLER as a flat 401. Distinguishing them would tell
+		// an unauthenticated caller about the IdP's state.
+		//
+		// The operator is a different audience, and gets the reason. Without
+		// this, a service whose calls are being refused looks identical to a
+		// deployment that predates bearer auth entirely, and there is nothing
+		// on either side to tell them apart.
+		slog.Warn("idp bearer rejected", "err", err)
 		return store.User{}, ErrInvalidBearer
 	}
 	user, errCode := h.resolveOIDCUser(ctx, info)
 	if errCode != "" {
+		// The token was good; mapping it to a user was not. Worth its own line:
+		// link_ambiguous is an operator problem, not a caller one.
+		slog.Warn("idp bearer resolved no user", "reason", errCode, "subject", info.Subject)
 		return store.User{}, ErrInvalidBearer
 	}
+	slog.Debug("idp bearer accepted", "subject", info.Subject)
 	h.bearerCache.put(key, user)
 	return user, nil
 }
