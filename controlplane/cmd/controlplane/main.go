@@ -400,6 +400,12 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 			SessionTTL:          cfg.SessionTTL,
 			AllowedGitHubLogins: cfg.AllowedGitHubLogins,
 		}, oidcClient, ghClient, sessions, q, sec, auditRec)
+		// Stated at startup so an operator can answer "does this deployment
+		// accept IdP bearers?" from the logs. Without it, a suite service whose
+		// calls are being refused looks the same as a build that predates the
+		// feature: both are a flat 401 with nothing to tell them apart.
+		slog.Info("api auth: session cookie, ProteOS PAT, and IdP access token accepted as bearer",
+			"issuer", cfg.OIDCIssuer())
 
 		// Phase 7: per-user token lifecycle + the persistent guest control channel
 		// manager. The manager watches machine state (via the broker) and keeps one
