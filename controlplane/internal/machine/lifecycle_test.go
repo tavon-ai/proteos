@@ -612,6 +612,45 @@ func TestMultipleMachines(t *testing.T) {
 	}
 }
 
+func TestCreate_NameSkipsDeletedIndex(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	m1, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create m1: %v", err)
+	}
+	m2, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create m2: %v", err)
+	}
+	m3, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create m3: %v", err)
+	}
+	if m1.Name != "machine-1" || m2.Name != "machine-2" || m3.Name != "machine-3" {
+		t.Fatalf("auto names = %q,%q,%q; want machine-1,machine-2,machine-3", m1.Name, m2.Name, m3.Name)
+	}
+
+	// Delete the middle machine, opening a gap at index 2 while machine-3
+	// still exists. A count-based scheme would recompute count+1 (2+1=3) and
+	// collide with the still-live machine-3; the fix must look at the
+	// highest existing index instead and skip past it.
+	if err := h.svc.Destroy(ctx, h.userID, m2.ID, false); err != nil {
+		t.Fatalf("destroy m2: %v", err)
+	}
+	m4, err := h.svc.Create(ctx, h.userID, machine.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create m4: %v", err)
+	}
+	if m4.Name != "machine-4" {
+		t.Fatalf("name after gap = %q, want machine-4 (no collision with existing machine-3)", m4.Name)
+	}
+	if m4.Name == m3.Name {
+		t.Fatal("new machine reused an existing name")
+	}
+}
+
 func TestMachineLimit(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
