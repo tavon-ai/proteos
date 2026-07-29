@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { markSignInAttempted } from '../autoSignIn';
 import {
   api,
   ApiError,
@@ -58,6 +59,16 @@ export function useLogout() {
     mutationFn: api.logout,
     onSuccess: () => {
       qc.clear();
+    },
+    // Sign-out has to win. Both callers land on /login afterwards, and /login
+    // starts the OIDC flow by itself — so without marking an attempt first,
+    // signing out would bounce through Zitadel (whose session this logout does
+    // not end; that is Orbit's job) and hand back the session just dropped.
+    //
+    // onSettled, not onSuccess: the user asked to leave, and a failed request
+    // should not sign them back in either.
+    onSettled: () => {
+      markSignInAttempted();
     },
   });
 }
