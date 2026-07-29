@@ -51,10 +51,19 @@ func Path() (string, error) {
 
 // Load reads the stored credentials. A missing file is not an error — it returns
 // a zero Credentials so first-run / env-only callers work.
+//
+// Neither is an unlocatable home. For reading, "there is nowhere a credentials
+// file could be" and "there is no credentials file there" are the same answer,
+// and failing the first case breaks the env-only path this CLI documents:
+// callers that export PROTEOS_URL and PROTEOS_TOKEN never wanted the file, and
+// a container or systemd unit that sets neither XDG_CONFIG_HOME nor HOME would
+// otherwise fail every command with "locate home dir" before the variables it
+// was given are even consulted. Save and Delete still surface it, because they
+// genuinely need a path.
 func Load() (Credentials, error) {
 	p, err := Path()
 	if err != nil {
-		return Credentials{}, err
+		return Credentials{}, nil
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
