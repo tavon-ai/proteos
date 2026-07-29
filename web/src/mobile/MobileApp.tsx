@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import type { Me } from '../api/client';
 import { useMachineEvents, useMachines } from '../api/hooks';
 import { MachinesScreen } from './MachinesScreen';
