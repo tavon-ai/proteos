@@ -50,6 +50,50 @@ func TestLoadMissingIsEmpty(t *testing.T) {
 	}
 }
 
+// An environment with nowhere to look is not an error for reading. A container
+// or CI job that exports PROTEOS_URL and PROTEOS_TOKEN and sets neither
+// XDG_CONFIG_HOME nor HOME is the env-only path this CLI documents, and it used
+// to fail every command with "locate home dir: $HOME is not defined" before the
+// variables it was handed were consulted at all.
+func TestLoadWithNoHomeIsEmptyNotAnError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	// os.UserHomeDir consults these on the non-Unix builds too, so the test
+	// asserts the same thing everywhere.
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("home", "")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatalf("load with no home: %v", err)
+	}
+	if got != (config.Credentials{}) {
+		t.Fatalf("got %+v, want zero", got)
+	}
+}
+
+// …and the whole point of tolerating it: the documented env-only invocation
+// resolves.
+func TestResolveWorksFromEnvAloneWithNoHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("home", "")
+	t.Setenv(config.EnvURL, "https://proteos.example.com")
+	t.Setenv(config.EnvToken, "proteos_pat_env")
+
+	r, err := config.Resolve("")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if r.BaseURL != "https://proteos.example.com" || r.URLSource != "env" {
+		t.Errorf("url = %q from %q", r.BaseURL, r.URLSource)
+	}
+	if r.Token != "proteos_pat_env" || r.TokSource != "env" {
+		t.Errorf("token source = %q", r.TokSource)
+	}
+}
+
 func TestResolvePrecedence(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

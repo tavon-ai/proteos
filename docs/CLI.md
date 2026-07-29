@@ -56,6 +56,32 @@ proteos auth status   # show endpoint + login (never the token)
 proteos auth logout   # remove stored credentials
 ```
 
+### Suite services: an IdP access token instead of a PAT
+
+`PROTEOS_TOKEN` also accepts an **access token from the identity provider ProteOS
+signs in with** (Zitadel). This is how a sibling service in the suite — the agent
+harness dispatching a coding task — calls the API as the user who is signed in
+*there*, without anyone first minting a PAT in a browser.
+
+Nothing about the CLI changes: the token is sent as `Authorization: Bearer` either
+way, and the control plane tells the two apart by the `proteos_pat_` prefix. A
+service caller therefore just sets the environment and runs the CLI:
+
+```sh
+export PROTEOS_URL=https://proteos.example.com
+export PROTEOS_TOKEN="$user_access_token"
+proteos task run --machine m-123 --project myrepo "add a health check"
+```
+
+The trust boundary is the **issuer**, not the client: any live access token that
+issuer minted for a user authenticates as that user, whichever application
+obtained it. That holds while every registered client is first-party. Narrowing it
+to specific audiences would need token introspection (RFC 7662).
+
+A first API contact provisions the user exactly as a first browser login does —
+but note that git operations (commit, push, PR) additionally need a linked GitHub
+account, which is still an interactive one-time step in the browser.
+
 ### Configuration precedence
 
 | Value    | Resolution order                                  |
