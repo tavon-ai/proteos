@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -251,13 +253,35 @@ func (s *Service) GetByID(ctx context.Context, id pgtype.UUID) (store.Machine, e
 	return m, err
 }
 
+// machineNamePattern matches the auto-generated "machine-<n>" name shape.
+var machineNamePattern = regexp.MustCompile(`^machine-(\d+)$`)
+
+// nextMachineName returns "machine-<n>" where n is one greater than the
+// highest index among existing's machine-<n> names (0 if none), so a name
+// freed by deleting a machine is never reused while gaps in the sequence
+// are preserved rather than filled.
+func nextMachineName(existing []store.Machine) string {
+	max := 0
+	for _, m := range existing {
+		match := machineNamePattern.FindStringSubmatch(m.Name)
+		if match == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(match[1]); err == nil && n > max {
+			max = n
+		}
+	}
+	return fmt.Sprintf("machine-%d", max+1)
+}
+
 // Create provisions a new machine for the user: insert (requested) → transition
 // to provisioning → ask the agent to ensure-running. If the agent call fails
 // the machine is moved to error (with the reason), and the errored machine is
 // still returned (the create "succeeded" in that a machine row now exists; the
 // user can retry via Start). Returns ErrMachineLimit if the user is at their
 // per-user cap, or ErrUnknownTemplate if opts.TemplateID is not in the catalog.
-// opts.Name is the display label; empty ⇒ auto-named machine-<n>.
+// opts.Name is the display label; empty ⇒ auto-named machine-<n>, one past the
+// highest existing machine-<n> index (not a total-ever-created counter).
 func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOptions) (store.Machine, error) {
 	count, err := s.q.CountMachinesByUserID(ctx, userID)
 	if err != nil {
@@ -268,7 +292,11 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 	}
 	name := opts.Name
 	if name == "" {
-		name = fmt.Sprintf("machine-%d", count+1)
+		existing, err := s.q.ListMachinesByUserID(ctx, userID)
+		if err != nil {
+			return store.Machine{}, fmt.Errorf("list machines: %w", err)
+		}
+		name = nextMachineName(existing)
 	}
 
 	rootfsRef, kernelRef, res, templateID, err := s.resolveCreate(opts)
