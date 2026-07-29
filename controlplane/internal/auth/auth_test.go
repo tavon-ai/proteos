@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,12 @@ type fakeIdP struct {
 	tokenBody   string
 	userStatus  int
 	userBody    string
+	// userInfoCalls counts userinfo requests, so a test can tell a cache hit
+	// from a fresh lookup.
+	userInfoCalls atomic.Int64
+	// liveAccessToken, when set, is the only bearer userinfo will answer for;
+	// anything else gets 401, the way a real IdP treats an unknown token.
+	liveAccessToken string
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -60,7 +67,12 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		_, _ = w.Write([]byte(f.tokenBody))
 	})
 	mux.HandleFunc("/oidc/v1/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		f.userInfoCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
+		if f.liveAccessToken != "" && r.Header.Get("Authorization") != "Bearer "+f.liveAccessToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.WriteHeader(f.userStatus)
 		_, _ = w.Write([]byte(f.userBody))
 	})
