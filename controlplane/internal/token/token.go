@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,15 @@ func NewManager(q *store.Queries) *Manager { return &Manager{q: q} }
 type Created struct {
 	Plaintext string
 	Row       store.PersonalAccessToken
+}
+
+// LooksLikePAT reports whether a bearer credential carries the ProteOS PAT
+// branding. It is a routing hint, never an authorization decision: only
+// Authenticate can say whether a token is live. It exists so a caller holding
+// several kinds of bearer can pick the right validator without this package
+// having to publish the format itself.
+func LooksLikePAT(bearer string) bool {
+	return strings.HasPrefix(bearer, plaintextPrefix)
 }
 
 // Create issues a new PAT for userID with the given name. expiresIn == 0 means

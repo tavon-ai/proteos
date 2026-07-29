@@ -63,6 +63,9 @@ type Handler struct {
 	store    *store.Queries
 	secrets  secrets.Store
 	audit    *audit.Recorder
+	// bearerCache short-circuits repeat userinfo lookups for IdP access tokens
+	// presented to the API (see bearer.go). Zero value is ready to use.
+	bearerCache bearerCache
 }
 
 // NewHandler wires the auth handler dependencies. aud may be nil (audit disabled).

@@ -16,6 +16,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/metrics"
 	"github.com/tavon-ai/proteos/controlplane/internal/session"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/tavon-ai/proteos/controlplane/internal/token"
 )
 
 // errNotHijacker is returned when the underlying ResponseWriter cannot be
@@ -55,26 +56,32 @@ func sessionIDFromContext(ctx context.Context) (string, bool) {
 }
 
 // requireAuth authenticates a request by either an Authorization: Bearer
-// personal access token (CLI / programmatic callers) or the browser session
-// cookie, and attaches the user to the request context. A Bearer token, when
-// present, takes precedence and is authoritative — an invalid one is rejected
-// rather than silently falling back to the cookie. Token-authenticated requests
-// are marked so csrfHeader can exempt them (a bearer token is not an ambient
+// credential (CLI / programmatic callers) or the browser session cookie, and
+// attaches the user to the request context. A Bearer credential, when present,
+// takes precedence and is authoritative — an invalid one is rejected rather
+// than silently falling back to the cookie. Token-authenticated requests are
+// marked so csrfHeader can exempt them (a bearer token is not an ambient
 // browser credential, so the CSRF header is unnecessary).
+//
+// Two kinds of bearer are accepted, told apart by the PAT's branded prefix:
+//
+//   - A ProteOS personal access token, minted under Settings → CLI tokens.
+//   - An access token from the IdP ProteOS itself logs in with, which is how a
+//     sibling suite service (the agent harness) calls this API as the user who
+//     is signed in there. See auth.Handler.AuthenticateBearer for the trust
+//     boundary that admits it.
+//
+// The prefix only routes to a validator; neither kind is trusted on its shape.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if tok := bearerToken(r); tok != "" {
-			// Rate-limit bearer-token auth attempts per IP to slow brute-force
-			// token guessing before the hash lookup hits the database.
+			// Rate-limit bearer auth attempts per IP to slow brute-force
+			// guessing before it reaches the database or the IdP.
 			if !s.patRL.Allow(clientIP(r)) {
 				writeError(w, http.StatusTooManyRequests, "rate_limited")
 				return
 			}
-			if s.PATs == nil {
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
-			}
-			user, _, err := s.PATs.Authenticate(r.Context(), tok)
+			user, err := s.authenticateBearer(r.Context(), tok)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "unauthorized")
 				return
@@ -100,6 +107,29 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+// authenticateBearer validates a bearer credential of either accepted kind and
+// returns the user it belongs to. A validator that is not configured behaves
+// exactly like one that rejected the credential: a deployment without PATs
+// enabled must not report that a token was well-formed.
+func (s *Server) authenticateBearer(ctx context.Context, bearer string) (store.User, error) {
+	if token.LooksLikePAT(bearer) {
+		if s.PATs == nil {
+			return store.User{}, errNoBearerValidator
+		}
+		user, _, err := s.PATs.Authenticate(ctx, bearer)
+		return user, err
+	}
+	if s.Auth == nil {
+		return store.User{}, errNoBearerValidator
+	}
+	return s.Auth.AuthenticateBearer(ctx, bearer)
+}
+
+// errNoBearerValidator means the credential's kind is not enabled on this
+// deployment. It never reaches a client — requireAuth maps every failure to a
+// flat 401.
+var errNoBearerValidator = errors.New("no validator configured for this bearer kind")
 
 // csrfHeader rejects state-changing cookie-authenticated requests lacking the
 // X-Requested-By header. Bearer-token requests are exempt: the token is not sent

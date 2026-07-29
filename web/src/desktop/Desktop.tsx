@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import type { MachineEvent, MachineState, MachineSummary, Me } from '../api/client';
 import { useLogout, useMachineEvents, useMachines } from '../api/hooks';
 import { Terminal } from '../components/Terminal';
