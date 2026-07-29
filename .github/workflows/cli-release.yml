@@ -113,14 +113,18 @@ jobs:
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
         run: |
-          ref_json=$(gh api "repos/${REPO}/git/ref/tags/cli/${VERSION}" 2>/dev/null || true)
-          if [[ -n "$ref_json" ]]; then
-            existing=$(jq -r .object.sha <<<"$ref_json")
+          # Branch on gh's EXIT STATUS, not on whether it printed anything: on
+          # a 404 it writes the error body to stdout, so an "is the output
+          # empty" check sees `{"message":"Not Found",…}`, reads .object.sha as
+          # the string "null", and reports a tag that does not exist as one that
+          # exists somewhere else. That is what failed the first v0.1.4 release.
+          if ref_json=$(gh api "repos/${REPO}/git/ref/tags/cli/${VERSION}" 2>/dev/null); then
+            existing=$(jq -r '.object.sha // empty' <<<"$ref_json")
             # An annotated tag's ref points at a tag object, not at the commit,
             # so peel it — otherwise the comparison below reports a moved tag
             # for one that has not moved at all. cli/v0.1.3 was cut by hand and
             # is annotated, so this is not hypothetical.
-            if [[ "$(jq -r .object.type <<<"$ref_json")" == "tag" ]]; then
+            if [[ "$(jq -r '.object.type // empty' <<<"$ref_json")" == "tag" ]]; then
               existing=$(gh api "repos/${REPO}/git/tags/${existing}" --jq .object.sha)
             fi
             if [[ "$existing" == "$SHA" ]]; then
