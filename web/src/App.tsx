@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { useMe } from './api/hooks';
 import { SessionExpiredError, type Me } from './api/client';
 import { Login } from './routes/Login';

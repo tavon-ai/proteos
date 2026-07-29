@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { loginUrl } from '../api/client';
 
 // Human-readable messages for the error codes the OIDC callback can redirect
