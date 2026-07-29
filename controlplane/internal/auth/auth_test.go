@@ -308,6 +308,45 @@ func TestHappyPathOIDCLogin(t *testing.T) {
 	}
 }
 
+// A deep link has to survive the trip through Zitadel. Without this the SPA
+// auto-starts the flow and then lands everyone on the dashboard, quietly losing
+// the page they actually asked for.
+func TestDeepLinkSurvivesLogin(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	h := newHarness(t, idp, gh, nil)
+
+	state := h.startFlow(t, "/api/auth/login?next=%2Fm%2Fabc%2Fpr%2F7")
+	resp := h.callback(t, "valid-code", state)
+	defer resp.Body.Close()
+
+	if loc := resp.Header.Get("Location"); loc != "/m/abc/pr/7" {
+		t.Fatalf("callback: want redirect to the deep link, got %q", loc)
+	}
+}
+
+// The other half: `next` is attacker-reachable, so a value pointing off-origin
+// must land on the dashboard rather than anywhere it asked for.
+func TestLoginNextCannotLeaveTheOrigin(t *testing.T) {
+	for _, next := range []string{
+		"//evil.example",
+		"/\\evil.example",
+		"https://evil.example/steal",
+	} {
+		t.Run(next, func(t *testing.T) {
+			idp, gh := newFakeIdP(t), newFakeGitHub(t)
+			h := newHarness(t, idp, gh, nil)
+
+			state := h.startFlow(t, "/api/auth/login?next="+url.QueryEscape(next))
+			resp := h.callback(t, "valid-code", state)
+			defer resp.Body.Close()
+
+			if loc := resp.Header.Get("Location"); loc != "/" {
+				t.Fatalf("callback: want /, got %q", loc)
+			}
+		})
+	}
+}
+
 func TestConnectGitHubLinksAndStoresTokens(t *testing.T) {
 	idp, gh := newFakeIdP(t), newFakeGitHub(t)
 	h := newHarness(t, idp, gh, nil)

@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -43,6 +44,11 @@ const (
 	// ghStateCookieName carries the signed OAuth state during the GitHub connect
 	// round-trip (the pre-TAV-149 login state cookie, path unchanged).
 	ghStateCookieName = "proteos_oauth_state"
+	// nextCookieName carries the post-login destination across the IdP round
+	// trip. A cookie rather than a query parameter on the callback: the value
+	// never leaves this origin, so it cannot be rewritten between the redirect
+	// and the return.
+	nextCookieName = "proteos_next"
 )
 
 // Config holds the settings the auth handler needs.
@@ -108,7 +114,32 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setFlowCookie(w, oidcStateCookieName, state, "/api/auth")
 	h.setFlowCookie(w, pkceCookieName, verifier, "/api/auth")
+	// Where to land afterwards. The SPA sends the path the user actually asked
+	// for, so a deep link survives the trip through Zitadel instead of dumping
+	// everyone on the dashboard.
+	if next := sanitizeNext(r.URL.Query().Get("next")); next != "/" {
+		h.setFlowCookie(w, nextCookieName, next, "/api/auth")
+	}
 	http.Redirect(w, r, authorizeURL, http.StatusFound)
+}
+
+// sanitizeNext restricts post-login redirects to same-origin absolute paths.
+//
+// Anything else collapses to "/" rather than erroring: this value comes from a
+// query parameter, so a hostile one is an open-redirect attempt and a malformed
+// one is a bug, and neither is worth failing a valid sign-in over. Ported from
+// chat's internal/authn, deliberately identical — including rejecting "/\",
+// which some browsers read as protocol-relative, and CR/LF, which would split
+// the Location header.
+func sanitizeNext(next string) string {
+	if next == "" ||
+		!strings.HasPrefix(next, "/") ||
+		strings.HasPrefix(next, "//") ||
+		strings.HasPrefix(next, "/\\") ||
+		strings.ContainsAny(next, "\r\n") {
+		return "/"
+	}
+	return next
 }
 
 // Callback validates state, exchanges the code (PKCE), fetches the userinfo,
@@ -133,8 +164,15 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		h.redirectLoginError(w, r, "missing_state")
 		return
 	}
+	// Read before clearing, and sanitized again on the way out: a cookie is not
+	// less user-controlled than a query parameter, only harder to change.
+	next := "/"
+	if c, err := r.Cookie(nextCookieName); err == nil {
+		next = sanitizeNext(c.Value)
+	}
 	h.clearFlowCookie(w, oidcStateCookieName, "/api/auth")
 	h.clearFlowCookie(w, pkceCookieName, "/api/auth")
+	h.clearFlowCookie(w, nextCookieName, "/api/auth")
 	state := q.Get("state")
 	if state == "" || stateCookie.Value != state {
 		h.redirectLoginError(w, r, "bad_state")
@@ -185,7 +223,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		Metadata: map[string]any{"oidc_subject": info.Subject},
 	})
 	http.SetCookie(w, h.sessionCookie(token))
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, next, http.StatusFound)
 }
 
 // resolveOIDCUser maps an IdP identity to a users row:

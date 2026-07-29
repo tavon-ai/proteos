@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { useMe } from './api/hooks';
 import { SessionExpiredError, type Me } from './api/client';
+import { clearSignInAttempt } from './autoSignIn';
 import { Login } from './routes/Login';
 import { ConnectGitHub } from './routes/ConnectGitHub';
 import { Desktop } from './desktop/Desktop';
@@ -50,22 +51,32 @@ function RootGate() {
   return <RequireAuth render={(me) => <Desktop me={me} />} />;
 }
 
-// RequireAuth boots by querying /api/me. A 401 redirects to /login; otherwise
-// the authed shell renders. This is the single auth gate for the SPA.
+// RequireAuth boots by querying /api/me. A 401 redirects to /login, which
+// starts the OIDC flow by itself; otherwise the authed shell renders. This is
+// the single auth gate for the SPA.
 function RequireAuth({ render }: { render: (me: Me) => React.ReactNode }) {
   const { data, isLoading, error } = useMe();
+  const location = useLocation();
+
+  // Carry the page they actually asked for through /login and the IdP round
+  // trip, so a deep link does not quietly become the dashboard.
+  const signIn = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+
+  useEffect(() => {
+    if (data) clearSignInAttempt();
+  }, [data]);
 
   if (isLoading) {
     return <div className="centered">Loading…</div>;
   }
   if (error instanceof SessionExpiredError) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to={signIn} replace />;
   }
   if (error) {
     return <div className="centered">Something went wrong. Please reload.</div>;
   }
   if (!data) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to={signIn} replace />;
   }
   // TAV-149: signed in via Zitadel, but the workspace needs a linked GitHub
   // account for git operations — block on the one-time connect screen.
