@@ -952,7 +952,7 @@ CS_SHA256=""
 # pinned (Go mirrors the host toolchain pin; bump with --go-version/--taskfile-version).
 VIM_INSTALL=1
 GO_INSTALL=1
-GO_VERSION="1.26.4"
+GO_VERSION="1.26.5"
 GO_SHA256=""
 TASKFILE_INSTALL=1
 TASKFILE_VERSION="v3.40.0"
