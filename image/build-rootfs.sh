@@ -80,9 +80,19 @@
 #                        proteos-rootfs-<id>-<base>-ga<sha>.ext4 and the manifest
 #                        manifest-<id>.lock (so several templates share one
 #                        out-dir). Omitted ⇒ the legacy single-image name.
+#   --a2 / --no-a2       bake the `a2` repository-baseline validator
+#                        (github.com/ipedrazas/a2) via `go install`, built with
+#                        the HOST go toolchain (no guest network/chroot needed).
+#                        It runs its checks against the language toolchains
+#                        already in the image, so it is meant for a template
+#                        that also enables go/node/python/rust/bun (the "full"
+#                        set) — see the "a2" template in bake-templates.sh.
+#                        Default: off. --a2-version pins a module version/tag
+#                        (default: latest).
 # The platform layer (guest agent, git, vim, taskfile, code-server, dev user,
-# claude) is the same across templates; only Go/Node/Python vary. See
-# image/bake-templates.sh, which bakes the standard base/go/node/python/full set.
+# claude) is the same across templates; only Go/Node/Python/Rust/Bun/a2 vary.
+# See image/bake-templates.sh, which bakes the standard base/go/node/python/
+# full/a2 set.
 #
 #   --alias 'name=command'   bake a shell alias into the guest's interactive
 #                            shells (root + run-as user); repeatable.
@@ -844,6 +854,35 @@ install_bun() {
   ok "Bun ${BUN_VERSION} installed (/usr/local/bin/bun)"
 }
 
+# install_a2 MNT [VERSION] — build the `a2` repository-baseline validator
+# (github.com/ipedrazas/a2, a deterministic checker for build/test/coverage/
+# security/format/release-readiness baselines) with the HOST go toolchain,
+# cross-compiled for the guest's arch (CGO_ENABLED=0, same as the guest agent
+# build above), and drop the static binary at /usr/local/bin/a2. `go install
+# pkg@version` runs entirely on the build host — no chroot binds or guest
+# network needed, the same shape as install_gh/install_taskfile fetching
+# prebuilt release binaries. VERSION is a Go module version/tag (e.g.
+# "v1.2.3"); default "latest". Sets A2_VERSION to the resolved module version.
+install_a2() {
+  local mnt="$1" version="${2:-latest}"
+  local arch module="github.com/ipedrazas/a2"
+  arch="$(go_arch)"
+
+  log "building a2@${version} (${arch}) with the host go toolchain"
+  local tmp="$WORK/a2-gobin"
+  mkdir -p "$tmp"
+  GOBIN="$tmp" CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+    go install "${module}@${version}" \
+    || die "go install ${module}@${version} failed"
+  [[ -f "$tmp/a2" ]] || die "a2 binary not found after go install (expected $tmp/a2)"
+
+  A2_VERSION="$(go version -m "$tmp/a2" 2>/dev/null | awk -v m="$module" '$1=="mod" && $2==m {print $3}')"
+  [[ -n $A2_VERSION ]] || A2_VERSION="$version"
+
+  sudo install -D -m 0755 "$tmp/a2" "$mnt/usr/local/bin/a2"
+  ok "a2 ${A2_VERSION} installed (/usr/local/bin/a2)"
+}
+
 # install_shell_env MNT — bake a managed shell snippet (Go/Rust on PATH + operator
 # aliases / appended bashrc files) into /etc/profile.d AND source it from the
 # interactive bashrc of root, /etc/skel, and the provisioned run-as user.
@@ -981,6 +1020,14 @@ RUSTUP_SHA256=""
 BUN_INSTALL=0
 BUN_VERSION=""
 BUN_SHA256=""
+# a2 repository-baseline validator (github.com/ipedrazas/a2): built with the
+# HOST go toolchain via `go install` and dropped in as a static binary — no
+# guest-side chroot/network needed, same as Go/Taskfile/gh. Off by default;
+# enabled with --a2 for the a2 template (built on top of the full set, since
+# a2's checks exercise the go/node/python/rust/bun toolchains already baked
+# in). --a2-version pins a module version/tag (default: latest).
+A2_INSTALL=0
+A2_VERSION=""
 # Operator shell customisation baked into the guest's interactive shells: aliases
 # (--alias 'name=command', repeatable) and/or whole files appended to the managed
 # bashrc snippet (--bashrc-file FILE, repeatable).
@@ -1020,6 +1067,9 @@ while [[ $# -gt 0 ]]; do
     --no-bun) BUN_INSTALL=0; shift ;;
     --bun-version) BUN_INSTALL=1; BUN_VERSION=$2; shift 2 ;;
     --bun-sha256) BUN_SHA256=$2; shift 2 ;;
+    --a2) A2_INSTALL=1; shift ;;
+    --no-a2) A2_INSTALL=0; shift ;;
+    --a2-version) A2_INSTALL=1; A2_VERSION=$2; shift 2 ;;
     --template) TEMPLATE_ID=$2; shift 2 ;;
     --alias) ALIASES+=("$2"); shift 2 ;;
     --bashrc-file) [[ -f $2 ]] || die "--bashrc-file not found: $2"; BASHRC_FILES+=("$2"); shift 2 ;;
@@ -1174,6 +1224,12 @@ if [[ $BUN_INSTALL -eq 1 ]]; then
   BUN_NEED=$((GROW_MIB + 200))
   log "baking Bun — bumping grow ${GROW_MIB}→${BUN_NEED}MiB headroom"
   GROW_MIB=$BUN_NEED
+fi
+# a2 (standalone Go binary, tens of MiB).
+if [[ $A2_INSTALL -eq 1 ]]; then
+  A2_NEED=$((GROW_MIB + 64))
+  log "baking a2 — bumping grow ${GROW_MIB}→${A2_NEED}MiB headroom"
+  GROW_MIB=$A2_NEED
 fi
 if [[ $TASKFILE_INSTALL -eq 1 ]]; then
   TASK_NEED=$((GROW_MIB + 32))
@@ -1359,6 +1415,12 @@ if [[ $GH_INSTALL -eq 1 ]]; then
   install_gh "$MNT" "$GH_VERSION" "$GH_SHA256"
   FEATURES="$FEATURES,gh"
 fi
+# a2 repository-baseline validator. Built with the host go toolchain — no
+# chroot/apt needed, same as Go/Taskfile/gh.
+if [[ $A2_INSTALL -eq 1 ]]; then
+  install_a2 "$MNT" "${A2_VERSION:-latest}"
+  FEATURES="$FEATURES,a2"
+fi
 
 if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   install_node "$MNT" "$NODE_VERSION" "$NODE_SHA256"   # resolves latest LTS if unpinned
@@ -1403,6 +1465,7 @@ GH_REL="none"; [[ $GH_INSTALL -eq 1 ]] && GH_REL="${GH_VERSION:-unknown}"
 VIM_REL="no"; [[ $VIM_INSTALL -eq 1 ]] && VIM_REL="yes"
 RUST_REL="none"; [[ $RUST_INSTALL -eq 1 ]] && RUST_REL="${RUST_VERSION:-unknown}"
 BUN_REL="none"; [[ $BUN_INSTALL -eq 1 ]] && BUN_REL="${BUN_VERSION:-unknown}"
+A2_REL="none"; [[ $A2_INSTALL -eq 1 ]] && A2_REL="${A2_VERSION:-unknown}"
 sudo tee "$MNT/etc/proteos-release" >/dev/null <<EOF
 PROTEOS_ROOTFS_BASE=$BASE_NAME
 PROTEOS_TEMPLATE=${TEMPLATE_ID:-none}
@@ -1423,6 +1486,7 @@ PROTEOS_NODE_VERSION=${NODE_VERSION:-none}
 PROTEOS_GEMINI_VERSION=${GEMINI_VERSION:-none}
 PROTEOS_CODEX_VERSION=${CODEX_VERSION:-none}
 PROTEOS_PI_VERSION=${PI_VERSION:-none}
+PROTEOS_A2_VERSION=$A2_REL
 PROTEOS_BUILD_AT=$BUILD_STAMP
 EOF
 
@@ -1478,6 +1542,7 @@ node_sha256    = ${NODE_SHA256:-none}
 gemini_version = ${GEMINI_VERSION:-none}
 codex_version  = ${CODEX_VERSION:-none}
 pi_version     = ${PI_VERSION:-none}
+a2_version     = $A2_REL
 image_size_mib = ${IMAGE_SIZE_MIB}
 build_seconds  = ${BUILD_SECONDS}
 built_at       = $BUILD_STAMP
