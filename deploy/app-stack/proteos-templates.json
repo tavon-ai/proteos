@@ -34,6 +34,13 @@
       "description": "Go, Node, and Python with build essentials.",
       "rootfs_ref": "proteos-rootfs-full-ubuntu-24.04-ga208e228.ext4",
       "defaults": { "vcpus": 4, "mem_mib": 4096, "disk_mib": 20480 }
+    },
+    {
+      "id": "a2",
+      "label": "a2 baseline validation (Full stack + a2)",
+      "description": "Full stack (Go, Node, Python, Rust, Bun) plus the a2 repository-baseline validator.",
+      "rootfs_ref": "proteos-rootfs-a2-ubuntu-24.04-ga208e228.ext4",
+      "defaults": { "vcpus": 4, "mem_mib": 4096, "disk_mib": 20480 }
     }
   ]
 }

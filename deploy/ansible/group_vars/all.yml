@@ -53,9 +53,13 @@ proteos_rootfs_size: "1G"
 #
 # The PLATFORM layer (guest agent, git, vim, taskfile, code-server, dev user, and
 # the Claude agent) is common to every template — those knobs below still apply to
-# all. A template only selects its LANGUAGE layer: go / node / python. The npm
-# provider CLIs (Gemini/Codex/pi.dev) ride on the Node layer, so they are baked
-# ONLY into templates with node: true (Claude, a native binary, is everywhere).
+# all. A template only selects its LANGUAGE/TOOLING layer: go / node / python /
+# rust / bun / a2. The npm provider CLIs (Gemini/Codex/pi.dev) ride on the Node
+# layer, so they are baked ONLY into templates with node: true (Claude, a native
+# binary, is everywhere). a2 (github.com/ipedrazas/a2, a repository-baseline
+# validator) is built on top of the full language set — its checks exercise
+# those toolchains against a cloned repo — so the "a2" entry below turns on
+# go/node/python/rust/bun alongside a2: true.
 #
 # label/description/defaults (vcpus, mem_mib, disk_mib) are surfaced to users by
 # the control plane; defaults must sit within its caps (PROTEOS_MAX_VCPUS etc.).
@@ -81,6 +85,20 @@ proteos_templates:
       python: true,
       rust: true,
       bun: true,
+      vcpus: 4,
+      mem_mib: 4096,
+      disk_mib: 20480,
+    }
+  - {
+      id: a2,
+      label: "a2 baseline validation (Full stack + a2)",
+      description: "Full stack (Go, Node, Python, Rust, Bun) plus the a2 repository-baseline validator, for running a2 checks against a cloned repo in isolation.",
+      go: true,
+      node: true,
+      python: true,
+      rust: true,
+      bun: true,
+      a2: true,
       vcpus: 4,
       mem_mib: 4096,
       disk_mib: 20480,

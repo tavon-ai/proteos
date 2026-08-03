@@ -7,16 +7,19 @@
 #
 # Usage:
 #   image/bake-templates.sh --base <pinned-ci.ext4> --out-dir <images dir> \
-#     [--templates base,go,node,python,full] \
+#     [--templates base,go,node,python,full,a2] \
 #     [-- <extra flags forwarded to every build-rootfs.sh, e.g. --claude-bootstrap>]
 #
 # The platform layer (guest agent, git, vim, taskfile, dev user, code-server, and
 # — when forwarded — claude/providers) is build-rootfs.sh's defaults and is
-# identical across templates; this script only varies the Go/Node/Python/Rust
-# language layers:
+# identical across templates; this script only varies the Go/Node/Python/Rust/
+# Bun/a2 language+tooling layers:
 #   base   = platform only (Go off)        go     = + Go
 #   node   = + Node                        python = + Python (pip/venv/build tools)
 #   full   = + Go + Node + Python + Rust + Bun
+#   a2     = full + the `a2` repository-baseline validator (github.com/
+#            ipedrazas/a2) — a2 depends on the full set's toolchains to run its
+#            checks, so it is built on top of full rather than standalone.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,8 +54,10 @@ done
 [[ -x $BUILD ]] || die "build-rootfs.sh not found/executable: $BUILD"
 
 # lang_flags <template-id> — echo the language-layer flags for one template. Only
-# Go/Node/Python are toggled here; everything else comes from build-rootfs.sh
-# defaults (the shared platform layer). base turns the default-on Go off.
+# Go/Node/Python/Rust/Bun/a2 are toggled here; everything else comes from
+# build-rootfs.sh defaults (the shared platform layer). base turns the
+# default-on Go off. a2 builds on full's flags plus --a2 (a2's checks run
+# against the toolchains full already bakes in).
 lang_flags() {
   case "$1" in
     base) echo "--no-go" ;;
@@ -60,7 +65,8 @@ lang_flags() {
     node) echo "--no-go --node" ;;
     python) echo "--no-go --python" ;;
     full) echo "--go --node --python --rust --bun" ;;
-    *) die "unknown template id: $1 (known: base go node python full)" ;;
+    a2) echo "--go --node --python --rust --bun --a2" ;;
+    *) die "unknown template id: $1 (known: base go node python full a2)" ;;
   esac
 }
 

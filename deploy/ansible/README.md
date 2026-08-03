@@ -139,16 +139,20 @@ ssh <host> 'curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:9090/h
   (firecracker, kernel, Go) and re-running upgrades the host in place; the
   firecracker/kernel/rootfs steps are guarded so unchanged artifacts are a no-op.
 - **Machine templates:** the node_agent role bakes **one rootfs image per entry**
-  in `proteos_templates` (default: `base`, `go`, `node`, `python`, `full`) —
+  in `proteos_templates` (default: `base`, `full`; also available: `go`, `node`,
+  `python`, `a2`) —
   `proteos-rootfs-<id>-<base>-ga<sha>.ext4`, each with its own
   `manifest-<id>.lock`. It then renders `proteos-templates.json` (the control
   plane's `PROTEOS_TEMPLATES_FILE`) and fetches it to
   `{{ proteos_templates_fetch_dir }}` on the controller for the app-stack deploy
   to install. The platform layer (guest agent, git, vim, taskfile, code-server,
-  dev user, Claude) is common to every template; `go`/`node`/`python` select the
-  language layer. The npm provider CLIs (Gemini/Codex/pi.dev) ride on the Node
-  layer, so they bake **only** into templates with `node: true`. Baking the full
-  set is slow (~10–20 min each) — trim `proteos_templates` while iterating.
+  dev user, Claude) is common to every template; `go`/`node`/`python`/`rust`/
+  `bun` select the language layer. The npm provider CLIs (Gemini/Codex/pi.dev)
+  ride on the Node layer, so they bake **only** into templates with
+  `node: true`. `a2` (github.com/ipedrazas/a2, a repository-baseline validator)
+  bakes on top of the full language set, since its checks exercise those
+  toolchains against a cloned repo. Baking the full set is slow (~10–20 min
+  each) — trim `proteos_templates` while iterating.
 - **Forcing a rootfs rebuild:** delete the relevant `manifest-<id>.lock` under
   `/var/lib/proteos/images/` (one template), or all of them (the whole set); to
   also rebuild the base, delete `ubuntu-24.04.ext4` too. Re-run the playbook. A

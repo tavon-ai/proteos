@@ -87,6 +87,7 @@ resources (all overridable per machine within configured caps):
 | `node` | Node.js development | Node LTS + npm provider CLIs | 2 vCPU / 2048 MiB / 10 GiB disk |
 | `python` | Python development | Python 3 + pip + venv + build tools | 2 vCPU / 2048 MiB / 10 GiB disk |
 | `full` | Full stack (Go + Node + Python) | Go, Node, and Python with build essentials | 4 vCPU / 4096 MiB / 20 GiB disk |
+| `a2` | a2 baseline validation (Full stack + a2) | Full stack (Go, Node, Python, Rust, Bun) plus the [a2](https://github.com/ipedrazas/a2) repository-baseline validator, for running a2 checks against a cloned repo in isolation | 4 vCPU / 4096 MiB / 20 GiB disk |
 
 Every template shares a common platform layer baked into the rootfs image:
 the guest-agent binary, git, vim, Taskfile, GitHub CLI (`gh`), and the Claude
