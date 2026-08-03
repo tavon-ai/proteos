@@ -28,6 +28,7 @@ import (
 	"github.com/tavon-ai/proteos/guestagent/internal/runas"
 	"github.com/tavon-ai/proteos/guestagent/internal/secrets"
 	"github.com/tavon-ai/proteos/guestagent/internal/server"
+	"github.com/tavon-ai/proteos/guestagent/internal/sshfwd"
 	"github.com/tavon-ai/proteos/guestagent/internal/term"
 	"github.com/tavon-ai/proteos/guestagent/internal/webfwd"
 )
@@ -204,6 +205,29 @@ func run() error {
 			slog.Info("guest preview forward listening", "listen", cfg.PreviewListen)
 			if err := fwd.Serve(ctx); err != nil {
 				slog.Error("preview forward serve", "err", err)
+			}
+		}()
+	}
+
+	// Inbound SSH forward: when configured it serves on a fourth private port
+	// (vsock:1027 / a dev unix socket) that the node-agent tunnel reaches on
+	// agentapi.GuestSSHPort, bridging every connection straight to the guest's
+	// own sshd (baked + enabled by image/build-rootfs.sh, loopback-only). No
+	// preamble, no supervisor: unlike PP1 the target is fixed, and unlike
+	// code-server there is nothing here to start — sshd is a systemd-managed
+	// system service the image starts on its own.
+	if cfg.SSHListen != "" {
+		sshLn, err := listen.Listen(cfg.SSHListen)
+		if err != nil {
+			return err
+		}
+		defer sshLn.Close()
+
+		fwd := sshfwd.New(sshLn, cfg.SSHBackend)
+		go func() {
+			slog.Info("guest ssh forward listening", "listen", cfg.SSHListen, "backend", cfg.SSHBackend)
+			if err := fwd.Serve(ctx); err != nil {
+				slog.Error("ssh forward serve", "err", err)
 			}
 		}()
 	}

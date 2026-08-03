@@ -13,9 +13,17 @@ import (
 // It is exported so the route handler can reject a bad Origin (403) before
 // touching the machine — keeping the auth → origin → resolve → dial order.
 func (p *Proxy) AllowsOrigin(r *http.Request) bool {
+	return originAllowed(p.allowedOrigins, r)
+}
+
+// originAllowed is the shared exact-match check behind every gateway proxy's
+// AllowsOrigin. Extracted so SSHProxy (ssh.go) — whose callers only enforce it
+// for browser-originated requests, not the CLI's bearer-token path, which never
+// sends an Origin header — applies the identical allowlist logic.
+func originAllowed(allowed []string, r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return false
 	}
-	return slices.Contains(p.allowedOrigins, origin)
+	return slices.Contains(allowed, origin)
 }

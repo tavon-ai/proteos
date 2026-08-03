@@ -179,3 +179,13 @@ type UserGitIdentity struct {
 	Email     string             `json:"email"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
+
+type UserSshLoginKey struct {
+	ID          pgtype.UUID        `json:"id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Label       string             `json:"label"`
+	PublicKey   string             `json:"public_key"`
+	Fingerprint string             `json:"fingerprint"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+}

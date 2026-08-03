@@ -56,10 +56,18 @@ const (
 // indirection lets ONE guest listener serve the whole preview range without
 // binding a vsock port per application port (binding ~64k vsock ports is
 // infeasible).
+// GuestSSHPort is the guest's inbound-SSH forward: a tiny fixed-target relative
+// of GuestPreviewPort (previewfwd.go's shape with the preamble deleted and the
+// backend port hardcoded to 22) that bridges to the guest's sshd on
+// 127.0.0.1:22. It gets its own system port — rather than being reached through
+// the generic preview forwarder — so sshd stays out of the user-choosable
+// preview port space (agentapi.IsSystemGuestPort), matching the existing "each
+// system service gets its own vsock port" convention.
 const (
 	GuestTerminalPort uint32 = 1024
 	GuestWebPort      uint32 = 1025
 	GuestPreviewPort  uint32 = 1026
+	GuestSSHPort      uint32 = 1027
 )
 
 // Default preview application-port range (PP1). The previewable ports are the
@@ -77,10 +85,10 @@ const (
 const GuestPortParam = "port"
 
 // IsSystemGuestPort reports whether p is a directly-dialed guest vsock port
-// (terminal or code-server web) rather than a preview application port reached
-// through the preview forwarder.
+// (terminal, code-server web, or the SSH forward) rather than a preview
+// application port reached through the preview forwarder.
 func IsSystemGuestPort(p uint32) bool {
-	return p == GuestTerminalPort || p == GuestWebPort
+	return p == GuestTerminalPort || p == GuestWebPort || p == GuestSSHPort
 }
 
 // ValidPreviewPort reports whether p is an admissible preview application port:

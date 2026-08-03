@@ -84,6 +84,20 @@ type Config struct {
 	// agentapi.GuestPreviewPort. There is no backend config and no supervisor —
 	// the user's own process is the backend.
 	PreviewListen string
+
+	// --- Inbound SSH forward -------------------------------------------------
+
+	// SSHListen (PROTEOS_GUEST_SSH_LISTEN) is the listener spec for the inbound-
+	// SSH forward: "vsock:1027" in production, "unix:<path>" in dev. Empty ⇒ the
+	// forward is disabled (no path to sshd through the tunnel, even if sshd is
+	// running). The forward bridges every accepted connection straight to
+	// SSHBackend; the node-agent tunnel reaches it on agentapi.GuestSSHPort.
+	SSHListen string
+
+	// SSHBackend (PROTEOS_GUEST_SSH_BACKEND) is the loopback address the guest's
+	// sshd binds and the forward dials. Default 127.0.0.1:22 (the baked
+	// sshd_config's ListenAddress).
+	SSHBackend string
 }
 
 // Load reads and validates configuration from the environment.
@@ -103,6 +117,9 @@ func Load() (*Config, error) {
 		CodeServerArgs: os.Getenv("PROTEOS_CODESERVER_ARGS"),
 
 		PreviewListen: os.Getenv("PROTEOS_GUEST_PREVIEW_LISTEN"),
+
+		SSHListen:  os.Getenv("PROTEOS_GUEST_SSH_LISTEN"),
+		SSHBackend: getenv("PROTEOS_GUEST_SSH_BACKEND", "127.0.0.1:22"),
 	}
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)

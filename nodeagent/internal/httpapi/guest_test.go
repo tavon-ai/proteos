@@ -243,6 +243,7 @@ func TestGuestTunnelPortAllowlist(t *testing.T) {
 		{"absent defaults to terminal", "/v1/machines/m1/guest", "101", api.GuestTerminalPort},
 		{"explicit terminal port", "/v1/machines/m1/guest?port=1024", "101", api.GuestTerminalPort},
 		{"web port", "/v1/machines/m1/guest?port=1025", "101", api.GuestWebPort},
+		{"ssh port", "/v1/machines/m1/guest?port=1027", "101", api.GuestSSHPort},
 		{"preview port forwarded verbatim", "/v1/machines/m1/guest?port=3000", "101", 3000},
 		{"below-range port", "/v1/machines/m1/guest?port=22", "400", 0},
 		{"non-numeric port", "/v1/machines/m1/guest?port=abc", "400", 0},
@@ -283,6 +284,7 @@ func TestGuestTunnelPreviewRange(t *testing.T) {
 		{"below configured range", "/v1/machines/m1/guest?port=1500", "400", 0},
 		{"system terminal still ok", "/v1/machines/m1/guest?port=1024", "101", api.GuestTerminalPort},
 		{"system web still ok", "/v1/machines/m1/guest?port=1025", "101", api.GuestWebPort},
+		{"system ssh still ok", "/v1/machines/m1/guest?port=1027", "101", api.GuestSSHPort},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

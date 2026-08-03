@@ -112,6 +112,12 @@ func (d *DevDriver) guestPreviewSockPath(machineID string) string {
 	return filepath.Join(d.store.MachineDir(machineID), "guest-preview.sock")
 }
 
+// guestSSHSockPath is the per-machine unix socket the guest agent's SSH forward
+// listens on, standing in for vsock port 1027 in dev.
+func (d *DevDriver) guestSSHSockPath(machineID string) string {
+	return filepath.Join(d.store.MachineDir(machineID), "guest-ssh.sock")
+}
+
 // persistDir is the per-machine directory standing in for the real driver's
 // persistent disk (decision #10). It is handed to the guest agent via
 // PROTEOS_GUEST_PERSIST and survives hibernate/resume (kept across Stop, only
@@ -289,6 +295,10 @@ func (d *DevDriver) buildCmd(machineID string) (*exec.Cmd, error) {
 		// needs no backend config — it dials whatever loopback port the node-agent
 		// names in the per-connection preamble — so it is always on in dev.
 		"PROTEOS_GUEST_PREVIEW_LISTEN=unix:"+d.guestPreviewSockPath(machineID),
+		// Inbound SSH forward (vsock:1027 in production): a fixed-target relative of
+		// the preview forwarder (always dials 127.0.0.1:22, no preamble), so it too
+		// needs no backend config and is always on in dev.
+		"PROTEOS_GUEST_SSH_LISTEN=unix:"+d.guestSSHSockPath(machineID),
 	)
 	// Phase 8: when a web backend is configured, run the guest agent's web forward
 	// on a per-machine socket (the dev stand-in for vsock port 1025) pointing at
@@ -431,12 +441,13 @@ func (d *DevDriver) Destroy(ctx context.Context, machineID string) error {
 }
 
 // DialGuest connects to the machine's guest agent over its terminal socket
-// (guest.sock) or, for the Phase 8 web port, its web socket (guest-web.sock).
-// The machine must be tracked (else ErrUnknownMachine); the HTTP layer is
-// responsible for the running-state check and port allowlisting before calling
-// this. A zero port means the terminal socket. A preview application port goes
-// to the preview forwarder socket, preceded by the target-port preamble (the
-// dev stand-in for the production vsock-1026 + preamble path).
+// (guest.sock), its web socket (guest-web.sock, Phase 8), or its SSH forward
+// socket (guest-ssh.sock). The machine must be tracked (else ErrUnknownMachine);
+// the HTTP layer is responsible for the running-state check and port
+// allowlisting before calling this. A zero port means the terminal socket. A
+// preview application port goes to the preview forwarder socket, preceded by
+// the target-port preamble (the dev stand-in for the production vsock-1026 +
+// preamble path).
 func (d *DevDriver) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
 	if _, ok, err := d.store.Load(machineID); err != nil {
 		return nil, err
@@ -448,6 +459,8 @@ func (d *DevDriver) DialGuest(ctx context.Context, machineID string, port uint32
 	switch {
 	case port == agentapi.GuestWebPort:
 		sock = d.guestWebSockPath(machineID)
+	case port == agentapi.GuestSSHPort:
+		sock = d.guestSSHSockPath(machineID)
 	case port != 0 && !agentapi.IsSystemGuestPort(port):
 		sock = d.guestPreviewSockPath(machineID)
 		preamble = agentapi.PreviewPreamble(port)

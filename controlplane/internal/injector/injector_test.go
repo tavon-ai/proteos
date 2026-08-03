@@ -2,11 +2,16 @@ package injector_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 
 	guestwire "github.com/tavon-ai/proteos/guestagent/api"
 
@@ -16,6 +21,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 	"github.com/tavon-ai/proteos/controlplane/internal/providers"
 	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/sshkeys"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
 	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
 )
@@ -108,7 +114,7 @@ func TestInjectorPushesComposedSecrets(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q), nil)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q), nil, nil)
 
 	if err := inj.Inject(ctx, uid, "machine-1"); err != nil {
 		t.Fatalf("inject: %v", err)
@@ -195,7 +201,7 @@ func TestInjectorComposesMultiFieldSetupProvider(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q), nil)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, audit.NewRecorder(q), nil, nil)
 	if err := inj.Inject(ctx, uid, "m-multi"); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -240,7 +246,7 @@ func TestInjectorMergesClaudeProfileToken(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof, nil)
 	if err := inj.Inject(ctx, uid, "m-tok"); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -280,7 +286,7 @@ func TestInjectorEmitsFileItems(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof, nil)
 	if err := inj.Inject(ctx, uid, "m-file"); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -317,7 +323,7 @@ func TestInjectorEmitsSSHKeyFiles(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof, nil)
 	if err := inj.Inject(ctx, uid, "m-ssh"); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -346,6 +352,110 @@ func TestInjectorEmitsSSHKeyFiles(t *testing.T) {
 	}
 }
 
+// TestInjectorEmitsAuthorizedKeys proves the inbound-SSH login-key store
+// (distinct from the outbound git-SSH key/config above) is composed into
+// SecretsRequest.Files as .ssh/authorized_keys (0600, one line per active key),
+// and that a revoked key drops off the very next compose — the injector's usual
+// replace-all semantics.
+func TestInjectorEmitsAuthorizedKeys(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 106, Login: "loginkeys"})
+	uid := machine.UUIDString(user.ID)
+
+	keys := sshkeys.NewStore(q)
+	k1, err := keys.Add(ctx, uid, "laptop", genTestPublicKey(t, "laptop"))
+	if err != nil {
+		t.Fatalf("add key: %v", err)
+	}
+	if _, err := keys.Add(ctx, uid, "desktop", genTestPublicKey(t, "desktop")); err != nil {
+		t.Fatalf("add key: %v", err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q), nil, keys)
+	if err := inj.Inject(ctx, uid, "m-loginkeys"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	guest.mu.Lock()
+	var authKeys *guestwire.FileDef
+	for i, f := range guest.last.Files {
+		if f.Path == ".ssh/authorized_keys" {
+			authKeys = &guest.last.Files[i]
+		}
+	}
+	guest.mu.Unlock()
+	if authKeys == nil {
+		t.Fatalf("authorized_keys not pushed: %v", guest.last.Files)
+	}
+	if authKeys.Mode != 0o600 {
+		t.Fatalf("authorized_keys mode = %o, want 0600", authKeys.Mode)
+	}
+	lines := strings.Split(strings.TrimRight(authKeys.Content, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("authorized_keys content = %q, want 2 lines", authKeys.Content)
+	}
+
+	// Revoke one key and re-inject: it must drop out of the pushed blob.
+	if _, err := keys.Revoke(ctx, uid, k1.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if err := inj.Inject(ctx, uid, "m-loginkeys"); err != nil {
+		t.Fatalf("re-inject: %v", err)
+	}
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	for _, f := range guest.last.Files {
+		if f.Path == ".ssh/authorized_keys" {
+			if strings.Contains(f.Content, k1.PublicKey) {
+				t.Fatalf("revoked key still present after re-inject: %q", f.Content)
+			}
+			return
+		}
+	}
+	t.Fatal("authorized_keys missing after re-inject")
+}
+
+// TestInjectorOmitsAuthorizedKeysWhenNoneActive proves a user with no login
+// keys (or an unwired sshkeys.Store) gets no .ssh/authorized_keys file at all —
+// consistent with FileDef's doc: an omitted file is removed on the guest, so a
+// keyless user never has a stale one lying around.
+func TestInjectorOmitsAuthorizedKeysWhenNoneActive(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 107, Login: "nologinkeys"})
+	uid := machine.UUIDString(user.ID)
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q), nil, sshkeys.NewStore(q))
+	if err := inj.Inject(ctx, uid, "m-nokeys"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	for _, f := range guest.last.Files {
+		if f.Path == ".ssh/authorized_keys" {
+			t.Fatalf("authorized_keys pushed for a user with no active keys: %q", f.Content)
+		}
+	}
+}
+
+// genTestPublicKey mints a fresh ed25519 keypair and returns its
+// authorized_keys-format public key line.
+func genTestPublicKey(t *testing.T, comment string) string {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimRight(string(ssh.MarshalAuthorizedKey(sshPub)), "\n") + " " + comment
+}
+
 // TestInjectorPrefersStoredApiKeyOverProfileToken proves the precedence guard:
 // when a user has BOTH a stored claude API key and a profile OAuth token, the
 // injector emits the API key (ANTHROPIC_API_KEY outranks the subscription token)
@@ -369,7 +479,7 @@ func TestInjectorPrefersStoredApiKeyOverProfileToken(t *testing.T) {
 	}
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), sec, rec, prof, nil)
 	if err := inj.Inject(ctx, uid, "m-both"); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -396,7 +506,7 @@ func TestInjectorPushesSubscriptionProviderWhenNoKeys(t *testing.T) {
 	uid := machine.UUIDString(user.ID)
 
 	guest := &fakeGuest{}
-	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q), nil)
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q), nil, nil)
 
 	if err := inj.Inject(ctx, uid, "m"); err != nil {
 		t.Fatalf("inject: %v", err)
