@@ -103,6 +103,7 @@ func setupCP(t *testing.T, dialer gateway.GuestDialer, origins []string) cpFixtu
 	registry := gateway.NewRegistry()
 	sessions.SetRevocationListener(registry)
 	gw := gateway.NewProxy(origins, dialer, registry)
+	sshGW := gateway.NewSSHProxy(origins, dialer, registry)
 
 	svc := machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), secrets.NewMemStore(), machine.Spec{Vcpus: 1, MemMiB: 128, KernelRef: "k", RootfsRef: "r"})
 
@@ -121,7 +122,7 @@ func setupCP(t *testing.T, dialer gateway.GuestDialer, origins []string) cpFixtu
 		Sessions:       sessRes,
 		Machines:       machRes,
 	})
-	srv := &httpapi.Server{Sessions: sessions, Machines: svc, Broker: machine.NewBroker(), Queries: q, Gateway: gw, MachineWeb: machineWeb}
+	srv := &httpapi.Server{Sessions: sessions, Machines: svc, Broker: machine.NewBroker(), Queries: q, Gateway: gw, SSHGateway: sshGW, MachineWeb: machineWeb}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 

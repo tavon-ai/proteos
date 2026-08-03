@@ -34,6 +34,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/providers"
 	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
 	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/sshkeys"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
 	"github.com/tavon-ai/proteos/controlplane/internal/taskevents"
 	"github.com/tavon-ai/proteos/controlplane/internal/token"
@@ -327,7 +328,11 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	// Portable user profile (Phase 1): user-scoped items the injector merges into
 	// the guest alongside provider secrets (e.g. the Claude subscription token).
 	profileStore := profile.NewStore(q, sec, auditRec)
-	inject := injector.New(nodes, providerRegistry, sec, auditRec, profileStore)
+	// Inbound SSH login keys: the list of public keys the injector renders into
+	// .ssh/authorized_keys on every one of the user's machines (distinct from
+	// profileStore's single outbound git-SSH key above).
+	sshKeyStore := sshkeys.NewStore(q)
+	inject := injector.New(nodes, providerRegistry, sec, auditRec, profileStore, sshKeyStore)
 	poller.SetOnRunning(inject.InjectAsync)
 
 	// Phase 6: align the registry's enabled flags with the providers actually
@@ -353,6 +358,12 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	gwRegistry := gateway.NewRegistry()
 	sessions.SetRevocationListener(gwRegistry)
 	gw := gateway.NewProxy(cfg.AllowedWSOrigins, nodes, gwRegistry)
+
+	// Inbound SSH gateway: same tunnel/registry plumbing as the terminal proxy,
+	// bridging raw bytes to the guest's sshd instead of speaking the terminal's
+	// JSON/WS protocol. Shares gwRegistry so a session revoke closes live SSH
+	// connections too.
+	sshGW := gateway.NewSSHProxy(cfg.AllowedWSOrigins, nodes, gwRegistry)
 
 	// Phase 8: the per-machine code-server editor origin (m-<uuid>.<domain>).
 	// NewMachineWeb returns nil when PROTEOS_MACHINE_DOMAIN is unset, disabling
@@ -425,12 +436,14 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		Broker:     broker,
 		Queries:    q,
 		Gateway:    gw,
+		SSHGateway: sshGW,
 		Guests:     nodes,
 		MachineWeb: machineWeb,
 		Providers:  providerRegistry,
 		Secrets:    sec,
 		Audit:      auditRec,
 		Profile:    profileStore,
+		SSHKeys:    sshKeyStore,
 		Injector:   inject,
 		Logs:       logStore,
 	}

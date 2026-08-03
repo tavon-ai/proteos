@@ -66,6 +66,12 @@ const (
 	// TAV-116 network policy. Target is the machine id; metadata carries the mode.
 	ActionNetworkPolicySet    = "machine.network_policy.set"    // a user configured a machine's network policy
 	ActionNetworkPolicyDelete = "machine.network_policy.delete" // a user reset a machine's network policy to allow_all
+
+	// Inbound SSH login keys. Target is the key id; metadata carries the
+	// fingerprint (never the public key text, though it isn't secret either —
+	// this keeps audit rows terse and consistent with the other key actions).
+	ActionSSHKeyAdd    = "ssh_key.add"    // a user registered a new login key
+	ActionSSHKeyRevoke = "ssh_key.revoke" // a user revoked a login key
 )
 
 // Actor prefixes identify who performed the action.

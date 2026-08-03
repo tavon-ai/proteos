@@ -18,6 +18,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/providers"
 	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
 	"github.com/tavon-ai/proteos/controlplane/internal/session"
+	"github.com/tavon-ai/proteos/controlplane/internal/sshkeys"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
 	"github.com/tavon-ai/proteos/controlplane/internal/taskevents"
 	"github.com/tavon-ai/proteos/controlplane/internal/token"
@@ -46,6 +47,10 @@ type Server struct {
 	// agent (Phase 3). Nil disables the /gw/terminal route.
 	Gateway *gateway.Proxy
 
+	// SSHGateway proxies the raw-byte inbound-SSH WebSocket to the machine's
+	// guest agent. Nil disables the /gw/ssh route.
+	SSHGateway *gateway.SSHProxy
+
 	// Guests dials the opaque byte tunnel to a machine's guest agent. It backs
 	// the project-download proxy (GET /api/projects/download), which streams a
 	// zip of a project straight from the guest. *nodeclient.Client satisfies it.
@@ -68,6 +73,12 @@ type Server struct {
 	// credentials/dotfiles that the injector materializes into the user's machines.
 	// Nil disables those routes.
 	Profile *profile.Store
+
+	// SSHKeys backs the inbound SSH login-key API (/api/ssh-keys): the list of
+	// public keys the injector renders into ~/.ssh/authorized_keys on the user's
+	// machines. Distinct from Profile's single outbound git-SSH key. Nil disables
+	// those routes.
+	SSHKeys *sshkeys.Store
 
 	// GitConfigurer re-applies a portable git-identity change to running machines
 	// (Phase 4). Satisfied by *guestctl.Manager; nil ⇒ changes apply on next boot.
@@ -237,6 +248,15 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("DELETE /api/profile/ssh", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleDeleteSSHKey))))
 	}
 
+	// Inbound SSH login keys: a list, not a slot (contrast with /api/profile/ssh
+	// above). The list is a metadata-only read; add/revoke mutate so they require
+	// the CSRF header. No route ever accepts a private key.
+	if s.SSHKeys != nil {
+		mux.Handle("GET /api/ssh-keys", s.requireAuth(http.HandlerFunc(s.handleListSSHKeys)))
+		mux.Handle("POST /api/ssh-keys", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleAddSSHKey))))
+		mux.Handle("DELETE /api/ssh-keys/{id}", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleRevokeSSHKey))))
+	}
+
 	// Git operations (Phase 7). Reads are auth-only; clone mutates state so it
 	// also requires the CSRF header. Enabled only when the full git stack is wired.
 	if s.GitHub != nil && s.Tokens != nil && s.GitChannel != nil {
@@ -358,6 +378,13 @@ func (s *Server) Handler() http.Handler {
 		if s.Providers != nil {
 			mux.Handle("GET /gw/agent/{provider}", s.requireAuth(http.HandlerFunc(s.handleGatewayAgent)))
 		}
+	}
+
+	// Inbound SSH gateway: raw-byte relay to the guest's sshd, reached primarily
+	// by the CLI's bearer-token ProxyCommand path (see handleGatewaySSH's Origin
+	// handling — it differs from /gw/terminal above, which is browser-only).
+	if s.SSHGateway != nil {
+		mux.Handle("GET /gw/ssh", s.requireAuth(http.HandlerFunc(s.handleGatewaySSH)))
 	}
 
 	// Host-first routing (Phase 8 decision #1): a machine-web host

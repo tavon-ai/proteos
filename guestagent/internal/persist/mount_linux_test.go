@@ -98,3 +98,89 @@ func TestEnsureClaudeLauncherNoBinary(t *testing.T) {
 		t.Fatalf("expected no launcher when binary absent, got err=%v", err)
 	}
 }
+
+// stubSSHDir points sshDir at a fresh fixture directory for the duration of a
+// test and restores it afterwards, returning the fixture path.
+func stubSSHDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	prev := sshDir
+	sshDir = dir
+	t.Cleanup(func() { sshDir = prev })
+	return dir
+}
+
+// TestEnsureSSHHostKeysSymlinksFreshDir proves a fresh persist disk gets every
+// host key filename symlinked from /etc/ssh into mount/ssh_host_keys (nothing
+// generated yet — that's ssh-keygen -A's job, run by the sshd unit).
+func TestEnsureSSHHostKeysSymlinksFreshDir(t *testing.T) {
+	etcSSH := stubSSHDir(t)
+	mount := t.TempDir()
+
+	ensureSSHHostKeys(mount)
+
+	for _, name := range sshHostKeyFiles {
+		link := filepath.Join(etcSSH, name)
+		target, err := os.Readlink(link)
+		if err != nil {
+			t.Fatalf("%s: expected a symlink: %v", name, err)
+		}
+		want := filepath.Join(mount, "ssh_host_keys", name)
+		if target != want {
+			t.Fatalf("%s: symlink target = %q, want %q", name, target, want)
+		}
+	}
+}
+
+// TestEnsureSSHHostKeysRescuesExistingFile proves a real key file already sitting
+// at /etc/ssh/<name> (e.g. a boot that raced ahead of this step, or generated
+// before persistence existed) is moved onto the persist disk — not discarded —
+// and replaced with a symlink pointing at its new home, preserving its content.
+func TestEnsureSSHHostKeysRescuesExistingFile(t *testing.T) {
+	etcSSH := stubSSHDir(t)
+	mount := t.TempDir()
+	name := sshHostKeyFiles[0]
+	path := filepath.Join(etcSSH, name)
+	if err := os.WriteFile(path, []byte("existing-key-material"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ensureSSHHostKeys(mount)
+
+	persisted := filepath.Join(mount, "ssh_host_keys", name)
+	content, err := os.ReadFile(persisted)
+	if err != nil {
+		t.Fatalf("key not rescued onto disk: %v", err)
+	}
+	if string(content) != "existing-key-material" {
+		t.Fatalf("rescued content = %q, want the original", content)
+	}
+	target, err := os.Readlink(path)
+	if err != nil || target != persisted {
+		t.Fatalf("etc/ssh path not replaced with a symlink to the rescued file: target=%q err=%v", target, err)
+	}
+}
+
+// TestEnsureSSHHostKeysIdempotent proves a second call (a later boot) leaves an
+// already-generated key on disk untouched — the whole point being that
+// ssh-keygen -A sees the symlink target already exists and skips regenerating
+// it, so the identity is stable across this machine's reboots.
+func TestEnsureSSHHostKeysIdempotent(t *testing.T) {
+	etcSSH := stubSSHDir(t)
+	mount := t.TempDir()
+	ensureSSHHostKeys(mount)
+
+	// Simulate ssh-keygen -A writing through the symlink on first boot.
+	name := sshHostKeyFiles[0]
+	persisted := filepath.Join(mount, "ssh_host_keys", name)
+	if err := os.WriteFile(persisted, []byte("generated-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ensureSSHHostKeys(mount) // second boot
+
+	content, err := os.ReadFile(filepath.Join(etcSSH, name))
+	if err != nil || string(content) != "generated-key" {
+		t.Fatalf("key content changed across the idempotent call: content=%q err=%v", content, err)
+	}
+}

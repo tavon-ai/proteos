@@ -516,3 +516,25 @@ DELETE FROM user_git_identity WHERE user_id = $1;
 -- ⇒ the user had no such item, which the API maps to 404). Deleting a missing
 -- item is otherwise a harmless no-op.
 DELETE FROM profile_items WHERE user_id = $1 AND key = $2;
+
+-- name: InsertSSHLoginKey :one
+-- Add a new active login key. The partial unique index on (user_id,
+-- fingerprint) WHERE revoked_at IS NULL rejects a duplicate active key for the
+-- same user (the caller maps the unique-violation to a friendly 409).
+INSERT INTO user_ssh_login_keys (user_id, label, public_key, fingerprint)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: ListActiveSSHLoginKeys :many
+-- A user's active (non-revoked) login keys, oldest first.
+SELECT * FROM user_ssh_login_keys
+WHERE user_id = $1 AND revoked_at IS NULL
+ORDER BY created_at;
+
+-- name: RevokeSSHLoginKey :execrows
+-- Soft-delete an active login key owned by the user. Returns the number of rows
+-- updated (0 ⇒ unknown, not the caller's, or already revoked — the API maps
+-- that to 404). Revoking (rather than hard-deleting) keeps the fingerprint
+-- history for audit while freeing the (user_id, fingerprint) slot for re-add.
+UPDATE user_ssh_login_keys SET revoked_at = now()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;

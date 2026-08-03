@@ -927,6 +927,42 @@ func (q *Queries) InsertMachineEvent(ctx context.Context, arg InsertMachineEvent
 	return i, err
 }
 
+const insertSSHLoginKey = `-- name: InsertSSHLoginKey :one
+INSERT INTO user_ssh_login_keys (user_id, label, public_key, fingerprint)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, label, public_key, fingerprint, created_at, revoked_at
+`
+
+type InsertSSHLoginKeyParams struct {
+	UserID      pgtype.UUID `json:"user_id"`
+	Label       string      `json:"label"`
+	PublicKey   string      `json:"public_key"`
+	Fingerprint string      `json:"fingerprint"`
+}
+
+// Add a new active login key. The partial unique index on (user_id,
+// fingerprint) WHERE revoked_at IS NULL rejects a duplicate active key for the
+// same user (the caller maps the unique-violation to a friendly 409).
+func (q *Queries) InsertSSHLoginKey(ctx context.Context, arg InsertSSHLoginKeyParams) (UserSshLoginKey, error) {
+	row := q.db.QueryRow(ctx, insertSSHLoginKey,
+		arg.UserID,
+		arg.Label,
+		arg.PublicKey,
+		arg.Fingerprint,
+	)
+	var i UserSshLoginKey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Label,
+		&i.PublicKey,
+		&i.Fingerprint,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const linkUserOIDC = `-- name: LinkUserOIDC :one
 UPDATE users SET oidc_issuer = $2, oidc_subject = $3
 WHERE id = $1 AND oidc_subject IS NULL
@@ -980,6 +1016,41 @@ func (q *Queries) ListActiveHosts(ctx context.Context) ([]Host, error) {
 			&i.AgentUrl,
 			&i.Status,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveSSHLoginKeys = `-- name: ListActiveSSHLoginKeys :many
+SELECT id, user_id, label, public_key, fingerprint, created_at, revoked_at FROM user_ssh_login_keys
+WHERE user_id = $1 AND revoked_at IS NULL
+ORDER BY created_at
+`
+
+// A user's active (non-revoked) login keys, oldest first.
+func (q *Queries) ListActiveSSHLoginKeys(ctx context.Context, userID pgtype.UUID) ([]UserSshLoginKey, error) {
+	rows, err := q.db.Query(ctx, listActiveSSHLoginKeys, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserSshLoginKey{}
+	for rows.Next() {
+		var i UserSshLoginKey
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Label,
+			&i.PublicKey,
+			&i.Fingerprint,
+			&i.CreatedAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1714,6 +1785,28 @@ func (q *Queries) RevokePAT(ctx context.Context, arg RevokePATParams) (pgtype.UU
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const revokeSSHLoginKey = `-- name: RevokeSSHLoginKey :execrows
+UPDATE user_ssh_login_keys SET revoked_at = now()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeSSHLoginKeyParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+// Soft-delete an active login key owned by the user. Returns the number of rows
+// updated (0 ⇒ unknown, not the caller's, or already revoked — the API maps
+// that to 404). Revoking (rather than hard-deleting) keeps the fingerprint
+// history for audit while freeing the (user_id, fingerprint) slot for re-add.
+func (q *Queries) RevokeSSHLoginKey(ctx context.Context, arg RevokeSSHLoginKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeSSHLoginKey, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeSession = `-- name: RevokeSession :one

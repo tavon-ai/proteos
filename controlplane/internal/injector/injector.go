@@ -29,6 +29,7 @@ import (
 	"github.com/tavon-ai/proteos/controlplane/internal/profile"
 	"github.com/tavon-ai/proteos/controlplane/internal/providers"
 	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/tavon-ai/proteos/controlplane/internal/sshkeys"
 )
 
 // GuestDialer opens the opaque byte tunnel to a machine's guest agent at the
@@ -45,13 +46,20 @@ type Injector struct {
 	secrets  secrets.Store
 	audit    *audit.Recorder
 	profile  *profile.Store
+	sshKeys  *sshkeys.Store
 }
 
 // New builds an Injector. prof may be nil (no portable-profile items are then
-// composed; provider secrets behave exactly as before).
-func New(guests GuestDialer, registry *providers.Registry, sec secrets.Store, rec *audit.Recorder, prof *profile.Store) *Injector {
-	return &Injector{guests: guests, registry: registry, secrets: sec, audit: rec, profile: prof}
+// composed; provider secrets behave exactly as before). keys may be nil (no
+// authorized_keys file is then composed).
+func New(guests GuestDialer, registry *providers.Registry, sec secrets.Store, rec *audit.Recorder, prof *profile.Store, keys *sshkeys.Store) *Injector {
+	return &Injector{guests: guests, registry: registry, secrets: sec, audit: rec, profile: prof, sshKeys: keys}
 }
+
+// authorizedKeysPath is the $HOME-relative destination for a user's active
+// login keys (inbound SSH — distinct from the outbound git-SSH identity's
+// ~/.ssh/id_ed25519 + ~/.ssh/config, which ride the profile.Store path above).
+const authorizedKeysPath = ".ssh/authorized_keys"
 
 // pushTimeout bounds a single tunnel dial + PUT /secrets.
 const pushTimeout = 15 * time.Second
@@ -135,6 +143,21 @@ func (i *Injector) compose(ctx context.Context, userID string) (guestwire.Secret
 		}
 		for _, f := range fileItems {
 			files = append(files, guestwire.FileDef{Path: f.Path, Mode: uint32(f.Mode), Content: f.Value})
+		}
+	}
+
+	// Inbound SSH login keys: every active key the user has registered, rendered
+	// as one authorized_keys file (replace-all, matching every other injected
+	// file — a revoked key drops out of the very next push). Omitted entirely
+	// when the user has none, so the guest removes any stale file it previously
+	// had (guestwire.SecretsRequest.Files doc: an omitted file is removed).
+	if i.sshKeys != nil {
+		blob, err := i.sshKeys.ActiveAuthorizedKeys(ctx, userID)
+		if err != nil {
+			return guestwire.SecretsRequest{}, fmt.Errorf("ssh login keys: %w", err)
+		}
+		if blob != "" {
+			files = append(files, guestwire.FileDef{Path: authorizedKeysPath, Mode: 0o600, Content: blob})
 		}
 	}
 
