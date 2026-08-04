@@ -38,6 +38,14 @@ Environment=PROTEOS_CODESERVER_BIN=/usr/local/bin/code-server
 # and the agent bridges to 127.0.0.1:<port>. No backend/supervisor — the user's
 # own dev server is the backend; the control-plane gateway is the authenticator.
 Environment=PROTEOS_GUEST_PREVIEW_LISTEN=vsock:1026
+# Inbound SSH: the fixed-target forward. The agent listens on a fourth vsock port
+# (1027) that the node-agent tunnel reaches on the guest SSH port and bridges
+# every connection straight to the guest's own sshd on 127.0.0.1:22 — no preamble
+# (the target is fixed) and no supervisor (proteos-sshd.service owns sshd's
+# lifecycle). sshd + its loopback-only config are baked by image/build-rootfs.sh;
+# a build that opted out (--no-ssh) leaves this listener up but with nothing
+# behind it, which the forward degrades to a dropped connection.
+Environment=PROTEOS_GUEST_SSH_LISTEN=vsock:1027
 Restart=always
 RestartSec=1
 # The shell sessions are children of the agent; give them room.

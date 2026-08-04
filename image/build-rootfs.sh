@@ -529,6 +529,75 @@ install_vim() {
   ok "vim installed"
 }
 
+# install_sshd MNT — bake the guest's inbound-SSH server: openssh-server (+ the
+# sftp subsystem, and openssh-client for ssh-keygen) laid down extract-only, the
+# privilege-separation account the skipped maintainer scripts would have made,
+# and the hardened loopback-only config + unit. sshd is unreachable from any
+# network by construction (ListenAddress 127.0.0.1); the only path to it is the
+# guest agent's vsock:1027 forward. Idempotent — a base that already ships
+# openssh keeps its binaries and just gets our config/unit. Sets OPENSSH_VERSION.
+# Needs the chroot binds (apt + useradd).
+install_sshd() {
+  local mnt="$1"
+  apt_extract_install "$mnt" openssh-server openssh-sftp-server openssh-client
+  [[ -x "$mnt/usr/sbin/sshd" ]] \
+    || die "openssh extract-only install failed: /usr/sbin/sshd not laid down (pass --no-ssh to skip)"
+  [[ -x "$mnt/usr/bin/ssh-keygen" ]] \
+    || die "openssh extract-only install failed: /usr/bin/ssh-keygen not laid down (the unit's ExecStartPre needs it)"
+  [[ -e "$mnt/usr/lib/openssh/sftp-server" ]] \
+    || log "WARNING: /usr/lib/openssh/sftp-server missing; scp/sftp over the SSH forward will fail (interactive ssh still works)"
+  # UsePAM yes needs a PAM stanza for sshd. It normally rides in the deb (a
+  # conffile, which extract-only does lay down); if this base ships none, write a
+  # minimal one rather than leaving sshd to reject every login at runtime. With
+  # pubkey auth, sshd consults only PAM's account + session stacks — it does the
+  # key check itself — so the auth/password stacks deny outright.
+  if [[ ! -f "$mnt/etc/pam.d/sshd" ]]; then
+    log "WARNING: the openssh-server package shipped no /etc/pam.d/sshd; writing a minimal pubkey-only stanza"
+    sudo mkdir -p "$mnt/etc/pam.d"
+    sudo tee "$mnt/etc/pam.d/sshd" >/dev/null <<'EOF'
+# Minimal ProteOS stanza (written by image/build-rootfs.sh because this base
+# shipped none). sshd authenticates with public keys itself and has password +
+# keyboard-interactive auth disabled, so PAM never authenticates anyone here.
+auth     required pam_deny.so
+password required pam_deny.so
+account  required pam_unix.so
+session  required pam_unix.so
+EOF
+    sudo chmod 0644 "$mnt/etc/pam.d/sshd"
+  fi
+
+  # Privilege separation: sshd refuses to start without an unprivileged 'sshd'
+  # account, normally created by the package's postinst — which extract-only
+  # installs never run. Its home /run/sshd is tmpfs, recreated every boot by the
+  # unit's RuntimeDirectory=.
+  sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    sh -c 'id -u sshd >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /run/sshd --shell /usr/sbin/nologin sshd' \
+    || die "creating the sshd privilege-separation user failed"
+
+  # Our config REPLACES the one the deb just extracted (which binds every
+  # interface and includes /etc/ssh/sshd_config.d drop-ins).
+  sudo install -D -m 0644 "$SSHD_CONFIG_SRC" "$mnt/etc/ssh/sshd_config"
+  sudo install -D -m 0644 "$SSHD_UNIT_SRC" "$mnt/etc/systemd/system/proteos-sshd.service"
+  sudo mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
+  sudo ln -sf ../proteos-sshd.service \
+    "$mnt/etc/systemd/system/multi-user.target.wants/proteos-sshd.service"
+  # The stock ssh.service/ssh.socket ride along in the deb. Neither is enabled
+  # here (no maintainer scripts ran), but a wildcard-bound socket-activated sshd
+  # is precisely what this image must never grow, so drop any enablement links.
+  sudo rm -f "$mnt/etc/systemd/system/multi-user.target.wants/ssh.service" \
+    "$mnt/etc/systemd/system/sockets.target.wants/ssh.socket"
+
+  # Bake NO host keys: a fleet whose machines share a host identity is a fleet
+  # where any machine can impersonate another. Each generates its own on first
+  # boot (ssh-keygen -A) and the guest agent pins them to the persist disk so the
+  # fingerprint survives stop/start.
+  sudo rm -f "$mnt"/etc/ssh/ssh_host_*
+
+  OPENSSH_VERSION="$(sudo chroot "$mnt" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    sh -c 'ssh -V' 2>&1 | grep -oE 'OpenSSH_[^ ,]+' | head -1 | sed 's/^OpenSSH_//' || true)"
+  ok "sshd baked (${OPENSSH_VERSION:-unknown}) — loopback-only, key-only, no forwarding"
+}
+
 # install_python MNT — lay down the Python language layer extract-only: python3 +
 # pip + venv + headers and the C/C++ build toolchain (build-essential). Like the
 # other apt installs it runs no maintainer scripts, so it then creates the
@@ -975,6 +1044,13 @@ GIT_VERSION=""
 USER_PROVISION=1
 USER_NAME=""
 RUN_AS_USER="dev"
+# Inbound SSH: bake openssh-server + the hardened loopback-only config/unit, so
+# the guest agent's vsock:1027 forward has a real sshd to bridge to. On by
+# default — `proteos ssh` is a platform feature, not a per-template layer;
+# --no-ssh opts out (air-gapped builds with no apt, or a deliberately
+# terminal/editor-only image).
+SSH_INSTALL=1
+OPENSSH_VERSION=""
 # Phase 8: bake the code-server editor (standalone release, self-contained). On
 # by default — the browser editor is reached through the guest agent's web
 # forward (vsock:1025). --no-codeserver opts out (air-gapped builds, or a base
@@ -1040,6 +1116,8 @@ while [[ $# -gt 0 ]]; do
     --no-git) GIT_INSTALL=0; shift ;;
     --user) USER_PROVISION=1; shift ;;
     --no-user) USER_PROVISION=0; shift ;;
+    --ssh) SSH_INSTALL=1; shift ;;
+    --no-ssh) SSH_INSTALL=0; shift ;;
     --codeserver) CODESERVER_INSTALL=1; shift ;;
     --no-codeserver) CODESERVER_INSTALL=0; shift ;;
     --codeserver-version) CODESERVER_VERSION=$2; shift 2 ;;
@@ -1119,6 +1197,10 @@ UNIT_SRC="$SCRIPT_DIR/proteos-guestagent.service"
 [[ -f $UNIT_SRC ]] || die "missing unit file: $UNIT_SRC"
 PROFILE_SRC="$SCRIPT_DIR/profile.d-proteos-providers.sh"
 [[ -f $PROFILE_SRC ]] || die "missing profile.d snippet: $PROFILE_SRC"
+SSHD_CONFIG_SRC="$SCRIPT_DIR/sshd_config"
+SSHD_UNIT_SRC="$SCRIPT_DIR/proteos-sshd.service"
+[[ $SSH_INSTALL -eq 0 || -f $SSHD_CONFIG_SRC ]] || die "missing sshd config: $SSHD_CONFIG_SRC"
+[[ $SSH_INSTALL -eq 0 || -f $SSHD_UNIT_SRC ]] || die "missing sshd unit: $SSHD_UNIT_SRC"
 GH_WRAPPER_SRC="$SCRIPT_DIR/gh-wrapper.sh"
 [[ $GH_INSTALL -eq 0 || -f $GH_WRAPPER_SRC ]] || die "missing gh wrapper: $GH_WRAPPER_SRC"
 CLAUDE_SETTINGS_SRC="$SCRIPT_DIR/claude-managed-settings.json"
@@ -1365,6 +1447,17 @@ if [[ $USER_PROVISION -eq 1 ]]; then
   FEATURES="$FEATURES,user"
 fi
 
+# Inbound SSH: bake sshd so the guest agent's vsock:1027 forward has something to
+# bridge to. Runs after the user step so the run-as account whose
+# ~/.ssh/authorized_keys the control plane injects already exists. Needs the
+# chroot binds for apt + useradd, so bracket it the same way.
+if [[ $SSH_INSTALL -eq 1 ]]; then
+  bind_chroot
+  install_sshd "$MNT"
+  unbind_chroot
+  FEATURES="$FEATURES,ssh"
+fi
+
 # Phase 8: bake code-server (decision #5). The standalone tarball is
 # self-contained (bundles its own Node), so it needs no chroot and is just
 # unpacked into /usr/local/lib + symlinked onto PATH.
@@ -1480,6 +1573,7 @@ PROTEOS_BUN_VERSION=$BUN_REL
 PROTEOS_TASKFILE_VERSION=$TASK_REL
 PROTEOS_GH_VERSION=$GH_REL
 PROTEOS_RUN_AS_USER=${USER_NAME:-root}
+PROTEOS_OPENSSH_VERSION=${OPENSSH_VERSION:-none}
 PROTEOS_CODESERVER_VERSION=${CS_VERSION:-none}
 PROTEOS_CLAUDE_VERSION=${CLAUDE_VERSION:-none}
 PROTEOS_NODE_VERSION=${NODE_VERSION:-none}
@@ -1533,6 +1627,7 @@ taskfile_version = $TASK_REL
 taskfile_sha256  = ${TASK_SHA256:-none}
 gh_version     = $GH_REL
 gh_sha256      = ${GH_SHA256:-none}
+openssh_version = ${OPENSSH_VERSION:-none}
 codeserver_version = ${CS_VERSION:-none}
 codeserver_sha256  = ${CS_SHA256:-none}
 claude_version = ${CLAUDE_VERSION:-none}
