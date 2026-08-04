@@ -1,0 +1,60 @@
+# ProteOS guest sshd — installed to /etc/ssh/sshd_config by image/build-rootfs.sh.
+#
+# This sshd is NOT reachable from any network. It binds loopback only; the ONLY
+# path to it is the guest agent's inbound-SSH forward (vsock:1027 → 127.0.0.1:22,
+# see guestagent/internal/sshfwd), which the node-agent tunnel reaches on
+# agentapi.GuestSSHPort and the control-plane gateway authenticates. Keeping the
+# bind on 127.0.0.1 is what makes that the sole path — sshd must never bind the
+# guest's tap NIC.
+#
+# Deliberately a COMPLETE config with no `Include /etc/ssh/sshd_config.d/*.conf`:
+# the openssh-server package is laid down extract-only (no maintainer scripts),
+# so nothing else is entitled to widen this file's policy from a drop-in.
+
+Port 22
+ListenAddress 127.0.0.1
+AddressFamily inet
+
+# Host keys live under /etc/ssh; the guest agent symlinks them onto the persist
+# disk at boot so a machine's fingerprint survives stop/start (see
+# guestagent/internal/persist/mount_linux.go). The unit's ExecStartPre runs
+# `ssh-keygen -A`, which fills in whatever is still missing.
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+# Keys only. The control plane injects the user's registered public keys as
+# ~/.ssh/authorized_keys (replace-all on every push — see
+# controlplane/internal/injector), so a revoked key stops working on the next
+# push. There are no passwords in this image to guess.
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+PermitEmptyPasswords no
+KbdInteractiveAuthentication no
+# Sessions land as the unprivileged run-as user ('dev'); an image built
+# --no-user has no such account and falls back to root, which stays key-only.
+PermitRootLogin prohibit-password
+UsePAM yes
+
+# No forwarding of any kind. Port forwarding through sshd would be a second,
+# unaudited egress path around the node-agent's NetworkPolicy nft rules (and
+# port preview already covers the legitimate "reach my dev server" case).
+AllowTcpForwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+GatewayPorts no
+PermitTunnel no
+X11Forwarding no
+
+# scp/sftp over the same forward.
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+LoginGraceTime 30
+MaxAuthTries 3
+MaxSessions 10
+MaxStartups 10:30:60
+ClientAliveInterval 30
+ClientAliveCountMax 4
+PrintMotd no
+AcceptEnv LANG LC_*

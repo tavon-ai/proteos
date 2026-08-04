@@ -1,0 +1,31 @@
+[Unit]
+Description=ProteOS guest sshd (loopback-only, reached through the guest agent's SSH forward)
+Documentation=https://github.com/tavon-ai/proteos
+# Ordered after the guest agent because the agent symlinks /etc/ssh/ssh_host_*
+# onto the persist disk during its startup, and ExecStartPre's `ssh-keygen -A`
+# should ideally find those symlinks already in place. This is a bias, not a
+# guarantee (the agent is Type=simple, so After= only orders process start):
+# ensureSSHHostKeys is written to self-heal — it migrates a host key that
+# ssh-keygen created first onto the disk and symlinks it, so the fingerprint
+# still settles by the next boot either way.
+After=local-fs.target proteos-guestagent.service
+DefaultDependencies=yes
+
+[Service]
+Type=simple
+# Generate any missing host keys on first boot (the image bakes NONE: baking a
+# host key would give every machine in the fleet the same identity, and the
+# extract-only package install runs no postinst to make them either).
+ExecStartPre=/usr/bin/ssh-keygen -A
+# -D: stay in the foreground under systemd. -e: log to stderr so the journal
+# gets sshd's diagnostics.
+ExecStart=/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config
+# sshd refuses to start without its privilege-separation directory, which lives
+# on tmpfs and so must be recreated every boot.
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
