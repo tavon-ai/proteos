@@ -171,6 +171,7 @@ type User struct {
 	ClaudeAttribution bool               `json:"claude_attribution"`
 	OidcIssuer        *string            `json:"oidc_issuer"`
 	OidcSubject       *string            `json:"oidc_subject"`
+	SshEnabled        bool               `json:"ssh_enabled"`
 }
 
 type UserGitIdentity struct {

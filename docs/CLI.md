@@ -104,6 +104,10 @@ proteos task get  --machine <id> <tid>
 proteos task watch --machine <id> <tid>
 proteos task cancel --machine <id> <tid>
 proteos task send --machine <id> <tid> "<prompt>"
+
+proteos ssh <machine>               # SSH into a machine (flags go before the id)
+proteos ssh <machine> -- <cmd>      # run one command instead of a shell
+proteos ssh-proxy <machine>         # ProxyCommand transport for ssh/scp/rsync
 ```
 
 Every read command takes `--json` to emit the raw API JSON for scripting. Run

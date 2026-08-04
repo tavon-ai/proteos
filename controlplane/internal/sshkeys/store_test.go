@@ -40,6 +40,23 @@ func newUser(t *testing.T, q *store.Queries, githubID int64) string {
 	return machine.UUIDString(u.ID)
 }
 
+// enableSSH flips the account-wide inbound-SSH switch on. A fresh user has it
+// off (migration 000019 defaults to false — inbound access is opt-in), so any
+// test that expects keys to actually render must call this.
+func enableSSH(t *testing.T, q *store.Queries, uid string) {
+	t.Helper()
+	id, err := machine.ParseUUID(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.SetUserSSHEnabled(context.Background(), store.SetUserSSHEnabledParams{
+		ID:         id,
+		SshEnabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestStoreAddListRevoke proves the basic lifecycle: adding a key makes it
 // appear in List (metadata only), revoking it removes it from List (soft
 // delete — the row survives, just filtered out).
@@ -179,6 +196,7 @@ func TestStoreActiveAuthorizedKeys(t *testing.T) {
 	_, q := testutil.Postgres(t)
 	s := sshkeys.NewStore(q)
 	uid := newUser(t, q, 207)
+	enableSSH(t, q, uid)
 
 	blob, err := s.ActiveAuthorizedKeys(ctx, uid)
 	if err != nil {
@@ -221,5 +239,49 @@ func TestStoreActiveAuthorizedKeys(t *testing.T) {
 	}
 	if !strings.Contains(blob, k2.PublicKey) {
 		t.Fatalf("active key missing from blob: %q", blob)
+	}
+}
+
+// TestStoreActiveAuthorizedKeysRespectsSwitch proves the account-wide switch
+// gates the rendered blob, which is what makes the Settings checkbox a real
+// revocation: with SSH off the blob is empty even though the keys are still
+// registered, so the next inject omits the file and the guest deletes it. List
+// deliberately still returns the keys — the settings UI shows them while off.
+func TestStoreActiveAuthorizedKeysRespectsSwitch(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	s := sshkeys.NewStore(q)
+	uid := newUser(t, q, 208)
+
+	if _, err := s.Add(ctx, uid, "laptop", genKey(t, "laptop")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default-off: registering a key is not on its own consent to be reachable.
+	on, err := s.Enabled(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on {
+		t.Fatal("a fresh user has SSH enabled, want off by default")
+	}
+	blob, err := s.ActiveAuthorizedKeys(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blob != "" {
+		t.Fatalf("blob while SSH disabled = %q, want empty", blob)
+	}
+	if keys, err := s.List(ctx, uid); err != nil || len(keys) != 1 {
+		t.Fatalf("List while disabled = %v (%v), want the 1 registered key", keys, err)
+	}
+
+	enableSSH(t, q, uid)
+	blob, err = s.ActiveAuthorizedKeys(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blob == "" {
+		t.Fatal("blob empty after enabling SSH, want the registered key")
 	}
 }

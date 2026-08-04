@@ -30,6 +30,18 @@ func (s *Server) handleGatewaySSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The account-wide master switch (Settings → SSH access). Checked here as
+	// well as in the injector because the two close different windows: the
+	// injector's authorized_keys removal is what actually revokes the key, but it
+	// is a best-effort push to running machines, so this check is what makes a
+	// disable take effect on the very next connection attempt regardless. Placed
+	// before the machine lookup so a disabled account leaks nothing about which
+	// machines exist.
+	if !user.SshEnabled {
+		writeError(w, http.StatusForbidden, "ssh_disabled")
+		return
+	}
+
 	m, err := s.resolveTerminalMachine(r.Context(), user, r.URL.Query().Get("machine"))
 	if err != nil {
 		// A foreign or absent machine both surface as 404 (no existence leak).

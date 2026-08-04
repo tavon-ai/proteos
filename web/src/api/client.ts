@@ -35,10 +35,13 @@ export class ApiError extends Error {
 // (.git + ignored files); false (default) ⇒ a clean export. claude_attribution
 // selects whether Claude Code stamps its attribution on commits/PRs: true
 // (default) keeps Claude's own defaults; false blanks them on the user's
-// machines.
+// machines. ssh_enabled is the account-wide inbound-SSH master switch: false
+// (default — inbound access is opt-in) ⇒ registered login keys are not injected
+// into any machine and the SSH tunnel is refused; true ⇒ both are allowed.
 export interface UserPrefs {
   download_as_is: boolean;
   claude_attribution: boolean;
+  ssh_enabled: boolean;
 }
 
 export interface Me {
@@ -273,6 +276,19 @@ export interface SSHKeyStatus {
   present: boolean;
   public_key?: string;
   fingerprint?: string;
+}
+
+// SSHLoginKey is one row of GET /api/ssh-keys: a public key the user registered
+// to log INTO their machines over SSH. Entirely distinct from SSHKeyStatus
+// above, which is the single server-generated key the guest uses to push to git
+// hosts. Nothing here is secret — the private half never leaves the user's own
+// machine, which is the whole point of pubkey auth.
+export interface SSHLoginKey {
+  id: string;
+  label: string;
+  public_key: string;
+  fingerprint: string;
+  created_at: string;
 }
 
 // AccessToken is one row of GET /api/tokens (AC1) — a personal access token the
@@ -792,6 +808,20 @@ export const api = {
   getSSHKey: () => request<SSHKeyStatus>('/api/profile/ssh'),
   generateSSHKey: () => request<SSHKeyStatus>('/api/profile/ssh', { method: 'POST' }),
   deleteSSHKey: () => request<void>('/api/profile/ssh', { method: 'DELETE' }),
+
+  // Inbound SSH login keys: a list, not a slot. addSSHLoginKey takes only a
+  // public key — there is deliberately no field for a private key anywhere in
+  // this API. Revoking is a soft delete server-side; the key stops being
+  // injected into the user's machines on the next push, which sshd honors on the
+  // very next connection attempt (it re-reads authorized_keys each time).
+  listSSHLoginKeys: () => request<SSHLoginKey[]>('/api/ssh-keys'),
+  addSSHLoginKey: (label: string, publicKey: string) =>
+    request<SSHLoginKey>('/api/ssh-keys', {
+      method: 'POST',
+      body: JSON.stringify({ label, public_key: publicKey }),
+    }),
+  revokeSSHLoginKey: (id: string) =>
+    request<void>(`/api/ssh-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // Personal access tokens (AC1): the user mints/revokes CLI credentials here.
   // createToken returns the plaintext exactly once (shown then discarded);

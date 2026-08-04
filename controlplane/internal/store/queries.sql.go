@@ -104,7 +104,7 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 const createOIDCUser = `-- name: CreateOIDCUser :one
 INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type CreateOIDCUserParams struct {
@@ -138,6 +138,7 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
@@ -589,7 +590,7 @@ func (q *Queries) GetNetworkPolicy(ctx context.Context, machineID pgtype.UUID) (
 const getPATByTokenHash = `-- name: GetPATByTokenHash :one
 SELECT
     personal_access_tokens.id, personal_access_tokens.user_id, personal_access_tokens.name, personal_access_tokens.token_hash, personal_access_tokens.prefix, personal_access_tokens.created_at, personal_access_tokens.expires_at, personal_access_tokens.last_used_at, personal_access_tokens.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled
 FROM personal_access_tokens
 JOIN users ON users.id = personal_access_tokens.user_id
 WHERE personal_access_tokens.token_hash = $1
@@ -627,6 +628,7 @@ func (q *Queries) GetPATByTokenHash(ctx context.Context, tokenHash []byte) (GetP
 		&i.User.ClaudeAttribution,
 		&i.User.OidcIssuer,
 		&i.User.OidcSubject,
+		&i.User.SshEnabled,
 	)
 	return i, err
 }
@@ -653,7 +655,7 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 const getSessionByID = `-- name: GetSessionByID :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.id = $1
@@ -691,6 +693,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 		&i.User.ClaudeAttribution,
 		&i.User.OidcIssuer,
 		&i.User.OidcSubject,
+		&i.User.SshEnabled,
 	)
 	return i, err
 }
@@ -698,7 +701,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -734,6 +737,7 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.ClaudeAttribution,
 		&i.User.OidcIssuer,
 		&i.User.OidcSubject,
+		&i.User.SshEnabled,
 	)
 	return i, err
 }
@@ -757,7 +761,7 @@ func (q *Queries) GetSnapshot(ctx context.Context, machineID pgtype.UUID) (Snaps
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject FROM users WHERE id = $1
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -775,12 +779,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
 
 const getUserByOIDC = `-- name: GetUserByOIDC :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
 `
 
 type GetUserByOIDCParams struct {
@@ -804,8 +809,23 @@ func (q *Queries) GetUserByOIDC(ctx context.Context, arg GetUserByOIDCParams) (U
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
+}
+
+const getUserSSHEnabled = `-- name: GetUserSSHEnabled :one
+SELECT ssh_enabled FROM users WHERE id = $1
+`
+
+// Read just the inbound-SSH switch for a user. Used by the sshkeys store to
+// render an empty authorized_keys blob while SSH is off, without the caller
+// needing to load (or even know about) the whole user row.
+func (q *Queries) GetUserSSHEnabled(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getUserSSHEnabled, id)
+	var ssh_enabled bool
+	err := row.Scan(&ssh_enabled)
+	return ssh_enabled, err
 }
 
 const insertAgentTask = `-- name: InsertAgentTask :one
@@ -966,7 +986,7 @@ func (q *Queries) InsertSSHLoginKey(ctx context.Context, arg InsertSSHLoginKeyPa
 const linkUserOIDC = `-- name: LinkUserOIDC :one
 UPDATE users SET oidc_issuer = $2, oidc_subject = $3
 WHERE id = $1 AND oidc_subject IS NULL
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type LinkUserOIDCParams struct {
@@ -991,6 +1011,7 @@ func (q *Queries) LinkUserOIDC(ctx context.Context, arg LinkUserOIDCParams) (Use
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
@@ -1225,7 +1246,7 @@ func (q *Queries) ListGitHostLinks(ctx context.Context, userID pgtype.UUID) ([]G
 }
 
 const listLinkableUsersByEmail = `-- name: ListLinkableUsersByEmail :many
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject FROM users WHERE email = $1 AND oidc_subject IS NULL
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled FROM users WHERE email = $1 AND oidc_subject IS NULL
 `
 
 // Candidate GitHub-era rows for verified-email linking: same email, no OIDC
@@ -1251,6 +1272,7 @@ func (q *Queries) ListLinkableUsersByEmail(ctx context.Context, email string) ([
 			&i.ClaudeAttribution,
 			&i.OidcIssuer,
 			&i.OidcSubject,
+			&i.SshEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -1955,7 +1977,7 @@ func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error 
 }
 
 const setUserClaudeAttribution = `-- name: SetUserClaudeAttribution :one
-UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type SetUserClaudeAttributionParams struct {
@@ -1981,12 +2003,13 @@ func (q *Queries) SetUserClaudeAttribution(ctx context.Context, arg SetUserClaud
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
 
 const setUserDownloadAsIs = `-- name: SetUserDownloadAsIs :one
-UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type SetUserDownloadAsIsParams struct {
@@ -2012,12 +2035,13 @@ func (q *Queries) SetUserDownloadAsIs(ctx context.Context, arg SetUserDownloadAs
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
 
 const setUserGitHub = `-- name: SetUserGitHub :one
-UPDATE users SET github_user_id = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+UPDATE users SET github_user_id = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type SetUserGitHubParams struct {
@@ -2042,6 +2066,39 @@ func (q *Queries) SetUserGitHub(ctx context.Context, arg SetUserGitHubParams) (U
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
+	)
+	return i, err
+}
+
+const setUserSSHEnabled = `-- name: SetUserSSHEnabled :one
+UPDATE users SET ssh_enabled = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+`
+
+type SetUserSSHEnabledParams struct {
+	ID         pgtype.UUID `json:"id"`
+	SshEnabled bool        `json:"ssh_enabled"`
+}
+
+// Flip the account-wide inbound-SSH master switch. false ⇒ the user's login
+// keys stop being injected into their machines and /gw/ssh refuses; true ⇒ both
+// are allowed. Returns the updated row.
+func (q *Queries) SetUserSSHEnabled(ctx context.Context, arg SetUserSSHEnabledParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserSSHEnabled, arg.ID, arg.SshEnabled)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.GithubUserID,
+		&i.Login,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DownloadAsIs,
+		&i.ClaudeAttribution,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
@@ -2125,7 +2182,7 @@ const updateOIDCUserProfile = `-- name: UpdateOIDCUserProfile :one
 UPDATE users
     SET login = $3, email = $4, avatar_url = $5
 WHERE oidc_issuer = $1 AND oidc_subject = $2
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type UpdateOIDCUserProfileParams struct {
@@ -2158,6 +2215,7 @@ func (q *Queries) UpdateOIDCUserProfile(ctx context.Context, arg UpdateOIDCUserP
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }
@@ -2412,7 +2470,7 @@ ON CONFLICT (github_user_id) DO UPDATE
     SET login = EXCLUDED.login,
         email = EXCLUDED.email,
         avatar_url = EXCLUDED.avatar_url
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
 `
 
 type UpsertUserParams struct {
@@ -2447,6 +2505,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.ClaudeAttribution,
 		&i.OidcIssuer,
 		&i.OidcSubject,
+		&i.SshEnabled,
 	)
 	return i, err
 }

@@ -967,6 +967,7 @@ func TestHelpJSONOffline(t *testing.T) {
 			"task run", "task ls", "task get", "task watch", "task cancel", "task send",
 			"providers ls", "providers get",
 			"secrets set", "secrets unset",
+			"ssh", "ssh-proxy",
 		}
 		sort.Strings(got)
 		sort.Strings(want)

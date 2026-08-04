@@ -137,11 +137,42 @@ func (s *Store) Revoke(ctx context.Context, userID, keyID string) (existed bool,
 	return n > 0, nil
 }
 
+// Enabled reports the user's account-wide inbound-SSH master switch
+// (users.ssh_enabled, migration 000019). false ⇒ no login key of theirs may be
+// injected and /gw/ssh must refuse; it is the default for a new account, so
+// inbound access is opt-in rather than a side effect of registering a key.
+func (s *Store) Enabled(ctx context.Context, userID string) (bool, error) {
+	uid, err := parseUID(userID)
+	if err != nil {
+		return false, err
+	}
+	on, err := s.q.GetUserSSHEnabled(ctx, uid)
+	if err != nil {
+		return false, fmt.Errorf("read ssh switch: %w", err)
+	}
+	return on, nil
+}
+
 // ActiveAuthorizedKeys renders every active key for userID as one
 // authorized_keys-format blob (one key per line), the shape the injector's
 // compose() step pushes verbatim to .ssh/authorized_keys. Empty (not an error)
 // when the user has no active keys, so the injector can skip the file.
+//
+// It also returns empty when the account-wide switch is off (Enabled), which is
+// what makes the checkbox a real revocation and not just a UI state: the next
+// inject pushes a Files set with no authorized_keys entry, and the guest removes
+// the file it previously had (guestwire.SecretsRequest.Files: an omitted file is
+// removed). Gating here rather than in the injector keeps every present and
+// future consumer of this blob fail-closed by construction. List() deliberately
+// does NOT filter — the settings UI still shows the keys while SSH is off.
 func (s *Store) ActiveAuthorizedKeys(ctx context.Context, userID string) (string, error) {
+	on, err := s.Enabled(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	if !on {
+		return "", nil
+	}
 	keys, err := s.List(ctx, userID)
 	if err != nil {
 		return "", err

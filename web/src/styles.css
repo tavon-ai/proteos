@@ -757,6 +757,14 @@ body {
   font-size: 0.9rem;
 }
 
+/* The `flex: 1 1 220px` above is written for the ROW layouts this input started
+   in, where 220px is a width. .provider-field stacks its label above its input
+   (flex-direction: column), so there that basis resolves against the cross axis
+   and renders a ~220px-tall input. Reset to intrinsic height inside a field. */
+.provider-field > .provider-key-input {
+  flex: 0 0 auto;
+}
+
 /* Phase 4 Git & SSH panel: section divider and the read-only public-key box. */
 .panel-divider {
   border: none;
@@ -849,6 +857,121 @@ body {
   display: block;
   font-size: 0.9rem;
   line-height: 1.4;
+}
+
+/* ── Inbound SSH access panel ────────────────────────────────────────────── */
+
+/* The account-wide on/off switch. Same shape as .download-option so the two
+   settings surfaces read as one family. */
+.ssh-toggle {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.8rem 0.9rem;
+  margin-top: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ssh-toggle input {
+  margin-top: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.ssh-toggle-text {
+  display: block;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.ssh-key-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ssh-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.ssh-key-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+/* Fingerprints are long and must not push the Remove button off the row. */
+.ssh-key-fingerprint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* Shown when keys exist but the switch is off, so the instructions below are
+   never mistaken for something that currently works. */
+.ssh-notice {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--error);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 0.88rem;
+}
+
+.ssh-steps {
+  margin: 0.9rem 0 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.ssh-step-label {
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+/* A copyable command: the <pre> scrolls rather than wrapping so a long
+   ProxyCommand line stays selectable in one piece. */
+.ssh-copy-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.ssh-command {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.ssh-copy-btn {
+  flex: 0 0 auto;
 }
 
 .token-create-form {

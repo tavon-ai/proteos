@@ -138,6 +138,35 @@ proteos git push   --machine <id> --project <name> --branch <b> [--set-upstream]
 proteos git pr     --machine <id> --project <name> --head <b> --title "<t>" [--base <b>] [--body "<s>"]
 ```
 
+### SSH
+
+```sh
+proteos ssh <machine>                  # interactive shell on a machine
+proteos ssh <machine> -- uname -a      # run one command instead of a shell
+proteos ssh --user root <machine>      # log in as someone other than 'dev'
+proteos ssh --print <machine>          # print the equivalent raw ssh command
+proteos ssh-proxy <machine>            # ProxyCommand transport (not run by hand)
+```
+
+A machine has no inbound port: the guest's `sshd` binds loopback only and the
+only route to it is an authenticated tunnel through the control plane. So
+`proteos ssh` runs your local `ssh` with a `ProxyCommand` already wired up,
+and `proteos ssh-proxy` is that transport. This command's own flags must come
+*before* the machine id — everything after it is passed straight through to
+`ssh`.
+
+To use `scp`, `sftp`, `rsync -e ssh`, or an IDE's Remote-SSH, put the machine
+in `~/.ssh/config`:
+
+```sshconfig
+Host proteos-<machine>
+    User dev
+    ProxyCommand proteos ssh-proxy <machine>
+```
+
+Requires SSH to be enabled for your account and at least one registered public
+key — both under **Settings → SSH access** in the web UI.
+
 ## JSON output
 
 Every read command (and most writes) accept `--json` for machine consumption. `task watch

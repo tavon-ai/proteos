@@ -373,6 +373,41 @@ export function useSSHKeyMutations() {
   return { generate, remove };
 }
 
+// sshLoginKeysKey caches the user's inbound SSH login keys (/api/ssh-keys) —
+// the list they log in WITH, not the single outbound git key above.
+const sshLoginKeysKey = ['ssh-login-keys'] as const;
+
+// useSSHLoginKeys loads the user's registered login keys. Nothing here is
+// secret, so unlike most profile data it is safe to render in full.
+export function useSSHLoginKeys() {
+  return useQuery({
+    queryKey: sshLoginKeysKey,
+    queryFn: api.listSSHLoginKeys,
+    retry: (failureCount, error) => {
+      if (error instanceof SessionExpiredError) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+// useSSHLoginKeyMutations exposes add/revoke. Both invalidate the list so it
+// re-renders from the server, which is also the moment the control plane has
+// finished re-injecting ~/.ssh/authorized_keys into the user's running machines.
+export function useSSHLoginKeyMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: sshLoginKeysKey });
+  const add = useMutation({
+    mutationFn: ({ label, publicKey }: { label: string; publicKey: string }) =>
+      api.addSSHLoginKey(label, publicKey),
+    onSuccess: invalidate,
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeSSHLoginKey(id),
+    onSuccess: invalidate,
+  });
+  return { add, revoke };
+}
+
 // tokensKey is the query cache key for the user's personal access tokens.
 const tokensKey = ['tokens'] as const;
 

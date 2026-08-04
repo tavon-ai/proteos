@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -32,6 +33,43 @@ func getSSH(t *testing.T, fx cpFixture, withCookie bool, origin, machineParam st
 	return resp.StatusCode
 }
 
+// getSSHError is getSSH plus the {error} code from the response envelope, for
+// distinguishing the two different 403s this route can return
+// (origin_forbidden vs ssh_disabled).
+func getSSHError(t *testing.T, fx cpFixture, origin, machineParam string) (int, string) {
+	t.Helper()
+	u := fx.url + "/gw/ssh"
+	if machineParam != "" {
+		u += "?machine=" + machineParam
+	}
+	req, _ := http.NewRequest(http.MethodGet, u, nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: fx.token})
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body.Error
+}
+
+// enableSSHFor flips the fixture user's account-wide inbound-SSH switch. A user
+// created by setupCP has it off (migration 000019 defaults to false), so any
+// /gw/ssh test that expects to get past that gate must call this first.
+func enableSSHFor(t *testing.T, fx cpFixture, on bool) {
+	t.Helper()
+	if _, err := fx.pool.Exec(context.Background(),
+		"UPDATE users SET ssh_enabled=$2 WHERE id=$1", fx.userID, on); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestGatewaySSHAuthzTable mirrors TestGatewayAuthzTable with the one
 // deliberate difference /gw/ssh has from /gw/terminal: a request with NO Origin
 // header at all (the CLI's bearer-token ProxyCommand shape, which never sends
@@ -47,6 +85,9 @@ func TestGatewaySSHAuthzTable(t *testing.T) {
 	t.Parallel()
 	fx := setupCP(t, failDialer{t}, []string{testWSOrigin})
 	ctx := context.Background()
+	// Inbound SSH is opt-in per account; TestGatewaySSHRespectsAccountSwitch
+	// covers the off state. Everything below is about the other authz gates.
+	enableSSHFor(t, fx, true)
 
 	if code := getSSH(t, fx, false, testWSOrigin, ""); code != http.StatusUnauthorized {
 		t.Fatalf("no cookie: want 401, got %d", code)
@@ -77,5 +118,46 @@ func TestGatewaySSHAuthzTable(t *testing.T) {
 	}
 	if code := getSSH(t, fx, true, "", ""); code != http.StatusConflict {
 		t.Fatalf("stopped machine (CLI shape, no Origin): want 409, got %d", code)
+	}
+}
+
+// TestGatewaySSHRespectsAccountSwitch proves the Settings → SSH access checkbox
+// gates the tunnel itself, not just key injection: with the switch off a fully
+// authorized request for an owned, running machine is refused with a distinct
+// ssh_disabled code. This is the enforcement point that makes a disable
+// immediate — the injector's authorized_keys removal is a best-effort push, so
+// it cannot on its own guarantee the next connection attempt fails. The refusal
+// lands before the machine lookup, so a disabled account can't probe for which
+// machine ids exist.
+func TestGatewaySSHRespectsAccountSwitch(t *testing.T) {
+	t.Parallel()
+	fx := setupCP(t, failDialer{t}, []string{testWSOrigin})
+
+	// Off (the default for a new account).
+	if code, errCode := getSSHError(t, fx, testWSOrigin, fx.machineID); code != http.StatusForbidden || errCode != "ssh_disabled" {
+		t.Fatalf("SSH disabled: want 403/ssh_disabled, got %d/%q", code, errCode)
+	}
+	// The CLI shape (no Origin) is refused for the same reason, not silently
+	// exempted by the Origin carve-out.
+	if code, errCode := getSSHError(t, fx, "", fx.machineID); code != http.StatusForbidden || errCode != "ssh_disabled" {
+		t.Fatalf("SSH disabled (CLI shape): want 403/ssh_disabled, got %d/%q", code, errCode)
+	}
+	// A bogus machine id is still ssh_disabled, not 404: the switch is checked
+	// first, so nothing about machine existence leaks while SSH is off.
+	if code, errCode := getSSHError(t, fx, testWSOrigin, "00000000-0000-0000-0000-000000000000"); code != http.StatusForbidden || errCode != "ssh_disabled" {
+		t.Fatalf("SSH disabled + unknown machine: want 403/ssh_disabled, got %d/%q", code, errCode)
+	}
+
+	// On: the same request now clears authz and reaches the upgrade attempt.
+	enableSSHFor(t, fx, true)
+	if code := getSSH(t, fx, true, testWSOrigin, fx.machineID); code != http.StatusUpgradeRequired {
+		t.Fatalf("SSH enabled: want 426 (authz passed, non-WS GET), got %d", code)
+	}
+
+	// And back off again — the switch is live per request, with no restart or
+	// re-inject in between.
+	enableSSHFor(t, fx, false)
+	if code, errCode := getSSHError(t, fx, testWSOrigin, fx.machineID); code != http.StatusForbidden || errCode != "ssh_disabled" {
+		t.Fatalf("SSH re-disabled: want 403/ssh_disabled, got %d/%q", code, errCode)
 	}
 }

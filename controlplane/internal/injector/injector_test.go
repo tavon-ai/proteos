@@ -362,6 +362,12 @@ func TestInjectorEmitsAuthorizedKeys(t *testing.T) {
 	_, q := testutil.Postgres(t)
 	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 106, Login: "loginkeys"})
 	uid := machine.UUIDString(user.ID)
+	// Inbound SSH is opt-in (migration 000019 defaults ssh_enabled to false), and
+	// the store renders an empty blob while it is off — see
+	// TestInjectorOmitsAuthorizedKeysWhenSSHDisabled for that half.
+	if _, err := q.SetUserSSHEnabled(ctx, store.SetUserSSHEnabledParams{ID: user.ID, SshEnabled: true}); err != nil {
+		t.Fatalf("enable ssh: %v", err)
+	}
 
 	keys := sshkeys.NewStore(q)
 	k1, err := keys.Add(ctx, uid, "laptop", genTestPublicKey(t, "laptop"))
@@ -439,6 +445,56 @@ func TestInjectorOmitsAuthorizedKeysWhenNoneActive(t *testing.T) {
 			t.Fatalf("authorized_keys pushed for a user with no active keys: %q", f.Content)
 		}
 	}
+}
+
+// TestInjectorOmitsAuthorizedKeysWhenSSHDisabled proves the account-wide switch
+// (Settings → SSH access) actually revokes access rather than merely hiding it
+// in the UI: with registered, non-revoked keys but ssh_enabled = false, the
+// compose step pushes no .ssh/authorized_keys, so the guest deletes the file it
+// had and sshd — which is pubkey-only — can authenticate nobody. Turning the
+// switch back on restores it on the next inject.
+func TestInjectorOmitsAuthorizedKeysWhenSSHDisabled(t *testing.T) {
+	ctx := context.Background()
+	_, q := testutil.Postgres(t)
+	user, _ := q.UpsertUser(ctx, store.UpsertUserParams{GithubUserID: 108, Login: "sshoff"})
+	uid := machine.UUIDString(user.ID)
+
+	keys := sshkeys.NewStore(q)
+	if _, err := keys.Add(ctx, uid, "laptop", genTestPublicKey(t, "laptop")); err != nil {
+		t.Fatalf("add key: %v", err)
+	}
+
+	guest := &fakeGuest{}
+	inj := injector.New(pipeDialer{h: guest.handler()}, providers.NewRegistry(q), secrets.NewMemStore(), audit.NewRecorder(q), nil, keys)
+
+	// Switch off (the default): the key exists but must not be pushed.
+	if err := inj.Inject(ctx, uid, "m-sshoff"); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	guest.mu.Lock()
+	for _, f := range guest.last.Files {
+		if f.Path == ".ssh/authorized_keys" {
+			guest.mu.Unlock()
+			t.Fatalf("authorized_keys pushed while SSH is disabled: %q", f.Content)
+		}
+	}
+	guest.mu.Unlock()
+
+	// Switch on: the same key now renders.
+	if _, err := q.SetUserSSHEnabled(ctx, store.SetUserSSHEnabledParams{ID: user.ID, SshEnabled: true}); err != nil {
+		t.Fatalf("enable ssh: %v", err)
+	}
+	if err := inj.Inject(ctx, uid, "m-sshoff"); err != nil {
+		t.Fatalf("re-inject: %v", err)
+	}
+	guest.mu.Lock()
+	defer guest.mu.Unlock()
+	for _, f := range guest.last.Files {
+		if f.Path == ".ssh/authorized_keys" {
+			return
+		}
+	}
+	t.Fatal("authorized_keys missing after enabling SSH")
 }
 
 // genTestPublicKey mints a fresh ed25519 keypair and returns its

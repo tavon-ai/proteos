@@ -69,6 +69,10 @@ func Run(env Env, args []string) int {
 		return runProviders(env, rest)
 	case "secrets", "secret":
 		return runSecrets(env, rest)
+	case "ssh":
+		return runSSH(env, rest)
+	case "ssh-proxy":
+		return runSSHProxy(env, rest)
 	case "version", "--version", "-v":
 		printVersion(env)
 		return client.ExitOK
@@ -166,6 +170,8 @@ Commands:
   providers get <key>  Show one provider
   secrets set <key>    Set (or replace) a provider's API key
   secrets unset <key>  Remove a provider's stored key
+  ssh <machine>        Open an SSH session to a machine
+  ssh-proxy <machine>  ProxyCommand transport for ssh/scp/sftp/rsync
   version              Print the CLI version
 
 Authentication:

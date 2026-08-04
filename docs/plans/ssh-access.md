@@ -1,6 +1,13 @@
 # Plan: SSH access into microVMs
 
-> Status: **not started** (planning document only — no code changes).
+> Status: **implemented**. The design below shipped essentially as written
+> (§3.4 Option A, with the dedicated `GuestSSHPort = 1027` forwarder). Two
+> things landed differently from this document: guest host keys are persisted
+> across stop/start rather than regenerated per boot (§3.1's flagged open
+> question, resolved in favour of stable `known_hosts` entries), and inbound
+> SSH is gated by an account-wide opt-in switch (`users.ssh_enabled`, off by
+> default) surfaced as **Settings → SSH access** in the web UI — see the
+> "SSH access" section of the README for the user-facing view.
 > Scope: two things users asked for — (a) an SSH server running inside every
 > guest microVM, and (b) a way for users to define SSH *login* keys that get
 > added to (and removed from) their machines automatically. Distinguish this

@@ -60,10 +60,14 @@ func TestUserPrefs_ClaudeAttribution(t *testing.T) {
 		return prefs
 	}
 
-	// Defaults: attribution on, no reconfigure from an empty PATCH.
+	// Defaults: attribution on, inbound SSH off (opt-in), no reconfigure from an
+	// empty PATCH.
 	prefs := patch(`{}`)
 	if prefs["claude_attribution"] != true || prefs["download_as_is"] != false {
 		t.Fatalf("default prefs = %v", prefs)
+	}
+	if prefs["ssh_enabled"] != false {
+		t.Fatalf("inbound SSH defaults to on, want opt-in: %v", prefs)
 	}
 	if rc.n() != 0 {
 		t.Fatalf("empty PATCH reconfigured machines %d times", rc.n())
@@ -94,5 +98,21 @@ func TestUserPrefs_ClaudeAttribution(t *testing.T) {
 	}
 	if rc.n() != 1 {
 		t.Fatalf("download change reconfigured machines, total %d", rc.n())
+	}
+
+	// The inbound-SSH switch round-trips and persists. It re-injects rather than
+	// reconfiguring git, so the git configurer must stay untouched.
+	prefs = patch(`{"ssh_enabled":true}`)
+	if prefs["ssh_enabled"] != true {
+		t.Fatalf("after enabling SSH, prefs = %v", prefs)
+	}
+	if prefs = patch(`{}`); prefs["ssh_enabled"] != true {
+		t.Fatalf("SSH switch did not persist: %v", prefs)
+	}
+	if prefs = patch(`{"ssh_enabled":false}`); prefs["ssh_enabled"] != false {
+		t.Fatalf("after disabling SSH, prefs = %v", prefs)
+	}
+	if rc.n() != 1 {
+		t.Fatalf("SSH switch reconfigured git, total %d", rc.n())
 	}
 }
