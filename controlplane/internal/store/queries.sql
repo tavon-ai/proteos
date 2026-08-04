@@ -61,6 +61,18 @@ UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING *;
 -- updated row.
 UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING *;
 
+-- name: SetUserSSHEnabled :one
+-- Flip the account-wide inbound-SSH master switch. false ⇒ the user's login
+-- keys stop being injected into their machines and /gw/ssh refuses; true ⇒ both
+-- are allowed. Returns the updated row.
+UPDATE users SET ssh_enabled = $2 WHERE id = $1 RETURNING *;
+
+-- name: GetUserSSHEnabled :one
+-- Read just the inbound-SSH switch for a user. Used by the sshkeys store to
+-- render an empty authorized_keys blob while SSH is off, without the caller
+-- needing to load (or even know about) the whole user row.
+SELECT ssh_enabled FROM users WHERE id = $1;
+
 -- name: CreateSession :one
 INSERT INTO sessions (user_id, token_hash, expires_at)
 VALUES ($1, $2, $3)

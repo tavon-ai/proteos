@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/tavon-ai/proteos/controlplane/internal/audit"
 	"github.com/tavon-ai/proteos/controlplane/internal/store"
 )
 
@@ -14,15 +15,22 @@ import (
 // (default) ⇒ a clean export. claude_attribution selects whether Claude Code
 // stamps its attribution on commits/PRs: true (default) keeps Claude Code's own
 // defaults; false blanks them on the user's machines (some organizations
-// disallow co-authored commits).
+// disallow co-authored commits). ssh_enabled is the account-wide inbound-SSH
+// master switch: false (default) ⇒ registered login keys are not injected
+// anywhere and /gw/ssh refuses; true ⇒ both are allowed.
 type userPrefs struct {
 	DownloadAsIs      bool `json:"download_as_is"`
 	ClaudeAttribution bool `json:"claude_attribution"`
+	SSHEnabled        bool `json:"ssh_enabled"`
 }
 
 // prefsView builds the wire shape from a user row.
 func prefsView(u store.User) userPrefs {
-	return userPrefs{DownloadAsIs: u.DownloadAsIs, ClaudeAttribution: u.ClaudeAttribution}
+	return userPrefs{
+		DownloadAsIs:      u.DownloadAsIs,
+		ClaudeAttribution: u.ClaudeAttribution,
+		SSHEnabled:        u.SshEnabled,
+	}
 }
 
 // handleUpdateUserPrefs applies a partial update to the authenticated user's
@@ -42,6 +50,7 @@ func (s *Server) handleUpdateUserPrefs(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		DownloadAsIs      *bool `json:"download_as_is"`
 		ClaudeAttribution *bool `json:"claude_attribution"`
+		SSHEnabled        *bool `json:"ssh_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
@@ -71,6 +80,32 @@ func (s *Server) handleUpdateUserPrefs(w http.ResponseWriter, r *http.Request) {
 		}
 		updated.ClaudeAttribution = u.ClaudeAttribution
 		s.reconfigureGit(r.Context(), uuidString(user.ID))
+	}
+	if body.SSHEnabled != nil && *body.SSHEnabled != user.SshEnabled {
+		u, err := s.Queries.SetUserSSHEnabled(r.Context(), store.SetUserSSHEnabledParams{
+			ID:         user.ID,
+			SshEnabled: *body.SSHEnabled,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal")
+			return
+		}
+		updated.SshEnabled = u.SshEnabled
+		uid := uuidString(user.ID)
+		s.Audit.Record(r.Context(), audit.Entry{
+			UserID:   uid,
+			Actor:    audit.UserActor(uid),
+			Action:   audit.ActionSSHAccessSet,
+			Target:   uid,
+			Metadata: map[string]any{"enabled": u.SshEnabled},
+		})
+		// Re-inject so the switch takes effect on machines that are already
+		// running: turning it on writes ~/.ssh/authorized_keys, turning it off
+		// drops the file (sshkeys.ActiveAuthorizedKeys returns empty while off, and
+		// an omitted file is removed guest-side). sshd re-reads authorized_keys per
+		// connection, so a disable is live with no restart. Machines that are
+		// stopped pick the new state up when they next boot.
+		s.reinjectRunningMachines(r.Context(), uid)
 	}
 	writeJSON(w, http.StatusOK, prefsView(updated))
 }

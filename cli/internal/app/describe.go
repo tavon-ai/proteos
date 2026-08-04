@@ -194,6 +194,17 @@ func commandRegistry() []group {
 	}
 }
 
+// topLevelLeaves lists the group-less commands that DO register a FlagSet, so
+// their flags and help text are introspected from the leaf itself rather than
+// authored in topLevelCommands. `ssh`/`ssh-proxy` are top-level rather than a
+// group because their argument is a machine id, not a subcommand.
+func topLevelLeaves() []leaf {
+	return []leaf{
+		{name: "ssh", run: runSSH},
+		{name: "ssh-proxy", run: runSSHProxy},
+	}
+}
+
 // topLevelCommands lists the group-less commands Run dispatches directly.
 // Unlike group leaves they take no flags and register no FlagSet, so their
 // entries are authored here; the aliases mirror Run's switch cases exactly.
@@ -247,12 +258,16 @@ func helpTreeOf(env Env) helpTree {
 		t.Groups = append(t.Groups, hg)
 	}
 	t.Commands = topLevelCommands()
+	for _, l := range topLevelLeaves() {
+		t.Commands = append(t.Commands, describeLeaf(env, group{}, l))
+	}
 	return t
 }
 
 // describeLeaf produces the helpCommand for one leaf: it runs the leaf in
 // describe mode (which captures its flags before any server call) and fills in
-// the group/name/aliases the leaf itself doesn't know.
+// the group/name/aliases the leaf itself doesn't know. A zero group means a
+// top-level leaf (topLevelLeaves), whose path is just its name.
 func describeLeaf(baseEnv Env, g group, l leaf) helpCommand {
 	d := &describer{}
 	env := baseEnv
@@ -263,7 +278,7 @@ func describeLeaf(baseEnv Env, g group, l leaf) helpCommand {
 		cmd = *d.captured
 	}
 	if cmd.Path == "" {
-		cmd.Path = g.name + " " + l.name
+		cmd.Path = strings.TrimSpace(g.name + " " + l.name)
 	}
 	cmd.Group = g.name
 	cmd.Name = l.name

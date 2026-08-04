@@ -72,6 +72,11 @@ const (
 	// this keeps audit rows terse and consistent with the other key actions).
 	ActionSSHKeyAdd    = "ssh_key.add"    // a user registered a new login key
 	ActionSSHKeyRevoke = "ssh_key.revoke" // a user revoked a login key
+
+	// The account-wide inbound-SSH master switch. Metadata carries {"enabled":
+	// bool}. Recorded even though the sibling account preferences aren't: this
+	// one opens or closes an inbound path into every machine the user owns.
+	ActionSSHAccessSet = "ssh_access.set"
 )
 
 // Actor prefixes identify who performed the action.

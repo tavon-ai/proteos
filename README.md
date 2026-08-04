@@ -70,10 +70,16 @@ the full write-up and **[RUNBOOK.md](RUNBOOK.md)** for day-2 operations.
   with an explicit message (the review gate before anything reaches origin),
   push a branch upstream, and open a pull request against the repo's default
   branch — all against the repo checked out inside the machine.
-- **SSH / web terminal** — a full xterm.js terminal over WebSocket into any
+- **Web terminal** — a full xterm.js terminal over WebSocket into any
   machine, used both for interactive shell access and for watching an agent
   work in real time. File editing is handled by **code-server** (VS Code in
   the browser) reached through the authenticated gateway.
+- **SSH access** — log into a machine from your own terminal with
+  `proteos ssh <machine>`, and use `scp`, `sftp`, `rsync`, or an IDE's
+  Remote-SSH over the same connection. Register public keys once and they
+  apply to every machine you own. Machines still expose no inbound port: the
+  connection is tunnelled through the authenticated control plane. See
+  **[SSH access](#ssh-access)** below.
 
 ## Supported templates
 
@@ -118,6 +124,10 @@ proteos git diff --machine m-123 --project myrepo
 proteos git commit --machine m-123 --project myrepo -m "add health check"
 proteos git push --machine m-123 --project myrepo --branch fix/login --set-upstream
 proteos git pr --machine m-123 --project myrepo --head fix/login --title "Fix login"
+
+# SSH into a machine
+proteos ssh m-123
+proteos ssh m-123 -- uname -a
 ```
 
 Nearly every read command accepts `--json`, and exit codes are stable (`0` ok,
@@ -125,6 +135,76 @@ Nearly every read command accepts `--json`, and exit codes are stable (`0` ok,
 be driven from scripts and CI, not just interactively. See
 **[cli/README.md](cli/README.md)** for install, authentication, and the full
 command reference.
+
+## SSH access
+
+You can log into a machine from your own terminal and use the whole SSH
+toolchain against it — `ssh`, `scp`, `sftp`, `rsync -e ssh`, and IDE
+Remote-SSH features.
+
+A machine has no address and no inbound port of its own. The SSH server inside
+a guest binds `127.0.0.1` only, and the sole route to it is an authenticated
+tunnel through the control plane, which is what preserves the default-deny
+network posture described in [Architecture](#architecture). Practically, that
+means SSH clients reach a machine through a `ProxyCommand` rather than by
+dialling a host and port.
+
+### Setting it up
+
+1. **Turn SSH on.** In the web UI, open **Settings → SSH access** and tick
+   *Allow SSH into my machines*. It is **off by default** — registering a key
+   is not on its own consent to be reachable.
+2. **Add a public key.** In the same tab, paste the contents of your public
+   key (usually `~/.ssh/id_ed25519.pub`; create one with
+   `ssh-keygen -t ed25519` if you have none). Only the *public* half is ever
+   sent — there is nowhere in the API or UI to put a private key. Keys apply
+   to every machine you own, including ones you create later.
+3. **Connect.**
+
+   ```bash
+   proteos ssh m-123              # interactive shell
+   proteos ssh m-123 -- uname -a  # run a single command
+   ```
+
+`proteos ssh` is a thin wrapper that runs your local `ssh` with the
+`ProxyCommand` already wired up. To use any other SSH-based tool, add the
+machine to `~/.ssh/config`:
+
+```sshconfig
+Host proteos-m-123
+    User dev
+    ProxyCommand proteos ssh-proxy m-123
+```
+
+after which `ssh proteos-m-123`, `scp file proteos-m-123:`,
+`rsync -e ssh ...`, and VS Code Remote-SSH all work against it.
+`proteos ssh --print <machine>` prints the equivalent raw `ssh` command for
+clients you would rather configure by hand.
+
+### Security model
+
+- **Keys only.** Password and keyboard-interactive authentication are disabled
+  in the guest `sshd` (`image/sshd_config`); the only accepted credentials are
+  the public keys you registered. Sessions land as the unprivileged `dev` user.
+- **Two enforcement points for the switch.** Turning SSH off both stops the
+  control plane injecting `~/.ssh/authorized_keys` into your machines (so the
+  file is deleted from each one on the next push) *and* makes the tunnel
+  refuse new connections. Removing a single key does the same for that key
+  alone. `sshd` re-reads `authorized_keys` on every connection attempt, so
+  revocation takes effect without restarting anything.
+- **No new inbound surface.** No host port is opened and no DNAT rule is added
+  for a guest; the tunnel rides the same authenticated gateway as the web
+  terminal, and logging out of a session closes its live SSH connections.
+- **No forwarding.** TCP, agent, X11, and stream-local forwarding are all
+  disabled in the guest `sshd`, so SSH can't become a second, unaudited egress
+  path around a machine's network policy. Use **Preview** for reaching a dev
+  server running in a machine.
+- **Stable host keys.** Each machine generates its own host key on first boot
+  and persists it across stop/start, so `known_hosts` entries stay valid and a
+  changed fingerprint remains a meaningful warning.
+
+The design rationale, including the alternatives that were rejected, is in
+**[docs/plans/ssh-access.md](docs/plans/ssh-access.md)**.
 
 ## Web interface
 
@@ -136,7 +216,8 @@ each window can open sub-windows for the tools below.
   windows here.
 - **Machine detail** — a metadata view for a single machine
   (`MachineDetails.tsx`): template, resource allocation, rootfs image, guest
-  IP, and current state, plus start/stop controls.
+  IP, and current state, plus start/stop controls, the machine's network
+  policy, and its ready-to-copy SSH command.
 - **Terminal** — an xterm.js terminal over WebSocket into the machine
   (`components/Terminal.tsx`), used both for an interactive shell and for
   watching a coding agent work live.
@@ -152,7 +233,9 @@ each window can open sub-windows for the tools below.
 - **Preview** — forwards and opens a machine's listening ports through the
   gateway at a per-machine, per-port subdomain (`windows/PreviewWindow.tsx`).
 - **Settings** — per-user configuration (`windows/SettingsWindow.tsx`): AI
-  provider API keys, GitHub connection, SSH keys, and download links.
+  provider API keys, GitHub connection, the outbound git SSH key, download
+  links, and an **SSH access** tab holding the on/off switch, your authorized
+  login keys, and the connect instructions (`components/SSHAccessPanel.tsx`).
 
 A separate lightweight mobile shell (`web/src/mobile/`) exposes just a
 machines list and a PR review view, for reviewing agent output from a phone.

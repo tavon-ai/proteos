@@ -1,6 +1,7 @@
 import type { MachineSummary, MachineTemplate } from '../api/client';
 import { ExposeAppPanel } from '../components/ExposeAppPanel';
 import { NetworkPolicyPanel } from '../components/NetworkPolicyPanel';
+import { MachineSshPanel } from '../components/SSHAccessPanel';
 import { Modal } from './Modal';
 
 function gib(mib: number | undefined): string {
@@ -63,6 +64,8 @@ export function MachineDetails({
       <ExposeAppPanel machineId={machine.id} machineState={machine.state} />
 
       <NetworkPolicyPanel machineId={machine.id} />
+
+      <MachineSshPanel machineId={machine.id} machineState={machine.state} />
 
       <div className="modal-actions">
         <button type="button" className="btn-primary" onClick={onClose}>
