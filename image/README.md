@@ -75,7 +75,37 @@ image/build-rootfs.sh --base … \
   --bashrc-file ./extra.bashrc
 ```
 
-Through Ansible these map to `proteos_guest_{vim,go,taskfile}_install`,
+**Inbound SSH (`--no-ssh` opts out).** So `ssh` into a machine has something to
+talk to, the build also bakes:
+
+- **openssh-server** (+ `openssh-sftp-server` for `scp`/`sftp`, and
+  `openssh-client` for `ssh-keygen`) — installed extract-only, like vim/git. The
+  package's maintainer scripts never run, so the build also creates the `sshd`
+  privilege-separation account itself.
+- `/etc/ssh/sshd_config` (`sshd_config`) — **replaces** the package's config.
+  Loopback-only (`ListenAddress 127.0.0.1`), key-only (no password or
+  keyboard-interactive auth), no forwarding of any kind, and no drop-in
+  `Include` that could widen it later.
+- `/etc/systemd/system/proteos-sshd.service` (`proteos-sshd.service`, + the
+  `multi-user.target.wants` symlink) — runs `sshd -D`, generating any missing
+  host keys first (`ssh-keygen -A`). The stock `ssh.service`/`ssh.socket`, which
+  would bind every interface, are explicitly left disabled.
+
+**No host key is baked**: a shared host identity would let any machine in the
+fleet impersonate any other, so each generates its own on first boot and the
+guest agent symlinks them onto the persist disk (so the fingerprint survives
+stop/start). The authorized keys are not baked either — the control plane
+injects the user's registered public keys as `~/.ssh/authorized_keys` on every
+push, so revoking a key takes effect on the next one.
+
+The only route to this sshd is the guest agent's SSH forward on `vsock:1027`
+(`PROTEOS_GUEST_SSH_LISTEN` in the guest-agent unit) → `127.0.0.1:22`, which the
+node-agent tunnel reaches on `agentapi.GuestSSHPort` and the control-plane
+gateway authenticates. Verify a baked image with `sudo image/verify-ssh-rootfs.sh`;
+the live boot-and-dial round-trip is covered by `TestGuestSSHForward` in the
+node-agent's firecracker suite.
+
+Through Ansible these map to `proteos_guest_{vim,go,taskfile,ssh}_install`,
 `proteos_guest_{go,taskfile}_version`, and `proteos_guest_aliases` (a
 name⇒command map) in `deploy/ansible/group_vars/all.yml`.
 

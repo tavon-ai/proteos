@@ -230,6 +230,7 @@
       {% if item.node %}{% if proteos_gemini_install == 'latest' %} --gemini{% if proteos_gemini_version | length > 0 %} --gemini-version {{ proteos_gemini_version }}{% endif %}{% endif %}{% if proteos_codex_install == 'latest' %} --codex{% if proteos_codex_version | length > 0 %} --codex-version {{ proteos_codex_version }}{% endif %}{% endif %}{% if proteos_pi_install == 'latest' %} --pi{% if proteos_pi_version | length > 0 %} --pi-version {{ proteos_pi_version }}{% endif %}{% endif %}{% if proteos_node_version | length > 0 %} --node-version {{ proteos_node_version }}{% endif %}{% endif %}
       {% if not (proteos_git_install | bool) %} --no-git{% endif %}
       {% if not (proteos_codeserver_install | bool) %} --no-codeserver{% else %}{% if proteos_codeserver_version | length > 0 %} --codeserver-version {{ proteos_codeserver_version }}{% endif %}{% if proteos_codeserver_sha256 | length > 0 %} --codeserver-sha256 {{ proteos_codeserver_sha256 }}{% endif %}{% endif %}
+      {% if not (proteos_guest_ssh_install | bool) %} --no-ssh{% endif %}
       {% if not (proteos_guest_vim_install | bool) %} --no-vim{% endif %}
       {% if not (proteos_guest_taskfile_install | bool) %} --no-taskfile{% else %}{% if proteos_guest_taskfile_version | length > 0 %} --taskfile-version {{ proteos_guest_taskfile_version }}{% endif %}{% endif %}
       {% if not (proteos_guest_gh_install | bool) %} --no-gh{% else %}{% if proteos_guest_gh_version | length > 0 %} --gh-version {{ proteos_guest_gh_version }}{% endif %}{% if proteos_guest_gh_sha256 | length > 0 %} --gh-sha256 {{ proteos_guest_gh_sha256 }}{% endif %}{% endif %}
@@ -366,6 +367,22 @@
   ansible.builtin.command:
     cmd: >-
       {{ proteos_src_dir }}/image/verify-phase8-rootfs.sh
+      --image {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}
+      --images-dir {{ proteos_images_dir }}
+  changed_when: false
+
+# SSH gate: verify the baked image contains a runnable sshd whose config is
+# loopback-only/key-only/forwarding-free, that its unit is enabled, that the
+# guest agent's SSH-forward systemd wiring is present (vsock:1027 — without it
+# the KVM suite's TestGuestSSHForward fails on a vsock handshake EOF), and that
+# no host key is baked. Loop-mount only (no VM boot), cheap and safe on every
+# bake. A red gate aborts.
+- name: SSH acceptance — sshd present + loopback-only + forward wired, no host key baked
+  tags: [acceptance, ssh]
+  when: proteos_guest_ssh_install | bool
+  ansible.builtin.command:
+    cmd: >-
+      {{ proteos_src_dir }}/image/verify-ssh-rootfs.sh
       --image {{ proteos_images_dir }}/{{ proteos_rootfs_ref }}
       --images-dir {{ proteos_images_dir }}
   changed_when: false

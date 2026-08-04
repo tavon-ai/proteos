@@ -196,6 +196,22 @@ proteos_codeserver_version: "" # empty ⇒ latest GitHub release; set to pin (e.
 proteos_codeserver_sha256: "" # optional sha256 pin for the release tarball
 
 # ----------------------------------------------------------------------------
+# Inbound SSH into the microVMs: bakes openssh-server plus a hardened,
+# loopback-only sshd config/unit, so the guest agent's vsock:1027 forward has a
+# real sshd to bridge to. sshd binds 127.0.0.1 only and accepts nothing but the
+# public keys the control plane injects — the gateway remains the sole
+# authenticator, exactly as for the terminal/editor/preview forwards.
+#
+# On by default (`proteos ssh` is a platform feature). Set false for air-gapped
+# builds with no apt, or a deliberately terminal/editor-only image; the guest
+# agent then still binds vsock:1027 but every connection is dropped, AND the
+# firecracker acceptance suite's TestGuestSSHForward will fail — so turn the
+# acceptance gate off too if you disable this. When true, the node_agent role
+# runs image/verify-ssh-rootfs.sh as a post-bake gate. Uses apt on the BAKE HOST
+# (network required). Adds ~10 MiB to the image.
+proteos_guest_ssh_install: true
+
+# ----------------------------------------------------------------------------
 # Guest dev tooling baked into the rootfs: vim, the Go toolchain (unpacked into
 # /usr/local/go and put on PATH), and the Taskfile (`task`) CLI. All on by
 # default; set the matching *_install false to skip. Empty Go/Taskfile versions
