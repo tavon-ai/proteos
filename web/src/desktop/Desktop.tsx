@@ -13,6 +13,7 @@ import { SessionsWindow } from '../windows/SessionsWindow';
 import { SessionDetailWindow } from '../windows/SessionDetailWindow';
 import { TaskDetailWindow } from '../windows/TaskDetailWindow';
 import { SettingsWindow } from '../windows/SettingsWindow';
+import { AdminWindow } from '../windows/AdminWindow';
 import { Dock } from './Dock';
 import { ProjectsLauncher } from './ProjectsLauncher';
 import { SelectedMachineProvider } from './selectedMachine';
@@ -314,6 +315,8 @@ function WindowBody({
       );
     case 'settings':
       return <SettingsWindow />;
+    case 'admin':
+      return <AdminWindow />;
     case 'placeholder':
       return <Placeholder win={win} />;
     default:

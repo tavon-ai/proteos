@@ -36,6 +36,10 @@ func TestProtectedRoutesRejectUnauthenticated(t *testing.T) {
 		{http.MethodPost, "/api/machines/abc/stop"},
 		{http.MethodDelete, "/api/machines/abc"},
 		{http.MethodGet, "/api/machine/events"},
+		// requireAdmin wraps requireAuth, so an anonymous caller must still be
+		// turned away as unauthenticated (401) — never 403, which would confirm
+		// the route exists to someone who has not identified themselves.
+		{http.MethodGet, "/api/admin/overview"},
 	}
 
 	client := &http.Client{}

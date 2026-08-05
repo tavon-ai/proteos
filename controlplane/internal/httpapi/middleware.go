@@ -108,6 +108,36 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// requireAdmin gates a route on the caller holding the ProteOS admin role. It
+// wraps requireAuth rather than sitting beside it, so a route can never be
+// registered as admin-only while accidentally skipping authentication — the
+// only way to reach the inner handler is through both checks, in that order.
+//
+// The unauthenticated case stays a 401 (requireAuth's answer) and the
+// authenticated-but-not-admin case is a flat 403: the caller already proved who
+// they are, so "you may not" leaks nothing they could not infer, and a 404 here
+// would just make a misconfigured grant look like a broken deployment.
+//
+// The role is read from the user row, which internal/auth refreshes from the
+// IdP's claims each time it resolves an identity. It is deliberately NOT
+// re-derived per request: sessions here are opaque and server-side, so there is
+// no per-request token to read a claim from.
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return s.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if !user.IsAdmin {
+			slog.Warn("admin route refused", "user", uuidString(user.ID), "path", r.URL.Path)
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 // authenticateBearer validates a bearer credential of either accepted kind and
 // returns the user it belongs to. A validator that is not configured behaves
 // exactly like one that rejected the credential: a deployment without PATs

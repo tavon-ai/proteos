@@ -58,6 +58,58 @@ export interface Me {
   // False until the user completes Connect GitHub (TAV-149); the SPA blocks on
   // the connect screen until then, since git operations need the linked account.
   github_connected: boolean;
+  // True when the user holds the `proteos.admin` role in Zitadel. It decides
+  // whether the Admin rail item renders — it is NOT the access check. Every
+  // /api/admin route re-checks the role server-side, so a client that flips
+  // this to true gets an empty console and a 403.
+  is_admin: boolean;
+}
+
+// --- Admin console -----------------------------------------------------------
+
+// AdminOverview is the fleet-wide, read-only view behind GET /api/admin/overview
+// (requires the proteos.admin role).
+export interface AdminOverview {
+  totals: AdminTotals;
+  machines: AdminMachine[];
+  // True when the fleet holds more machines than `machines` returned. The
+  // totals stay exact regardless — they are counted separately from the list —
+  // so the UI must say the TABLE is partial, not the numbers.
+  truncated: boolean;
+}
+
+export interface AdminTotals {
+  // Every machine that exists, in any state.
+  machines: number;
+  // Machines currently running — the "in use" number, and the one that maps to
+  // consumed host CPU and memory.
+  running: number;
+  // The full state histogram, keyed by MachineState. States with no machines
+  // are absent rather than zero, so read it with `?? 0`.
+  by_state: Partial<Record<MachineState, number>>;
+  users: number;
+  users_with_machines: number;
+}
+
+export interface AdminOwner {
+  id: string;
+  login: string;
+  email: string;
+  avatar_url: string;
+}
+
+export interface AdminMachine {
+  id: string;
+  name: string;
+  state: MachineState;
+  owner: AdminOwner;
+  template_id: string | null;
+  resource_spec: { vcpus: number; mem_mib: number; disk_mib?: number };
+  last_error: string | null;
+  // The node the machine is placed on; null before it has been scheduled.
+  host: string | null;
+  created_at: string;
+  last_active_at: string | null;
 }
 
 // MachineState mirrors the control-plane machines.state CHECK constraint.
@@ -661,6 +713,11 @@ export const api = {
       body: JSON.stringify(prefs),
     }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+
+  // GET /api/admin/overview returns the fleet-wide machine/owner view. Throws
+  // ApiError 403 `forbidden` for a signed-in user without the proteos.admin
+  // role — the rail hides the entry point, but the call is still refused.
+  adminOverview: () => request<AdminOverview>('/api/admin/overview'),
 
   // GET /api/templates returns the machine-template catalog for the create
   // picker (possibly empty on a legacy single-image deployment).

@@ -18,6 +18,11 @@ type meResponse struct {
 	// operations need a linked GitHub account, so the UI blocks on the
 	// Connect GitHub screen until this is true.
 	GitHubConnected bool `json:"github_connected"`
+	// IsAdmin mirrors the caller's proteos.admin Zitadel role. It exists so the
+	// SPA knows whether to render the Admin rail item; it is NOT the access
+	// check. Every /api/admin route re-checks the role server-side, so hiding
+	// the item is a UI courtesy and forging this flag buys a client nothing.
+	IsAdmin bool `json:"is_admin"`
 }
 
 type meUser struct {
@@ -86,6 +91,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		Machines:        []MachineSummary{},
 		MachineLimit:    s.Machines.MaxPerUser(),
 		GitHubConnected: user.GithubUserID != nil,
+		IsAdmin:         user.IsAdmin,
 	}
 	ms, err := s.Machines.List(r.Context(), user.ID)
 	if err != nil {

@@ -172,6 +172,7 @@ type User struct {
 	OidcIssuer        *string            `json:"oidc_issuer"`
 	OidcSubject       *string            `json:"oidc_subject"`
 	SshEnabled        bool               `json:"ssh_enabled"`
+	IsAdmin           bool               `json:"is_admin"`
 }
 
 type UserGitIdentity struct {

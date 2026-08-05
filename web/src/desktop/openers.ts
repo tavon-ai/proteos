@@ -143,6 +143,12 @@ export function openSettings(wm: WindowManagerContext): void {
   wm.open({ id: 'settings', kind: 'settings', title: 'Settings', dedupeKey: 'settings' });
 }
 
+// openAdmin opens the fleet console. A global singleton like Settings — it is
+// not scoped to a machine, and a second copy would just poll twice.
+export function openAdmin(wm: WindowManagerContext): void {
+  wm.open({ id: 'admin', kind: 'admin', title: 'Admin — fleet', dedupeKey: 'admin' });
+}
+
 export function openLogs(wm: WindowManagerContext): void {
   wm.open({ id: 'logs', kind: 'logs', title: 'Activity', dedupeKey: 'logs' });
 }

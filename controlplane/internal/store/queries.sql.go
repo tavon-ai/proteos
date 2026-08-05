@@ -12,6 +12,139 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const adminCountMachinesByState = `-- name: AdminCountMachinesByState :many
+SELECT state, count(*) AS count FROM machines GROUP BY state ORDER BY state
+`
+
+type AdminCountMachinesByStateRow struct {
+	State string `json:"state"`
+	Count int64  `json:"count"`
+}
+
+// Fleet-wide machine counts grouped by state, for the admin console's totals.
+//
+// Deliberately NOT derived by counting the rows AdminListMachines returns: that
+// list is capped, so totals computed from it would silently under-report the
+// moment the fleet outgrows the cap. The counts are the authoritative numbers
+// and the list is a sample of them.
+func (q *Queries) AdminCountMachinesByState(ctx context.Context) ([]AdminCountMachinesByStateRow, error) {
+	rows, err := q.db.Query(ctx, adminCountMachinesByState)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminCountMachinesByStateRow{}
+	for rows.Next() {
+		var i AdminCountMachinesByStateRow
+		if err := rows.Scan(&i.State, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminCountUsers = `-- name: AdminCountUsers :one
+SELECT
+    count(*)                                                            AS total,
+    count(*) FILTER (WHERE EXISTS (SELECT 1 FROM machines m WHERE m.user_id = users.id)) AS with_machines
+FROM users
+`
+
+type AdminCountUsersRow struct {
+	Total        int64 `json:"total"`
+	WithMachines int64 `json:"with_machines"`
+}
+
+// Fleet-wide user counts: total accounts, and how many own at least one
+// machine. Both in one row so the two numbers are read from a single snapshot.
+func (q *Queries) AdminCountUsers(ctx context.Context) (AdminCountUsersRow, error) {
+	row := q.db.QueryRow(ctx, adminCountUsers)
+	var i AdminCountUsersRow
+	err := row.Scan(&i.Total, &i.WithMachines)
+	return i, err
+}
+
+const adminListMachines = `-- name: AdminListMachines :many
+SELECT
+    m.id,
+    m.name,
+    m.state,
+    m.template_id,
+    m.resource_spec,
+    m.last_error,
+    m.created_at,
+    m.last_active_at,
+    m.user_id,
+    u.login      AS owner_login,
+    u.email      AS owner_email,
+    u.avatar_url AS owner_avatar_url,
+    h.name       AS host_name
+FROM machines m
+JOIN users u ON u.id = m.user_id
+LEFT JOIN hosts h ON h.id = m.host_id
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $1
+`
+
+type AdminListMachinesRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	Name           string             `json:"name"`
+	State          string             `json:"state"`
+	TemplateID     *string            `json:"template_id"`
+	ResourceSpec   []byte             `json:"resource_spec"`
+	LastError      *string            `json:"last_error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastActiveAt   pgtype.Timestamptz `json:"last_active_at"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	OwnerLogin     string             `json:"owner_login"`
+	OwnerEmail     string             `json:"owner_email"`
+	OwnerAvatarUrl string             `json:"owner_avatar_url"`
+	HostName       *string            `json:"host_name"`
+}
+
+// Every machine in the fleet with its owner, newest first, capped at $1.
+//
+// The join is to users, not a second query per machine: the console's whole
+// point is "who owns this", so the owner is part of the row, and an N+1 over a
+// growing fleet is exactly the wrong shape for a page that renders all of it.
+func (q *Queries) AdminListMachines(ctx context.Context, limit int32) ([]AdminListMachinesRow, error) {
+	rows, err := q.db.Query(ctx, adminListMachines, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminListMachinesRow{}
+	for rows.Next() {
+		var i AdminListMachinesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.State,
+			&i.TemplateID,
+			&i.ResourceSpec,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.LastActiveAt,
+			&i.UserID,
+			&i.OwnerLogin,
+			&i.OwnerEmail,
+			&i.OwnerAvatarUrl,
+			&i.HostName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countMachinesByUserID = `-- name: CountMachinesByUserID :one
 SELECT count(*) FROM machines WHERE user_id = $1
 `
@@ -102,9 +235,9 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 }
 
 const createOIDCUser = `-- name: CreateOIDCUser :one
-INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url, is_admin)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type CreateOIDCUserParams struct {
@@ -113,10 +246,12 @@ type CreateOIDCUserParams struct {
 	Login       string  `json:"login"`
 	Email       string  `json:"email"`
 	AvatarUrl   string  `json:"avatar_url"`
+	IsAdmin     bool    `json:"is_admin"`
 }
 
 // First Zitadel login with no linkable existing account: create the user.
 // github_user_id stays NULL until the user completes "Connect GitHub".
+// is_admin mirrors the token's proteos.admin project role (see UpdateOIDCUserProfile).
 func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, createOIDCUser,
 		arg.OidcIssuer,
@@ -124,6 +259,7 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 		arg.Login,
 		arg.Email,
 		arg.AvatarUrl,
+		arg.IsAdmin,
 	)
 	var i User
 	err := row.Scan(
@@ -139,6 +275,7 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -590,7 +727,7 @@ func (q *Queries) GetNetworkPolicy(ctx context.Context, machineID pgtype.UUID) (
 const getPATByTokenHash = `-- name: GetPATByTokenHash :one
 SELECT
     personal_access_tokens.id, personal_access_tokens.user_id, personal_access_tokens.name, personal_access_tokens.token_hash, personal_access_tokens.prefix, personal_access_tokens.created_at, personal_access_tokens.expires_at, personal_access_tokens.last_used_at, personal_access_tokens.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled, users.is_admin
 FROM personal_access_tokens
 JOIN users ON users.id = personal_access_tokens.user_id
 WHERE personal_access_tokens.token_hash = $1
@@ -629,6 +766,7 @@ func (q *Queries) GetPATByTokenHash(ctx context.Context, tokenHash []byte) (GetP
 		&i.User.OidcIssuer,
 		&i.User.OidcSubject,
 		&i.User.SshEnabled,
+		&i.User.IsAdmin,
 	)
 	return i, err
 }
@@ -655,7 +793,7 @@ func (q *Queries) GetProvider(ctx context.Context, key string) (Provider, error)
 const getSessionByID = `-- name: GetSessionByID :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled, users.is_admin
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.id = $1
@@ -694,6 +832,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 		&i.User.OidcIssuer,
 		&i.User.OidcSubject,
 		&i.User.SshEnabled,
+		&i.User.IsAdmin,
 	)
 	return i, err
 }
@@ -701,7 +840,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id pgtype.UUID) (GetSessio
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT
     sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.expires_at, sessions.revoked_at,
-    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled
+    users.id, users.github_user_id, users.login, users.email, users.avatar_url, users.status, users.created_at, users.download_as_is, users.claude_attribution, users.oidc_issuer, users.oidc_subject, users.ssh_enabled, users.is_admin
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -738,6 +877,7 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.User.OidcIssuer,
 		&i.User.OidcSubject,
 		&i.User.SshEnabled,
+		&i.User.IsAdmin,
 	)
 	return i, err
 }
@@ -761,7 +901,7 @@ func (q *Queries) GetSnapshot(ctx context.Context, machineID pgtype.UUID) (Snaps
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled FROM users WHERE id = $1
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -780,12 +920,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const getUserByOIDC = `-- name: GetUserByOIDC :one
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
 `
 
 type GetUserByOIDCParams struct {
@@ -810,6 +951,7 @@ func (q *Queries) GetUserByOIDC(ctx context.Context, arg GetUserByOIDCParams) (U
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -984,20 +1126,26 @@ func (q *Queries) InsertSSHLoginKey(ctx context.Context, arg InsertSSHLoginKeyPa
 }
 
 const linkUserOIDC = `-- name: LinkUserOIDC :one
-UPDATE users SET oidc_issuer = $2, oidc_subject = $3
+UPDATE users SET oidc_issuer = $2, oidc_subject = $3, is_admin = $4
 WHERE id = $1 AND oidc_subject IS NULL
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type LinkUserOIDCParams struct {
 	ID          pgtype.UUID `json:"id"`
 	OidcIssuer  *string     `json:"oidc_issuer"`
 	OidcSubject *string     `json:"oidc_subject"`
+	IsAdmin     bool        `json:"is_admin"`
 }
 
 // Attach an OIDC identity to a pre-Zitadel user (one-time, first OIDC login).
 func (q *Queries) LinkUserOIDC(ctx context.Context, arg LinkUserOIDCParams) (User, error) {
-	row := q.db.QueryRow(ctx, linkUserOIDC, arg.ID, arg.OidcIssuer, arg.OidcSubject)
+	row := q.db.QueryRow(ctx, linkUserOIDC,
+		arg.ID,
+		arg.OidcIssuer,
+		arg.OidcSubject,
+		arg.IsAdmin,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -1012,6 +1160,7 @@ func (q *Queries) LinkUserOIDC(ctx context.Context, arg LinkUserOIDCParams) (Use
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -1246,7 +1395,7 @@ func (q *Queries) ListGitHostLinks(ctx context.Context, userID pgtype.UUID) ([]G
 }
 
 const listLinkableUsersByEmail = `-- name: ListLinkableUsersByEmail :many
-SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled FROM users WHERE email = $1 AND oidc_subject IS NULL
+SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin FROM users WHERE email = $1 AND oidc_subject IS NULL
 `
 
 // Candidate GitHub-era rows for verified-email linking: same email, no OIDC
@@ -1273,6 +1422,7 @@ func (q *Queries) ListLinkableUsersByEmail(ctx context.Context, email string) ([
 			&i.OidcIssuer,
 			&i.OidcSubject,
 			&i.SshEnabled,
+			&i.IsAdmin,
 		); err != nil {
 			return nil, err
 		}
@@ -1977,7 +2127,7 @@ func (q *Queries) SetProvidersEnabled(ctx context.Context, keys []string) error 
 }
 
 const setUserClaudeAttribution = `-- name: SetUserClaudeAttribution :one
-UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+UPDATE users SET claude_attribution = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type SetUserClaudeAttributionParams struct {
@@ -2004,12 +2154,13 @@ func (q *Queries) SetUserClaudeAttribution(ctx context.Context, arg SetUserClaud
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const setUserDownloadAsIs = `-- name: SetUserDownloadAsIs :one
-UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+UPDATE users SET download_as_is = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type SetUserDownloadAsIsParams struct {
@@ -2036,12 +2187,13 @@ func (q *Queries) SetUserDownloadAsIs(ctx context.Context, arg SetUserDownloadAs
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const setUserGitHub = `-- name: SetUserGitHub :one
-UPDATE users SET github_user_id = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+UPDATE users SET github_user_id = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type SetUserGitHubParams struct {
@@ -2067,12 +2219,13 @@ func (q *Queries) SetUserGitHub(ctx context.Context, arg SetUserGitHubParams) (U
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const setUserSSHEnabled = `-- name: SetUserSSHEnabled :one
-UPDATE users SET ssh_enabled = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+UPDATE users SET ssh_enabled = $2 WHERE id = $1 RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type SetUserSSHEnabledParams struct {
@@ -2099,6 +2252,7 @@ func (q *Queries) SetUserSSHEnabled(ctx context.Context, arg SetUserSSHEnabledPa
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -2180,9 +2334,9 @@ func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineState
 
 const updateOIDCUserProfile = `-- name: UpdateOIDCUserProfile :one
 UPDATE users
-    SET login = $3, email = $4, avatar_url = $5
+    SET login = $3, email = $4, avatar_url = $5, is_admin = $6
 WHERE oidc_issuer = $1 AND oidc_subject = $2
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type UpdateOIDCUserProfileParams struct {
@@ -2191,9 +2345,17 @@ type UpdateOIDCUserProfileParams struct {
 	Login       string  `json:"login"`
 	Email       string  `json:"email"`
 	AvatarUrl   string  `json:"avatar_url"`
+	IsAdmin     bool    `json:"is_admin"`
 }
 
 // Refresh profile fields from the IdP on repeat logins.
+//
+// is_admin rides along with the profile refresh rather than in a query of its
+// own: this statement already runs on every login and on every bearer-token
+// resolution, so folding the role in costs nothing and makes it impossible for
+// the stored role to be older than the stored profile. It is assigned
+// unconditionally in both directions — a revoked grant must clear the flag, so
+// writing only on true would make admin permanent.
 func (q *Queries) UpdateOIDCUserProfile(ctx context.Context, arg UpdateOIDCUserProfileParams) (User, error) {
 	row := q.db.QueryRow(ctx, updateOIDCUserProfile,
 		arg.OidcIssuer,
@@ -2201,6 +2363,7 @@ func (q *Queries) UpdateOIDCUserProfile(ctx context.Context, arg UpdateOIDCUserP
 		arg.Login,
 		arg.Email,
 		arg.AvatarUrl,
+		arg.IsAdmin,
 	)
 	var i User
 	err := row.Scan(
@@ -2216,6 +2379,7 @@ func (q *Queries) UpdateOIDCUserProfile(ctx context.Context, arg UpdateOIDCUserP
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }
@@ -2470,7 +2634,7 @@ ON CONFLICT (github_user_id) DO UPDATE
     SET login = EXCLUDED.login,
         email = EXCLUDED.email,
         avatar_url = EXCLUDED.avatar_url
-RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled
+RETURNING id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin
 `
 
 type UpsertUserParams struct {
@@ -2506,6 +2670,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.OidcIssuer,
 		&i.OidcSubject,
 		&i.SshEnabled,
+		&i.IsAdmin,
 	)
 	return i, err
 }

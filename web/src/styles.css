@@ -2985,3 +2985,198 @@ body {
   outline: none;
   border-color: var(--accent);
 }
+
+/* Admin console -------------------------------------------------------- */
+/* The rail's Admin item, in the bottom (operator) group beside Settings. Its
+   own hue — teal — so it never reads as a second Settings button. */
+.rail-admin.rail-item-active {
+  background: rgba(46, 160, 167, 0.16);
+}
+.rail-admin .rail-accent {
+  background: #2ea0a7;
+}
+.dock-kind-admin {
+  background: #2ea0a7;
+}
+
+.admin-window {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.9rem;
+  overflow: auto;
+  height: 100%;
+}
+
+/* Headline numbers. "In use" is the one an admin came for, so it alone is
+   accented; making all three loud would flatten that. */
+.admin-stats {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.admin-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 122px;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.admin-stat-accent {
+  border-color: #2ea0a7;
+  background: rgba(46, 160, 167, 0.09);
+}
+.admin-stat-value {
+  font-size: 1.55rem;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.admin-stat-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.admin-stat-hint {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* State histogram. One chip style, tinted per state, shared by the summary row
+   and the per-machine State cell so the same state always looks the same. */
+.admin-chips {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.admin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.admin-chip strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.admin-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.admin-chip-running .admin-chip-dot {
+  background: #3fb950;
+}
+.admin-chip-starting .admin-chip-dot,
+.admin-chip-provisioning .admin-chip-dot,
+.admin-chip-requested .admin-chip-dot,
+.admin-chip-stopping .admin-chip-dot,
+.admin-chip-hibernating .admin-chip-dot {
+  background: #d29922;
+}
+.admin-chip-error .admin-chip-dot {
+  background: var(--error);
+}
+
+/* The table scrolls inside its own box: the window is resizable and the fleet
+   is unbounded, so the columns must never push the window's chrome around. */
+.admin-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.admin-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.admin-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-dim {
+  color: var(--muted);
+}
+
+/* Owner heading row: groups the machines beneath it, so "who owns them" is
+   answered by the table's shape rather than by scanning a repeated column. */
+.admin-owner-row th {
+  background: rgba(255, 255, 255, 0.03);
+  font-weight: 600;
+}
+.admin-owner {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.admin-owner img {
+  border-radius: 50%;
+}
+.admin-owner-login {
+  color: var(--text);
+}
+.admin-owner-email,
+.admin-owner-count {
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.admin-owner-count {
+  margin-left: auto;
+}
+
+.admin-machine-name {
+  display: block;
+}
+.admin-machine-error {
+  display: block;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  color: var(--error);
+}
+
+.admin-empty,
+.admin-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.admin-error {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--error);
+}

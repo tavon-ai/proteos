@@ -22,6 +22,7 @@ type WindowKind =
   | 'session-detail'
   | 'task-detail'
   | 'settings'
+  | 'admin'
   | 'projects'
   | 'placeholder';
 
@@ -99,6 +100,9 @@ const DEFAULT_SIZE: Record<WindowKind, { width: number; height: number }> = {
   'session-detail': { width: 820, height: 620 },
   'task-detail': { width: 820, height: 620 },
   settings: { width: 640, height: 540 },
+  // The admin console renders a wide fleet table (machine, owner, state, host,
+  // activity), so it opens closer to the editor's footprint than to Settings'.
+  admin: { width: 1000, height: 640 },
   projects: { width: 600, height: 480 },
   placeholder: { width: 480, height: 320 },
 };
@@ -216,6 +220,7 @@ function dedupeKeyOf(w: WindowState): string | undefined {
     case 'task-detail':
       return `task-detail|${w.machineId ?? ''}|${w.taskId ?? ''}`;
     case 'settings':
+    case 'admin':
     case 'logs':
     case 'applogs':
     case 'sessions':
