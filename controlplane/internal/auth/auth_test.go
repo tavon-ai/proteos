@@ -88,6 +88,20 @@ func (f *fakeIdP) setIdentity(sub, username, email string, verified bool) {
 		sub, username, email, verified)
 }
 
+// setRoles rewrites userinfo to carry Zitadel's project-roles claim, shaped the
+// way Zitadel emits it: role key -> granting org id -> org domain. Passing no
+// roles emits the claim as an empty object; a user with no grants at all is
+// covered by the fixtures that omit the claim entirely.
+func (f *fakeIdP) setRoles(sub string, roles ...string) {
+	entries := make([]string, 0, len(roles))
+	for _, r := range roles {
+		entries = append(entries, fmt.Sprintf("%q:{\"org-1\":\"test.example\"}", r))
+	}
+	f.userBody = fmt.Sprintf(
+		`{"sub":%q,"name":"","preferred_username":"octocat","email":"octo@example.com","email_verified":true,"picture":"","urn:zitadel:iam:org:project:roles":{%s}}`,
+		sub, strings.Join(entries, ","))
+}
+
 // fakeGitHub stands in for GitHub's token + user endpoints (Connect GitHub).
 type fakeGitHub struct {
 	server      *httptest.Server
@@ -249,6 +263,7 @@ type meView struct {
 		AvatarURL string `json:"avatar_url"`
 	} `json:"user"`
 	GitHubConnected bool `json:"github_connected"`
+	IsAdmin         bool `json:"is_admin"`
 }
 
 func (h *harness) me(t *testing.T) (int, meView) {
@@ -702,4 +717,279 @@ func cookieValue(resp *http.Response, name string) string {
 		}
 	}
 	return ""
+}
+
+// --- Admin role (Zitadel proteos.admin) --------------------------------------
+
+// isAdminInDB reads the persisted flag straight from the row, so these tests
+// assert what was STORED and not merely what the API happened to echo back.
+func (h *harness) isAdminInDB(t *testing.T, sub string) bool {
+	t.Helper()
+	var admin bool
+	row := h.pool.QueryRow(context.Background(), "SELECT is_admin FROM users WHERE oidc_subject = $1", sub)
+	if err := row.Scan(&admin); err != nil {
+		t.Fatal(err)
+	}
+	return admin
+}
+
+// The grant has to survive the trip from the IdP's claim to the users row —
+// that row is the only thing requireAdmin can consult, because the session
+// carries no token to re-read the claim from.
+func TestAdminRoleFromClaimIsPersisted(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	idp.setRoles("sub-admin", "proteos.admin")
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+
+	if !h.isAdminInDB(t, "sub-admin") {
+		t.Fatal("proteos.admin in the claim did not set users.is_admin")
+	}
+	status, me := h.me(t)
+	if status != http.StatusOK {
+		t.Fatalf("/api/me: want 200, got %d", status)
+	}
+	if !me.IsAdmin {
+		t.Fatal("/api/me is_admin should be true for a proteos.admin holder")
+	}
+}
+
+// No claim at all is the ordinary case: the vast majority of users have no
+// ProteOS grant in Zitadel, and that must resolve to a plain user rather than
+// to an error or, worse, to an elevated default.
+func TestNoRolesClaimMeansOrdinaryUser(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t) // default fixture omits the claim
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+
+	if h.isAdminInDB(t, "sub-1") {
+		t.Fatal("a user with no roles claim must not be admin")
+	}
+	if _, me := h.me(t); me.IsAdmin {
+		t.Fatal("/api/me is_admin should be false with no roles claim")
+	}
+}
+
+// The Zitadel project is SHARED with the suite's other apps, so their roles ride
+// in the very same claim. Another app's admin grant must not confer ProteOS
+// admin — this is the test that fails the moment someone "simplifies" the role
+// check into a prefix or substring match.
+func TestForeignProjectRolesDoNotGrantAdmin(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	idp.setRoles("sub-foreign", "databox.admin", "internal", "beta", "sessions.read_all")
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+
+	if h.isAdminInDB(t, "sub-foreign") {
+		t.Fatal("another application's roles granted ProteOS admin")
+	}
+}
+
+// Revocation has to propagate. Because the role is stored, clearing it depends
+// on the refresh writing `false` rather than only ever writing `true` — the
+// failure mode this guards is admin becoming permanent once granted.
+func TestRevokedAdminRoleIsClearedOnNextLogin(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	idp.setRoles("sub-admin", "proteos.admin")
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+	if !h.isAdminInDB(t, "sub-admin") {
+		t.Fatal("precondition: first login should have granted admin")
+	}
+
+	// The grant is withdrawn in Zitadel; the user signs in again.
+	idp.setRoles("sub-admin")
+	resp2 := h.callback(t, "valid-code", h.login(t))
+	resp2.Body.Close()
+
+	if h.isAdminInDB(t, "sub-admin") {
+		t.Fatal("revoking proteos.admin did not clear users.is_admin on next login")
+	}
+	if _, me := h.me(t); me.IsAdmin {
+		t.Fatal("/api/me still reports is_admin after the grant was revoked")
+	}
+}
+
+// A pre-Zitadel row adopted by verified-email linking must pick up the role on
+// that first OIDC login too — otherwise the earliest accounts, which are the
+// likeliest to be the operators', could never become admin.
+func TestAdminRoleAppliesToEmailLinkedUser(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	idp.setRoles("sub-linked", "proteos.admin")
+	h := newHarness(t, idp, gh, nil)
+
+	// Seed a GitHub-era row with the same (verified) email and no OIDC identity.
+	if _, err := h.queries.UpsertUser(context.Background(), store.UpsertUserParams{
+		GithubUserID: 4242,
+		Login:        "octocat",
+		Email:        "octo@example.com",
+		AvatarUrl:    "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+
+	if !h.isAdminInDB(t, "sub-linked") {
+		t.Fatal("linked pre-Zitadel account did not receive the admin role")
+	}
+}
+
+// --- Admin console (GET /api/admin/overview) ---------------------------------
+
+// adminOverviewView is the console payload, decoded structurally so a rename in
+// the API surface fails a test rather than silently zeroing a field.
+type adminOverviewView struct {
+	Totals struct {
+		Machines          int            `json:"machines"`
+		Running           int            `json:"running"`
+		ByState           map[string]int `json:"by_state"`
+		Users             int            `json:"users"`
+		UsersWithMachines int            `json:"users_with_machines"`
+	} `json:"totals"`
+	Machines []struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		State string `json:"state"`
+		Owner struct {
+			ID    string `json:"id"`
+			Login string `json:"login"`
+			Email string `json:"email"`
+		} `json:"owner"`
+	} `json:"machines"`
+	Truncated bool `json:"truncated"`
+}
+
+func (h *harness) adminOverview(t *testing.T) (int, adminOverviewView) {
+	t.Helper()
+	resp, err := h.client.Get(h.server.URL + "/api/admin/overview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var v adminOverviewView
+	if resp.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return resp.StatusCode, v
+}
+
+// The console is the one surface that shows a user rows they do not own, so the
+// server-side gate matters far more than hiding the nav item: a signed-in
+// non-admin must be refused even though they hold a perfectly valid session.
+func TestAdminOverviewRefusesNonAdmin(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+
+	if status, _ := h.adminOverview(t); status != http.StatusForbidden {
+		t.Fatalf("/api/admin/overview as ordinary user: want 403, got %d", status)
+	}
+}
+
+// Losing the grant has to close the door, not just hide it. This is the pair to
+// TestRevokedAdminRoleIsClearedOnNextLogin: that one proves the flag clears,
+// this one proves the route then refuses.
+func TestAdminOverviewRefusesAfterRoleRevoked(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	idp.setRoles("sub-admin", "proteos.admin")
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+	if status, _ := h.adminOverview(t); status != http.StatusOK {
+		t.Fatalf("precondition: admin should reach the console, got %d", status)
+	}
+
+	idp.setRoles("sub-admin") // grant withdrawn in Zitadel
+	resp2 := h.callback(t, "valid-code", h.login(t))
+	resp2.Body.Close()
+
+	if status, _ := h.adminOverview(t); status != http.StatusForbidden {
+		t.Fatalf("/api/admin/overview after revocation: want 403, got %d", status)
+	}
+}
+
+// The console's reason to exist: an admin sees machines they do not own, with
+// the owner attached and the totals counting the whole fleet.
+func TestAdminOverviewReportsFleetAndOwners(t *testing.T) {
+	idp, gh := newFakeIdP(t), newFakeGitHub(t)
+	idp.setRoles("sub-admin", "proteos.admin")
+	h := newHarness(t, idp, gh, nil)
+
+	resp := h.callback(t, "valid-code", h.login(t))
+	resp.Body.Close()
+	adminID := userIDByOIDCSub(t, h, "sub-admin")
+
+	// A second, unrelated user who owns two machines — one running, one stopped.
+	ctx := context.Background()
+	other, err := h.queries.UpsertUser(ctx, store.UpsertUserParams{
+		GithubUserID: 777,
+		Login:        "someone-else",
+		Email:        "else@example.com",
+		AvatarUrl:    "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedMachine := func(owner pgtype.UUID, name, state string) {
+		t.Helper()
+		if _, err := h.pool.Exec(ctx,
+			`INSERT INTO machines (user_id, name, state, kernel_ref, rootfs_ref, resource_spec)
+			 VALUES ($1, $2, $3, 'k', 'r', '{"vcpus":2,"mem_mib":2048}'::jsonb)`,
+			owner, name, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedMachine(other.ID, "theirs-running", "running")
+	seedMachine(other.ID, "theirs-stopped", "stopped")
+	seedMachine(adminID, "mine-running", "running")
+
+	status, ov := h.adminOverview(t)
+	if status != http.StatusOK {
+		t.Fatalf("/api/admin/overview: want 200, got %d", status)
+	}
+	if ov.Totals.Machines != 3 {
+		t.Fatalf("totals.machines = %d, want 3", ov.Totals.Machines)
+	}
+	if ov.Totals.Running != 2 {
+		t.Fatalf("totals.running = %d, want 2", ov.Totals.Running)
+	}
+	if ov.Totals.ByState["stopped"] != 1 {
+		t.Fatalf("by_state[stopped] = %d, want 1", ov.Totals.ByState["stopped"])
+	}
+	if ov.Totals.Users != 2 || ov.Totals.UsersWithMachines != 2 {
+		t.Fatalf("users = %d / with_machines = %d, want 2 / 2", ov.Totals.Users, ov.Totals.UsersWithMachines)
+	}
+	if ov.Truncated {
+		t.Fatal("truncated should be false for a 3-machine fleet")
+	}
+	if len(ov.Machines) != 3 {
+		t.Fatalf("machines = %d rows, want 3", len(ov.Machines))
+	}
+	// The other user's machines must be present AND attributed to them — a list
+	// that silently showed only the caller's own would pass a bare count check.
+	owners := map[string]string{}
+	for _, m := range ov.Machines {
+		owners[m.Name] = m.Owner.Login
+	}
+	if owners["theirs-running"] != "someone-else" || owners["theirs-stopped"] != "someone-else" {
+		t.Fatalf("another user's machines not attributed correctly: %v", owners)
+	}
+	if owners["mine-running"] != "octocat" {
+		t.Fatalf("own machine owner = %q, want octocat", owners["mine-running"])
+	}
 }

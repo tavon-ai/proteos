@@ -233,6 +233,12 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 //     link hands over the target's machines and secrets);
 //  3. else a fresh row (github_user_id stays NULL until Connect GitHub).
 //
+// Every path also mirrors the token's proteos.admin project role onto the row.
+// Sessions here are opaque and server-side, so there is no token to re-read the
+// claim from on an ordinary API call — this is the only moment the IdP is
+// consulted, and therefore the only moment the role can be refreshed. A grant
+// or revocation in Zitadel consequently takes effect on the user's NEXT sign-in.
+//
 // A non-empty errCode is a /login?error= code and means no user was resolved.
 func (h *Handler) resolveOIDCUser(ctx context.Context, info *oidc.UserInfo) (store.User, string) {
 	issuer, err := h.oidc.Issuer(ctx)
@@ -240,6 +246,7 @@ func (h *Handler) resolveOIDCUser(ctx context.Context, info *oidc.UserInfo) (sto
 		slog.Error("oidc issuer lookup failed", "err", err)
 		return store.User{}, "internal"
 	}
+	isAdmin := info.HasRole(RoleKeyAdmin)
 
 	user, err := h.store.GetUserByOIDC(ctx, store.GetUserByOIDCParams{
 		OidcIssuer:  &issuer,
@@ -253,10 +260,16 @@ func (h *Handler) resolveOIDCUser(ctx context.Context, info *oidc.UserInfo) (sto
 			Login:       info.Login(),
 			Email:       info.Email,
 			AvatarUrl:   info.Picture,
+			IsAdmin:     isAdmin,
 		})
 		if uerr != nil {
 			slog.Warn("refresh user profile failed", "err", uerr)
-			return user, "" // stale profile is not worth failing login over
+			// A stale display name is not worth failing a login over, but a
+			// stale ROLE is: the stored flag could still say admin after the
+			// grant was revoked. Authorization for this request follows the
+			// claim we just read, even though persisting it failed.
+			user.IsAdmin = isAdmin
+			return user, ""
 		}
 		return updated, ""
 	case !errors.Is(err, pgx.ErrNoRows):
@@ -281,6 +294,7 @@ func (h *Handler) resolveOIDCUser(ctx context.Context, info *oidc.UserInfo) (sto
 				ID:          candidates[0].ID,
 				OidcIssuer:  &issuer,
 				OidcSubject: &info.Subject,
+				IsAdmin:     isAdmin,
 			})
 			if err != nil {
 				slog.Error("link user oidc failed", "err", err)
@@ -296,6 +310,7 @@ func (h *Handler) resolveOIDCUser(ctx context.Context, info *oidc.UserInfo) (sto
 		Login:       info.Login(),
 		Email:       info.Email,
 		AvatarUrl:   info.Picture,
+		IsAdmin:     isAdmin,
 	})
 	if err != nil {
 		slog.Error("create oidc user failed", "err", err)

@@ -179,6 +179,13 @@ func (s *Server) Handler() http.Handler {
 	// mutation, so it also requires the CSRF header. Reads ride GET /api/me.
 	mux.Handle("PATCH /api/user/preferences", s.requireAuth(s.csrfHeader(http.HandlerFunc(s.handleUpdateUserPrefs))))
 
+	// Admin console: the fleet-wide read-only view, gated on the proteos.admin
+	// Zitadel role (requireAdmin wraps requireAuth). No CSRF header needed —
+	// there is nothing here to mutate, by design. Registered unconditionally so
+	// a caller without the role always gets 403 rather than a 404 that would
+	// depend on how the deployment happens to be wired.
+	mux.Handle("GET /api/admin/overview", s.requireAdmin(http.HandlerFunc(s.handleAdminOverview)))
+
 	// Personal access tokens (AC1): the user manages their own CLI credentials.
 	// Reads are auth-only; create/revoke mutate so they also require the CSRF
 	// header (cookie-authed browser settings page) — bearer-authed callers are

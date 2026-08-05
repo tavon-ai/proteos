@@ -19,14 +19,22 @@ SELECT * FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2;
 -- name: CreateOIDCUser :one
 -- First Zitadel login with no linkable existing account: create the user.
 -- github_user_id stays NULL until the user completes "Connect GitHub".
-INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url)
-VALUES ($1, $2, $3, $4, $5)
+-- is_admin mirrors the token's proteos.admin project role (see UpdateOIDCUserProfile).
+INSERT INTO users (oidc_issuer, oidc_subject, login, email, avatar_url, is_admin)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: UpdateOIDCUserProfile :one
 -- Refresh profile fields from the IdP on repeat logins.
+--
+-- is_admin rides along with the profile refresh rather than in a query of its
+-- own: this statement already runs on every login and on every bearer-token
+-- resolution, so folding the role in costs nothing and makes it impossible for
+-- the stored role to be older than the stored profile. It is assigned
+-- unconditionally in both directions — a revoked grant must clear the flag, so
+-- writing only on true would make admin permanent.
 UPDATE users
-    SET login = $3, email = $4, avatar_url = $5
+    SET login = $3, email = $4, avatar_url = $5, is_admin = $6
 WHERE oidc_issuer = $1 AND oidc_subject = $2
 RETURNING *;
 
@@ -37,7 +45,7 @@ SELECT * FROM users WHERE email = $1 AND oidc_subject IS NULL;
 
 -- name: LinkUserOIDC :one
 -- Attach an OIDC identity to a pre-Zitadel user (one-time, first OIDC login).
-UPDATE users SET oidc_issuer = $2, oidc_subject = $3
+UPDATE users SET oidc_issuer = $2, oidc_subject = $3, is_admin = $4
 WHERE id = $1 AND oidc_subject IS NULL
 RETURNING *;
 
@@ -550,3 +558,46 @@ ORDER BY created_at;
 -- history for audit while freeing the (user_id, fingerprint) slot for re-add.
 UPDATE user_ssh_login_keys SET revoked_at = now()
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;
+
+-- name: AdminCountMachinesByState :many
+-- Fleet-wide machine counts grouped by state, for the admin console's totals.
+--
+-- Deliberately NOT derived by counting the rows AdminListMachines returns: that
+-- list is capped, so totals computed from it would silently under-report the
+-- moment the fleet outgrows the cap. The counts are the authoritative numbers
+-- and the list is a sample of them.
+SELECT state, count(*) AS count FROM machines GROUP BY state ORDER BY state;
+
+-- name: AdminCountUsers :one
+-- Fleet-wide user counts: total accounts, and how many own at least one
+-- machine. Both in one row so the two numbers are read from a single snapshot.
+SELECT
+    count(*)                                                            AS total,
+    count(*) FILTER (WHERE EXISTS (SELECT 1 FROM machines m WHERE m.user_id = users.id)) AS with_machines
+FROM users;
+
+-- name: AdminListMachines :many
+-- Every machine in the fleet with its owner, newest first, capped at $1.
+--
+-- The join is to users, not a second query per machine: the console's whole
+-- point is "who owns this", so the owner is part of the row, and an N+1 over a
+-- growing fleet is exactly the wrong shape for a page that renders all of it.
+SELECT
+    m.id,
+    m.name,
+    m.state,
+    m.template_id,
+    m.resource_spec,
+    m.last_error,
+    m.created_at,
+    m.last_active_at,
+    m.user_id,
+    u.login      AS owner_login,
+    u.email      AS owner_email,
+    u.avatar_url AS owner_avatar_url,
+    h.name       AS host_name
+FROM machines m
+JOIN users u ON u.id = m.user_id
+LEFT JOIN hosts h ON h.id = m.host_id
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $1;

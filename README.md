@@ -236,6 +236,10 @@ each window can open sub-windows for the tools below.
   provider API keys, GitHub connection, the outbound git SSH key, download
   links, and an **SSH access** tab holding the on/off switch, your authorized
   login keys, and the connect instructions (`components/SSHAccessPanel.tsx`).
+- **Admin** — a fleet-wide, read-only console (`windows/AdminWindow.tsx`): how
+  many machines exist, how many are running, and who owns each one. Visible
+  only to holders of the `proteos.admin` Zitadel role. See
+  **[docs/admin-console.md](docs/admin-console.md)** for granting access.
 
 A separate lightweight mobile shell (`web/src/mobile/`) exposes just a
 machines list and a PR review view, for reviewing agent output from a phone.

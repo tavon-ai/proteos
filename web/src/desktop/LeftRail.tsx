@@ -3,6 +3,7 @@ import type { Me } from '../api/client';
 import { useSelectedMachine } from './selectedMachineStore';
 import { useWindowManager } from './windowManagerContext';
 import {
+  openAdmin,
   openAppLogs,
   openHomeAgent,
   openHomeTerminal,
@@ -139,6 +140,30 @@ const SECTIONS: Section[] = [
   },
 ];
 
+// The Admin item sits in the bottom group beside Settings rather than among the
+// working sections above: it is an operator destination, not part of the
+// build-something flow, and it is visible to almost nobody. It renders only for
+// holders of the proteos.admin Zitadel role (me.is_admin) — hiding it is a
+// courtesy to everyone else, since /api/admin/* refuses non-admins server-side
+// whether or not the button is on screen.
+const ADMIN_ICON = (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <path
+      d="M12 3l7 3v5.5c0 4.2-2.9 7.6-7 8.5-4.1-.9-7-4.3-7-8.5V6l7-3z"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M9.2 12.1l1.9 1.9 3.7-3.9"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const SETTINGS_ICON = (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
     <path
@@ -170,9 +195,11 @@ export function LeftRail({
 
   const focusedKind = focusedWindow(wm.windows, selectedId)?.kind;
   const activeKey =
-    [...SECTIONS, { key: 'settings', kinds: ['settings'] as WindowState['kind'][] }].find(
-      (s) => focusedKind && s.kinds.includes(focusedKind),
-    )?.key ?? null;
+    [
+      ...SECTIONS,
+      { key: 'settings', kinds: ['settings'] as WindowState['kind'][] },
+      { key: 'admin', kinds: ['admin'] as WindowState['kind'][] },
+    ].find((s) => focusedKind && s.kinds.includes(focusedKind))?.key ?? null;
 
   const openSection = (key: string) => {
     switch (key) {
@@ -235,6 +262,21 @@ export function LeftRail({
       {SECTIONS.map(item)}
 
       <div className="rail-bottom">
+        {me.is_admin && (
+          <button
+            className={
+              'rail-item rail-item-settings rail-admin' +
+              (activeKey === 'admin' ? ' rail-item-active' : '')
+            }
+            onClick={() => openAdmin(wm)}
+            aria-current={activeKey === 'admin' ? 'true' : undefined}
+          >
+            {ADMIN_ICON}
+            <span className="rail-label">Admin</span>
+            {activeKey === 'admin' && <span className="rail-accent" aria-hidden />}
+          </button>
+        )}
+
         <button
           className={
             'rail-item rail-item-settings rail-settings' +

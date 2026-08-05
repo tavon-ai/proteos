@@ -1,0 +1,14 @@
+-- Admin console: mirror the caller's Zitadel `proteos.admin` project role onto
+-- the users row.
+--
+-- Why a column and not a claim read per request: ProteOS sessions are opaque and
+-- server-side, and the IdP is consulted only at login (see internal/auth). There
+-- is no token to re-read a role claim from on an ordinary API call, so the role
+-- is captured from the userinfo claims at identity-resolution time and stored
+-- here. A grant or revocation in Zitadel therefore takes effect on that user's
+-- NEXT sign-in, which is the documented behaviour, not a bug to work around.
+--
+-- A boolean rather than a role string: ProteOS has exactly one elevated level.
+-- Databox needs user < manager < admin and so carries a hierarchy; a hierarchy
+-- of one is a boolean, and pretending otherwise invites a fake ordering.
+ALTER TABLE users ADD COLUMN is_admin boolean NOT NULL DEFAULT false;

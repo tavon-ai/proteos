@@ -130,7 +130,19 @@ func (c *Client) AuthorizeURL(ctx context.Context, state, redirectURI, verifier 
 	q.Set("response_type", "code")
 	q.Set("client_id", c.clientID)
 	q.Set("redirect_uri", redirectURI)
-	q.Set("scope", "openid profile email")
+	// urn:zitadel:iam:org:projects:roles asks Zitadel to include the caller's
+	// project roles in the userinfo response, which is where the admin grant is
+	// read from. Requested explicitly rather than relying on the project's
+	// "assert roles on authentication" setting: that setting is project-wide and
+	// the project is shared with the suite's other apps, so ProteOS should not
+	// depend on — or need to change — a flag that also moves their tokens.
+	//
+	// Note this covers the BROWSER login only. Access tokens minted for the
+	// other first-party apps and presented to this API (see auth/bearer.go)
+	// carry whatever scopes those apps requested; if they omit roles, their
+	// bearer callers resolve as non-admin. That is the safe direction to fail,
+	// and the admin console is a browser surface regardless.
+	q.Set("scope", "openid profile email urn:zitadel:iam:org:projects:roles")
 	q.Set("state", state)
 	q.Set("code_challenge", challengeS256(verifier))
 	q.Set("code_challenge_method", "S256")
@@ -207,6 +219,27 @@ type UserInfo struct {
 	Email             string `json:"email"`
 	EmailVerified     bool   `json:"email_verified"`
 	Picture           string `json:"picture"`
+
+	// Roles is Zitadel's project-roles claim, shaped role key -> org id -> org
+	// domain. Only the outer keys matter here; the inner map says which orgs
+	// granted the role, which ProteOS (single-tenant) does not distinguish on.
+	//
+	// The claim is absent unless the Zitadel project asserts roles on
+	// authentication (see scripts/zitadel/register-proteos-admin-role.sh). An
+	// absent claim is not an error — it decodes to nil and HasRole reports
+	// false, which is exactly right: no grant means no elevated access.
+	Roles map[string]map[string]string `json:"urn:zitadel:iam:org:project:roles"`
+}
+
+// HasRole reports whether the userinfo carries the given project role key.
+//
+// Membership is an exact key lookup and never a prefix or substring match: the
+// Zitadel project is shared with the suite's other apps, so this claim also
+// carries their roles (databox.admin, internal, beta, …). Anything looser would
+// let a role defined for another app confer ProteOS privilege.
+func (u *UserInfo) HasRole(key string) bool {
+	_, ok := u.Roles[key]
+	return ok
 }
 
 // GetUserInfo fetches the userinfo claims using the access token.
